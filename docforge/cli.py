@@ -103,7 +103,17 @@ async def _init_db():
 
     settings = Settings()
     typer.echo(f"Initializing database: {settings.database_url.split('@')[-1]}")
-    await do_init_db(settings.database_url)
+    try:
+        await do_init_db(settings.database_url)
+    except OSError as e:
+        typer.echo(
+            f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error initializing database: {e}", err=True)
+        raise typer.Exit(1)
     typer.echo("Database initialized successfully.")
 
 
@@ -115,6 +125,18 @@ async def _ingest():
     settings = Settings()
     try:
         await ingest_all(settings)
+    except OSError as e:
+        typer.echo(
+            f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error during ingest: {e}", err=True)
+        raise typer.Exit(1)
     finally:
         await close_pool()
 
@@ -127,13 +149,18 @@ async def _search(query: str, limit: int):
     from docforge.processors.embedder import Embedder
 
     settings = Settings()
-    embedder = Embedder(
-        settings.embedding_model, hf_token=settings.hf_token.get_secret_value()
-    )
+    try:
+        embedder = Embedder(
+            settings.embedding_model, hf_token=settings.hf_token.get_secret_value()
+        )
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
     query_vector = embedder.embed_query(query)
 
-    pool = await get_pool(settings.database_url)
     try:
+        pool = await get_pool(settings.database_url)
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -146,16 +173,27 @@ async def _search(query: str, limit: int):
                 np.array(query_vector, dtype=np.float32),
                 limit,
             )
-        for i, row in enumerate(rows, 1):
-            sim = row["similarity"]
-            src = row["source_title"]
-            sec = row["section_title"] or ""
-            typer.echo(f"\n--- Result {i} (relevance: {sim:.2f}) --- {src}")
-            if sec:
-                typer.echo(f"Section: {sec}")
-            typer.echo(row["text"][:500])
+    except OSError as e:
+        typer.echo(
+            f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",
+            err=True,
+        )
+        raise typer.Exit(1)
     finally:
         await close_pool()
+
+    if not rows:
+        typer.echo("No results found.")
+        return
+
+    for i, row in enumerate(rows, 1):
+        sim = row["similarity"]
+        src = row["source_title"]
+        sec = row["section_title"] or ""
+        typer.echo(f"\n--- Result {i} (relevance: {sim:.2f}) --- {src}")
+        if sec:
+            typer.echo(f"Section: {sec}")
+        typer.echo(row["text"][:500])
 
 
 async def _status():
