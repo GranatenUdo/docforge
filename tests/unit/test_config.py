@@ -20,6 +20,11 @@ class TestSettingsDefaults:
         assert s.embedding_dimensions == 768
         assert s.chunk_max_tokens == 500
         assert s.sources_file == "sources.yml"
+        assert s.tag_match_weight == pytest.approx(0.1)
+        assert s.org_tag_weight == pytest.approx(0.05)
+        assert s.default_user_name == ""
+        assert s.default_team_name == ""
+        assert s.default_area_name == ""
 
 
 class TestYamlLoading:
