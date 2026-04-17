@@ -35,6 +35,10 @@ async def ingest_all(settings: Settings) -> None:
     pool = await get_pool(settings.database_url)
     tokenizer_fn = embedder.get_tokenizer_fn()
 
+    succeeded = 0
+    failed = 0
+    failed_names: list[str] = []
+
     for source in sources:
         try:
             if isinstance(source, ConfluenceSourceConfig):
@@ -43,10 +47,20 @@ async def ingest_all(settings: Settings) -> None:
                 )
             elif isinstance(source, GitRepoSourceConfig):
                 await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+            succeeded += 1
         except Exception:
+            failed += 1
+            failed_names.append(source.title)
             logger.error("Failed to ingest source: %s", source.title, exc_info=True)
 
-    logger.info("Ingest complete")
+    logger.info(
+        "Ingest complete: %d succeeded, %d failed out of %d sources",
+        succeeded,
+        failed,
+        len(sources),
+    )
+    if failed_names:
+        logger.warning("Failed sources: %s", ", ".join(failed_names))
 
 
 async def _ingest_confluence_source(
