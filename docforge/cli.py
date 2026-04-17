@@ -60,11 +60,43 @@ def ingest():
 @app.command()
 def search(
     query: str = typer.Argument(help="Search query"),
+    user_name: str = typer.Option(
+        None, "--user",
+        help="Your name (required; falls back to default_user_name setting)",
+    ),
+    team_name: str = typer.Option(
+        None, "--team",
+        help="Your team tag (required; falls back to default_team_name setting)",
+    ),
+    area_name: str = typer.Option(
+        None, "--area",
+        help="Your area tag (optional; falls back to default_area_name setting)",
+    ),
     limit: int = typer.Option(5, help="Max results"),
 ):
     """Search the documentation index."""
     _setup_logging()
-    asyncio.run(_search(query, limit))
+    from docforge.config import Settings
+
+    settings = Settings()
+    resolved_user = user_name or settings.default_user_name
+    resolved_team = team_name or settings.default_team_name
+    resolved_area = area_name or (settings.default_area_name or None) or None
+
+    if not resolved_user:
+        typer.echo(
+            "Error: --user is required (or set default_user_name in docforge.yml).",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if not resolved_team:
+        typer.echo(
+            "Error: --team is required (or set default_team_name in docforge.yml).",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    asyncio.run(_search(query, resolved_user, resolved_team, resolved_area, limit))
 
 
 @app.command()
@@ -141,12 +173,15 @@ async def _ingest():
         await close_pool()
 
 
-async def _search(query: str, limit: int):
+async def _search(
+    query: str, user_name: str, team_name: str, area_name: str | None, limit: int
+):
     import numpy as np
 
     from docforge.config import Settings
     from docforge.db import close_pool, get_pool
     from docforge.processors.embedder import Embedder
+    from docforge.query_log import log_query
 
     settings = Settings()
     try:
@@ -158,6 +193,7 @@ async def _search(query: str, limit: int):
         raise typer.Exit(1)
 
     query_vector = embedder.embed_query(query)
+    user_tags = [team_name] + ([area_name] if area_name else [])
 
     try:
         pool = await get_pool(settings.database_url)
@@ -165,14 +201,26 @@ async def _search(query: str, limit: int):
             rows = await conn.fetch(
                 """
                 SELECT c.text, c.section_title, s.title AS source_title,
-                       1 - (c.embedding <=> $1::vector) AS similarity
+                       s.tags AS source_tags,
+                       1 - (c.embedding <=> $1::vector) AS similarity,
+                       (1 - (c.embedding <=> $1::vector)) *
+                         (1
+                          + $2::float * cardinality(
+                              ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
+                            )
+                          + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
+                         ) AS boosted_score
                 FROM chunks c JOIN sources s ON c.source_id = s.id
                 WHERE s.status = 'active'
-                ORDER BY c.embedding <=> $1::vector LIMIT $2
+                ORDER BY boosted_score DESC LIMIT $5
                 """,
                 np.array(query_vector, dtype=np.float32),
+                settings.tag_match_weight,
+                user_tags,
+                settings.org_tag_weight,
                 limit,
             )
+        await log_query(pool, user_name, team_name, area_name, query, len(rows))
     except OSError as e:
         typer.echo(
             f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",
@@ -190,9 +238,12 @@ async def _search(query: str, limit: int):
         sim = row["similarity"]
         src = row["source_title"]
         sec = row["section_title"] or ""
+        tags = list(row["source_tags"] or [])
         typer.echo(f"\n--- Result {i} (relevance: {sim:.2f}) --- {src}")
         if sec:
             typer.echo(f"Section: {sec}")
+        if tags:
+            typer.echo(f"Tags: {', '.join(tags)}")
         typer.echo(row["text"][:500])
 
 

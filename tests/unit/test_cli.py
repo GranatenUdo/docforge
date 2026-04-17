@@ -49,17 +49,68 @@ class TestIngestCommand:
 
 
 class TestSearchCommand:
-    def test_success(self, monkeypatch):
+    def test_success_with_required_flags(self, monkeypatch):
         captured = {}
 
-        async def fake(query, limit):
+        async def fake(query, user_name, team_name, area_name, limit):
             captured["query"] = query
+            captured["user"] = user_name
+            captured["team"] = team_name
+            captured["area"] = area_name
             captured["limit"] = limit
 
         monkeypatch.setattr("docforge.cli._search", fake)
-        result = runner.invoke(app, ["search", "how do migrations work", "--limit", "3"])
+        result = runner.invoke(
+            app,
+            ["search", "q", "--user", "tobias", "--team", "ccl", "--area", "cloud", "--limit", "3"],
+        )
         assert result.exit_code == 0
-        assert captured == {"query": "how do migrations work", "limit": 3}
+        assert captured == {
+            "query": "q", "user": "tobias", "team": "ccl",
+            "area": "cloud", "limit": 3,
+        }
+
+    def test_area_optional(self, monkeypatch):
+        captured = {}
+
+        async def fake(query, user_name, team_name, area_name, limit):
+            captured["area"] = area_name
+
+        monkeypatch.setattr("docforge.cli._search", fake)
+        result = runner.invoke(
+            app, ["search", "q", "--user", "u", "--team", "t"],
+        )
+        assert result.exit_code == 0
+        assert captured["area"] is None
+
+    def test_fails_when_user_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["search", "q", "--team", "t"])
+        assert result.exit_code == 1
+        assert "--user is required" in (result.output + (result.stderr or ""))
+
+    def test_fails_when_team_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["search", "q", "--user", "u"])
+        assert result.exit_code == 1
+        assert "--team is required" in (result.output + (result.stderr or ""))
+
+    def test_uses_settings_default_user(self, monkeypatch, tmp_path):
+        captured = {}
+
+        async def fake(query, user_name, team_name, area_name, limit):
+            captured["user"] = user_name
+            captured["team"] = team_name
+
+        monkeypatch.setattr("docforge.cli._search", fake)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "default_user_name: tobias.default\n"
+            "default_team_name: ccl.default\n"
+        )
+        result = runner.invoke(app, ["search", "q"])
+        assert result.exit_code == 0
+        assert captured == {"user": "tobias.default", "team": "ccl.default"}
 
 
 class TestStatusCommand:

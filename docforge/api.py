@@ -52,6 +52,9 @@ app = FastAPI(title="docforge", lifespan=lifespan)
 
 class SearchRequest(BaseModel):
     query: str
+    user_name: str
+    team_name: str
+    area_name: str | None = None
     limit: int = 5
 
 
@@ -60,6 +63,7 @@ class SearchResult(BaseModel):
     section_title: str | None
     source_title: str
     source_url: str
+    source_tags: list[str]
     similarity: float
 
 
@@ -91,6 +95,8 @@ async def search(req: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=500, detail="Failed to embed query")
 
     settings = _get_settings()
+    user_tags = [req.team_name] + ([req.area_name] if req.area_name else [])
+
     try:
         pool = await get_pool(settings.database_url)
         async with pool.acquire() as conn:
@@ -101,19 +107,35 @@ async def search(req: SearchRequest) -> SearchResponse:
                     c.section_title,
                     s.title AS source_title,
                     s.url AS source_url,
-                    1 - (c.embedding <=> $1::vector) AS similarity
+                    s.tags AS source_tags,
+                    1 - (c.embedding <=> $1::vector) AS similarity,
+                    (1 - (c.embedding <=> $1::vector)) *
+                        (1
+                         + $2::float * cardinality(
+                             ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
+                           )
+                         + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
+                        ) AS boosted_score
                 FROM chunks c
                 JOIN sources s ON c.source_id = s.id
                 WHERE s.status = 'active'
-                ORDER BY c.embedding <=> $1::vector
-                LIMIT $2
+                ORDER BY boosted_score DESC
+                LIMIT $5
                 """,
                 np.array(query_vector, dtype=np.float32),
+                settings.tag_match_weight,
+                user_tags,
+                settings.org_tag_weight,
                 req.limit,
             )
     except Exception as e:
         logger.error("Database error during search: %s", e)
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    from docforge.query_log import log_query
+    await log_query(
+        pool, req.user_name, req.team_name, req.area_name, req.query, len(rows)
+    )
 
     results = [
         SearchResult(
@@ -121,6 +143,7 @@ async def search(req: SearchRequest) -> SearchResponse:
             section_title=row["section_title"],
             source_title=row["source_title"],
             source_url=row["source_url"],
+            source_tags=list(row["source_tags"] or []),
             similarity=float(row["similarity"]),
         )
         for row in rows

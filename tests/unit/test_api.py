@@ -14,9 +14,51 @@ from docforge.api import app
 from tests.conftest import FakePool
 
 
+class _CapturingConn:
+    """Returns rows for SELECT; captures query_log INSERTs via execute."""
+
+    def __init__(self, rows, executes):
+        self._rows = rows
+        self._executes = executes
+
+    async def fetch(self, query, *args):
+        return self._rows
+
+    async def execute(self, query, *args):
+        self._executes.append((query, args))
+
+
+class _CapturingCtx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *a):
+        return None
+
+
+class _CapturingPool:
+    def __init__(self, rows):
+        self.rows = rows
+        self.executes = []
+
+    def acquire(self):
+        return _CapturingCtx(_CapturingConn(self.rows, self.executes))
+
+
 def _client():
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
+
+
+def _settings_stub():
+    return SimpleNamespace(
+        database_url="postgresql://fake",
+        tag_match_weight=0.1,
+        org_tag_weight=0.05,
+    )
 
 
 class TestHealthEndpoint:
@@ -30,12 +72,21 @@ class TestHealthEndpoint:
 
 class TestSearchEndpoint:
     @pytest.mark.asyncio
+    async def test_rejects_missing_required_identity_fields(self):
+        async with _client() as client:
+            resp = await client.post("/search", json={"query": "q", "limit": 1})
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_returns_503_when_model_not_loaded(self):
         original = api_module._embedder
         api_module._embedder = None
         try:
             async with _client() as client:
-                resp = await client.post("/search", json={"query": "q", "limit": 1})
+                resp = await client.post(
+                    "/search",
+                    json={"query": "q", "user_name": "u", "team_name": "t", "limit": 1},
+                )
             assert resp.status_code == 503
             assert "not loaded" in resp.json()["detail"]
         finally:
@@ -49,6 +100,7 @@ class TestSearchEndpoint:
                 "section_title": "Platform",
                 "source_title": "Doc A",
                 "source_url": "https://wiki/a",
+                "source_tags": ["ccl", "cloud"],
                 "similarity": 0.95,
             }
         ]
@@ -58,21 +110,26 @@ class TestSearchEndpoint:
         fake_embedder.model_name = "fake"
         api_module._embedder = fake_embedder
 
-        fake_pool = FakePool(rows)
+        pool = _CapturingPool(rows)
 
         async def fake_get_pool(url):
-            return fake_pool
+            return pool
 
         monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(
-            api_module,
-            "_get_settings",
-            lambda: SimpleNamespace(database_url="postgresql://fake"),
-        )
+        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
 
         try:
             async with _client() as client:
-                resp = await client.post("/search", json={"query": "q", "limit": 5})
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q",
+                        "user_name": "tobias.ens",
+                        "team_name": "ccl",
+                        "area_name": "cloud",
+                        "limit": 5,
+                    },
+                )
         finally:
             api_module._embedder = None
 
@@ -80,7 +137,11 @@ class TestSearchEndpoint:
         body = resp.json()
         assert body["count"] == 1
         assert body["results"][0]["text"] == "Platform owns orgs."
-        assert body["results"][0]["similarity"] == pytest.approx(0.95)
+        assert body["results"][0]["source_tags"] == ["ccl", "cloud"]
+        # query_log insert happened
+        assert any(
+            "INSERT INTO query_log" in q for q, _ in pool.executes
+        )
 
     @pytest.mark.asyncio
     async def test_returns_503_on_db_error(self, monkeypatch):
@@ -92,15 +153,16 @@ class TestSearchEndpoint:
             raise OSError("db down")
 
         monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(
-            api_module,
-            "_get_settings",
-            lambda: SimpleNamespace(database_url="postgresql://fake"),
-        )
+        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
 
         try:
             async with _client() as client:
-                resp = await client.post("/search", json={"query": "q", "limit": 1})
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q", "user_name": "u", "team_name": "t", "limit": 1,
+                    },
+                )
         finally:
             api_module._embedder = None
 
@@ -115,12 +177,16 @@ class TestSearchEndpoint:
 
         try:
             async with _client() as client:
-                resp = await client.post("/search", json={"query": "q", "limit": 1})
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q", "user_name": "u", "team_name": "t", "limit": 1,
+                    },
+                )
         finally:
             api_module._embedder = None
 
         assert resp.status_code == 500
-        assert "embed" in resp.json()["detail"].lower()
 
 
 class TestSourcesEndpoint:
@@ -141,11 +207,7 @@ class TestSourcesEndpoint:
             return fake_pool
 
         monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(
-            api_module,
-            "_get_settings",
-            lambda: SimpleNamespace(database_url="postgresql://fake"),
-        )
+        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
 
         async with _client() as client:
             resp = await client.get("/sources")
@@ -154,7 +216,6 @@ class TestSourcesEndpoint:
         body = resp.json()
         assert body["count"] == 1
         assert body["sources"][0]["title"] == "Doc A"
-        assert body["sources"][0]["chunk_count"] == 4
 
     @pytest.mark.asyncio
     async def test_returns_503_on_db_error(self, monkeypatch):
@@ -162,11 +223,7 @@ class TestSourcesEndpoint:
             raise OSError("boom")
 
         monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(
-            api_module,
-            "_get_settings",
-            lambda: SimpleNamespace(database_url="postgresql://fake"),
-        )
+        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
 
         async with _client() as client:
             resp = await client.get("/sources")

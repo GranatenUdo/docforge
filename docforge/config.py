@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     # Sources config
     sources_file: str = "sources.yml"
 
+    # Ranking weights (see docforge.ranking.compute_boosted_score)
+    tag_match_weight: float = 0.1
+    org_tag_weight: float = 0.05
+
+    # Default identity (used as CLI flag defaults when set via env/yml)
+    default_user_name: str = ""
+    default_team_name: str = ""
+    default_area_name: str = ""
+
     def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")

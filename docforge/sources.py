@@ -18,6 +18,7 @@ class ConfluenceSourceConfig(BaseModel):
     page_id: str
     space_key: str
     title: str
+    tags: list[str] = []
 
 
 class GitRepoSourceConfig(BaseModel):
@@ -25,6 +26,7 @@ class GitRepoSourceConfig(BaseModel):
     repo_path: str
     include_patterns: list[str] = ["README.md", "CLAUDE.md", "docs/**/*.md"]
     title: str
+    tags: list[str] = []
 
 
 SourceConfig = Annotated[
