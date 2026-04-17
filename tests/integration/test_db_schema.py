@@ -49,3 +49,50 @@ async def test_init_db_creates_schema_and_pgvector(pg_url):
         assert len(returned) == 768
     finally:
         await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_sources_has_tags_column(pg_url):
+    conn = await asyncpg.connect(pg_url)
+    try:
+        col = await conn.fetchrow(
+            """
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_name = 'sources' AND column_name = 'tags'
+            """
+        )
+        assert col is not None
+        assert col["data_type"] == "ARRAY"
+        assert col["is_nullable"] == "NO"
+        assert "{}" in (col["column_default"] or "")
+
+        idx = await conn.fetchval(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE tablename = 'sources' AND indexname = 'sources_tags_idx'
+            """
+        )
+        assert idx == "sources_tags_idx"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_query_log_table_exists(pg_url):
+    conn = await asyncpg.connect(pg_url)
+    try:
+        cols = await conn.fetch(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'query_log'
+            ORDER BY ordinal_position
+            """
+        )
+        names = [row["column_name"] for row in cols]
+        assert names == [
+            "id", "user_name", "team_name", "area_name",
+            "query", "result_count", "created_at",
+        ]
+    finally:
+        await conn.close()
