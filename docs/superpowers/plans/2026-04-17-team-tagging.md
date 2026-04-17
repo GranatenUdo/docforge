@@ -1253,8 +1253,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.conftest import FakePool
-
 
 class _CapturingConn:
     def __init__(self, rows, executes):
@@ -1595,12 +1593,14 @@ class TestSearchCommand:
         assert result.exit_code == 0
         assert captured["area"] is None
 
-    def test_fails_when_user_missing(self):
+    def test_fails_when_user_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)  # avoid picking up stray docforge.yml
         result = runner.invoke(app, ["search", "q", "--team", "t"])
         assert result.exit_code == 1
         assert "--user is required" in (result.output + (result.stderr or ""))
 
-    def test_fails_when_team_missing(self):
+    def test_fails_when_team_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["search", "q", "--user", "u"])
         assert result.exit_code == 1
         assert "--team is required" in (result.output + (result.stderr or ""))
@@ -2110,9 +2110,14 @@ git commit -m "docs(rag): document KNOWLEDGE_HUB_USER/TEAM/AREA env var setup"
 
 ```bash
 cd /e/knowledge-hub/rag
-source /e/docforge/.venv/Scripts/activate  # or the rag venv if different
+source .venv/Scripts/activate  # rag has its own venv with docforge installed editably from ../docforge
 docker compose up -d db
 docforge init-db
+```
+
+If the rag venv doesn't have the latest docforge from this branch, reinstall:
+```bash
+pip install -e /e/docforge/[dev]
 ```
 Expected: migrations 001-004 applied cleanly (no errors about existing columns/tables).
 
