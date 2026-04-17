@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Sources config
     sources_file: str = "sources.yml"
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")
         yml_values = {}

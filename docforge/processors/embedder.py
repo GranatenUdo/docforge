@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class Embedder:
         result = self.embed([query])
         return result[0]
 
-    def get_tokenizer_fn(self) -> callable:
+    def get_tokenizer_fn(self) -> Callable[[str], int]:
         """Return a token-counting function using this model's tokenizer."""
         tokenizer = self._model.tokenizer
 
