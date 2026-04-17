@@ -50,27 +50,32 @@ def _get_embedder() -> Embedder:
 
 
 @mcp.tool()
-async def search_documentation(query: str, limit: int = 5) -> str:
+async def search_documentation(
+    query: str,
+    user_name: str,
+    team_name: str,
+    area_name: str | None = None,
+    limit: int = 5,
+) -> str:
     """Search across indexed documentation from Confluence pages and git repos.
 
-    Returns relevant documentation chunks with source attribution.
-    Use this to find information about:
-    - Which team owns a particular service or component
-    - Coding guidelines and standards (e.g., HTTP error handling)
-    - Architecture decisions and responsibilities
-    - Cross-team interfaces and dependencies
+    Returns relevant documentation chunks with source attribution. Use this to find
+    information about team ownership, coding guidelines, architecture decisions,
+    and cross-team interfaces.
 
     Args:
         query: Natural language search query.
+        user_name: Your name (e.g., "tobias.ens"). Used for usage telemetry.
+        team_name: Your team tag (e.g., "ccl"). Boosts team-tagged docs.
+        area_name: Your area tag (e.g., "cloud"). Optional; boosts area-tagged docs.
         limit: Maximum number of results to return (default 5).
     """
     settings = _get_settings()
     embedder = _get_embedder()
 
-    # Embed the query
     query_vector = embedder.embed_query(query)
+    user_tags = [team_name] + ([area_name] if area_name else [])
 
-    # Search pgvector
     pool = await get_pool(settings.database_url)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -80,16 +85,30 @@ async def search_documentation(query: str, limit: int = 5) -> str:
                 c.section_title,
                 s.title AS source_title,
                 s.url AS source_url,
-                1 - (c.embedding <=> $1::vector) AS similarity
+                s.tags AS source_tags,
+                1 - (c.embedding <=> $1::vector) AS similarity,
+                (1 - (c.embedding <=> $1::vector)) *
+                    (1
+                     + $2::float * cardinality(
+                         ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
+                       )
+                     + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
+                    ) AS boosted_score
             FROM chunks c
             JOIN sources s ON c.source_id = s.id
             WHERE s.status = 'active'
-            ORDER BY c.embedding <=> $1::vector
-            LIMIT $2
+            ORDER BY boosted_score DESC
+            LIMIT $5
             """,
             np.array(query_vector, dtype=np.float32),
+            settings.tag_match_weight,
+            user_tags,
+            settings.org_tag_weight,
             limit,
         )
+
+    from docforge.query_log import log_query
+    await log_query(pool, user_name, team_name, area_name, query, len(rows))
 
     if not rows:
         return (
@@ -97,7 +116,6 @@ async def search_documentation(query: str, limit: int = 5) -> str:
             "The index may be empty -- run `python -m docforge ingest` to populate it."
         )
 
-    # Format results
     parts: list[str] = []
     for i, row in enumerate(rows, 1):
         similarity = row["similarity"]
@@ -105,11 +123,14 @@ async def search_documentation(query: str, limit: int = 5) -> str:
         url = row["source_url"]
         section = row["section_title"]
         text = row["text"]
+        tags = list(row["source_tags"] or [])
 
         header = f"**Result {i}** (relevance: {similarity:.2f}) — {source}"
         if section:
             header += f" > {section}"
         header += f"\nSource: {url}"
+        if tags:
+            header += f"\nTags: {', '.join(tags)}"
 
         parts.append(f"{header}\n\n{text}")
 
