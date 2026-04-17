@@ -1,4 +1,4 @@
-"""FastAPI search API for knowledge-hub.
+"""FastAPI search API for docforge.
 
 Runs on Azure Container Apps. Loads embedding model at startup,
 serves search queries over HTTP.
@@ -12,7 +12,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from docforge.config import Settings
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
-app = FastAPI(title="knowledge-hub", lifespan=lifespan)
+app = FastAPI(title="docforge", lifespan=lifespan)
 
 
 class SearchRequest(BaseModel):
@@ -68,7 +68,8 @@ class SearchResponse(BaseModel):
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict:
+    """Health check endpoint."""
     return {
         "status": "ok",
         "model": _embedder.model_name if _embedder else "not loaded",
@@ -76,29 +77,41 @@ async def health():
 
 
 @app.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest):
-    settings = _get_settings()
-    query_vector = _embedder.embed_query(req.query)
+async def search(req: SearchRequest) -> SearchResponse:
+    """Search indexed documentation by semantic similarity."""
+    if not _embedder:
+        raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
 
-    pool = await get_pool(settings.database_url)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT
-                c.text,
-                c.section_title,
-                s.title AS source_title,
-                s.url AS source_url,
-                1 - (c.embedding <=> $1::vector) AS similarity
-            FROM chunks c
-            JOIN sources s ON c.source_id = s.id
-            WHERE s.status = 'active'
-            ORDER BY c.embedding <=> $1::vector
-            LIMIT $2
-            """,
-            np.array(query_vector, dtype=np.float32),
-            req.limit,
-        )
+    try:
+        query_vector = _embedder.embed_query(req.query)
+    except Exception as e:
+        logger.error("Embedding failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to embed query")
+
+    settings = _get_settings()
+    try:
+        pool = await get_pool(settings.database_url)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    c.text,
+                    c.section_title,
+                    s.title AS source_title,
+                    s.url AS source_url,
+                    1 - (c.embedding <=> $1::vector) AS similarity
+                FROM chunks c
+                JOIN sources s ON c.source_id = s.id
+                WHERE s.status = 'active'
+                ORDER BY c.embedding <=> $1::vector
+                LIMIT $2
+                """,
+                np.array(query_vector, dtype=np.float32),
+                req.limit,
+            )
+    except Exception as e:
+        logger.error("Database error during search: %s", e)
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
     results = [
         SearchResult(
@@ -115,18 +128,24 @@ async def search(req: SearchRequest):
 
 
 @app.get("/sources")
-async def list_sources():
+async def list_sources() -> dict:
+    """List all indexed documentation sources."""
     settings = _get_settings()
-    pool = await get_pool(settings.database_url)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT title, url, status, last_crawled_at,
-                   (SELECT count(*) FROM chunks WHERE source_id = s.id) AS chunk_count
-            FROM sources s
-            ORDER BY title
-            """
-        )
+    try:
+        pool = await get_pool(settings.database_url)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT title, url, status, last_crawled_at,
+                       (SELECT count(*) FROM chunks WHERE source_id = s.id) AS chunk_count
+                FROM sources s
+                ORDER BY title
+                """
+            )
+    except Exception as e:
+        logger.error("Database error listing sources: %s", e)
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
     return {
         "count": len(rows),
         "sources": [
