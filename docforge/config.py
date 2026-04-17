@@ -1,3 +1,11 @@
+"""Settings loading — merges defaults, docforge.yml, .env, env vars, and kwargs.
+
+Note: current precedence is kwargs > yml > env > .env > defaults, because
+yml values flow through `super().__init__(**merged)` which pydantic-settings
+treats as init-kwargs (highest priority). Fixing this to match the intended
+"env overrides yml" behavior is tracked outside Phase 3.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

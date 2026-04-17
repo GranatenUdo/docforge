@@ -1,3 +1,5 @@
+"""Token-aware chunker — splits sections into chunks under a token limit."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

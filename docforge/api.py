@@ -35,6 +35,7 @@ def _get_settings() -> Settings:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Load the embedding model at startup; close the DB pool on shutdown."""
     global _embedder
     settings = _get_settings()
     logger.info("Loading embedding model...")

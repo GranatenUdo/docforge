@@ -1,3 +1,5 @@
+"""Confluence REST API v2 page crawler with retry logic for transient errors."""
+
 from __future__ import annotations
 
 import hashlib

@@ -153,6 +153,7 @@ async def list_sources() -> str:
 
 
 def main() -> None:
+    """Configure logging and start the FastMCP server on stdio transport."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",

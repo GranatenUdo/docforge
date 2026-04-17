@@ -1,3 +1,10 @@
+"""Ingest pipeline — crawl → parse → chunk → embed → store.
+
+`ingest_all` loads the sources list and runs the appropriate crawler for
+each source type (Confluence page or local git repo). Per-source failures
+are logged but do not abort the run.
+"""
+
 from __future__ import annotations
 
 import logging

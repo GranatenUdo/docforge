@@ -1,3 +1,9 @@
+"""Source configuration — pydantic models + YAML loader.
+
+Each entry in `sources.yml` is a ConfluenceSourceConfig or a
+GitRepoSourceConfig, discriminated by the `type` field.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
