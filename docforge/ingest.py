@@ -116,15 +116,16 @@ async def _ingest_confluence_source(
                 """
                 INSERT INTO sources (type, url, title, confluence_page_id,
                                      confluence_space_key, last_crawled_at,
-                                     content_hash, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+                                     content_hash, status, tags)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8)
                 ON CONFLICT (confluence_page_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
                     url = EXCLUDED.url,
                     last_crawled_at = EXCLUDED.last_crawled_at,
                     content_hash = EXCLUDED.content_hash,
-                    status = 'active'
+                    status = 'active',
+                    tags = EXCLUDED.tags
                 RETURNING id
                 """,
                 source.type,
@@ -134,6 +135,7 @@ async def _ingest_confluence_source(
                 source.space_key,
                 datetime.now(timezone.utc),
                 page.content_hash,
+                source.tags,
             )
 
             await conn.execute("DELETE FROM chunks WHERE source_id = $1", source_id)
@@ -192,15 +194,16 @@ async def _ingest_git_source(
                 source_id = await conn.fetchval(
                     """
                     INSERT INTO sources (type, url, title, source_identifier,
-                                         last_crawled_at, content_hash, status)
-                    VALUES ($1, $2, $3, $4, $5, $6, 'active')
+                                         last_crawled_at, content_hash, status, tags)
+                    VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
                     ON CONFLICT (source_identifier)
                         WHERE source_identifier IS NOT NULL
                     DO UPDATE SET
                         title = EXCLUDED.title,
                         last_crawled_at = EXCLUDED.last_crawled_at,
                         content_hash = EXCLUDED.content_hash,
-                        status = 'active'
+                        status = 'active',
+                        tags = EXCLUDED.tags
                     RETURNING id
                     """,
                     "git_repo",
@@ -209,6 +212,7 @@ async def _ingest_git_source(
                     identifier,
                     datetime.now(timezone.utc),
                     file.content_hash,
+                    source.tags,
                 )
 
                 await conn.execute(

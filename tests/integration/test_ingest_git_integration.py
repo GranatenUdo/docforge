@@ -36,6 +36,7 @@ async def test_end_to_end_ingest_and_search(
         f'    repo_path: "{repo.as_posix()}"\n'
         "    include_patterns: [\"README.md\", \"CLAUDE.md\"]\n"
         "    title: \"TestRepo\"\n"
+        "    tags: [ccl, cloud]\n"
     )
 
     settings = Settings(sources_file=str(sources_file), database_url=pg_url)
@@ -50,6 +51,10 @@ async def test_end_to_end_ingest_and_search(
         chunk_count = await conn.fetchval("SELECT count(*) FROM chunks")
         assert source_count == 2
         assert chunk_count >= 2
+
+        tags_rows = await conn.fetch("SELECT tags FROM sources")
+        for row in tags_rows:
+            assert row["tags"] == ["ccl", "cloud"]
 
         query_vec = np.zeros(768, dtype=np.float32)
         query_vec[767] = 0.001
