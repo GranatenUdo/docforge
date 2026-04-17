@@ -70,11 +70,9 @@ class TestPrecedence:
     def test_yml_overrides_env_due_to_init_kwarg_pass_through(
         self, tmp_path, monkeypatch
     ):
-        # config.py passes yml values through super().__init__(**merged),
-        # which pydantic-settings treats as init-kwargs — highest priority.
-        # This overrides env vars, contrary to the "env_vars override" comment
-        # in the code. Documented here to pin current behavior; fixing the
-        # precedence is out of Phase 3 scope.
+        # yml values flow through super().__init__(**merged), which
+        # pydantic-settings treats as init-kwargs — higher priority than
+        # env vars.
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
             "database_url: postgresql://yml:yml@yml:5432/yml\n"

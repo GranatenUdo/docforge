@@ -1,15 +1,17 @@
 """Integration test fixtures — pgvector testcontainer + schema setup.
 
-Session-scoped container (one startup per pytest run, ~10s cold start)
-with a function-scoped URL fixture that applies the schema and truncates
-between tests for isolation.
+Container, connection URL, and schema are all session-scoped so the setup
+cost (~5s) happens once per pytest run. Per-test isolation is provided by
+truncating the tables between tests in `pg_url`.
 
 All tests in this directory are auto-marked with @pytest.mark.integration.
 """
 
 from __future__ import annotations
 
+import asyncpg
 import pytest
+import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
 
@@ -27,23 +29,30 @@ def pg_container():
         yield pg
 
 
-@pytest.fixture
-async def pg_url(pg_container):
-    """Fresh schema per test; truncate between tests for isolation."""
-    # driver=None gives a plain postgresql:// URL (no +psycopg2 suffix),
-    # which is what asyncpg expects. Verified against testcontainers 4.14.
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _pg_url_session(pg_container):
+    """Session-scoped URL with schema applied once.
+
+    The module-level asyncpg pool is not closed here. Its owning event loop
+    is the per-test loop (long dead by the time session teardown runs), so
+    closing it would fail. The container tears down on session exit and the
+    OS reclaims the sockets.
+    """
     url = pg_container.get_connection_url(driver=None)
 
-    from docforge.db import close_pool, init_db
+    from docforge.db import init_db
 
     await init_db(url)
     yield url
 
-    import asyncpg
 
+@pytest.fixture
+async def pg_url(_pg_url_session):
+    """Per-test URL: truncate tables so tests are isolated."""
+    url = _pg_url_session
     conn = await asyncpg.connect(url)
     try:
         await conn.execute("TRUNCATE sources, chunks RESTART IDENTITY CASCADE")
     finally:
         await conn.close()
-    await close_pool()
+    yield url

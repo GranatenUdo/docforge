@@ -5,6 +5,42 @@ from __future__ import annotations
 import pytest
 
 
+class FakeConn:
+    """Read-only asyncpg connection stand-in: `fetch` returns preset rows."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def fetch(self, query, *args):
+        return self._rows
+
+
+class _AcquireCtx:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def __aenter__(self):
+        return FakeConn(self._rows)
+
+    async def __aexit__(self, *a):
+        return None
+
+
+class FakePool:
+    """asyncpg pool stand-in for tests that only issue read queries.
+
+    Tests that need transactions or fetchval routing (e.g. ingest tests)
+    define their own richer conn fake locally — this helper targets the
+    common "fetch returns these rows" case used by api and mcp_server tests.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def acquire(self):
+        return _AcquireCtx(self._rows)
+
+
 class FakeEmbedder:
     """Deterministic stand-in for docforge.processors.embedder.Embedder.
 

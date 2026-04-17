@@ -8,32 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
-class _FakeConn:
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-
-class _AcquireCtx:
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def __aenter__(self):
-        return _FakeConn(self._rows)
-
-    async def __aexit__(self, *a):
-        return None
-
-
-class FakePool:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def acquire(self):
-        return _AcquireCtx(self._rows)
+from tests.conftest import FakePool
 
 
 @pytest.fixture

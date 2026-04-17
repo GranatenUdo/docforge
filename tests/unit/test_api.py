@@ -11,36 +11,10 @@ from httpx import ASGITransport, AsyncClient
 
 from docforge import api as api_module
 from docforge.api import app
+from tests.conftest import FakePool
 
 
-class _FakeConn:
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-
-class _AcquireCtx:
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def __aenter__(self):
-        return _FakeConn(self._rows)
-
-    async def __aexit__(self, *a):
-        return None
-
-
-class FakePool:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def acquire(self):
-        return _AcquireCtx(self._rows)
-
-
-async def _client():
+def _client():
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
 
@@ -48,7 +22,7 @@ async def _client():
 class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_returns_ok(self):
-        async with await _client() as client:
+        async with _client() as client:
             resp = await client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -60,7 +34,7 @@ class TestSearchEndpoint:
         original = api_module._embedder
         api_module._embedder = None
         try:
-            async with await _client() as client:
+            async with _client() as client:
                 resp = await client.post("/search", json={"query": "q", "limit": 1})
             assert resp.status_code == 503
             assert "not loaded" in resp.json()["detail"]
@@ -97,7 +71,7 @@ class TestSearchEndpoint:
         )
 
         try:
-            async with await _client() as client:
+            async with _client() as client:
                 resp = await client.post("/search", json={"query": "q", "limit": 5})
         finally:
             api_module._embedder = None
@@ -125,7 +99,7 @@ class TestSearchEndpoint:
         )
 
         try:
-            async with await _client() as client:
+            async with _client() as client:
                 resp = await client.post("/search", json={"query": "q", "limit": 1})
         finally:
             api_module._embedder = None
@@ -140,7 +114,7 @@ class TestSearchEndpoint:
         api_module._embedder = fake_embedder
 
         try:
-            async with await _client() as client:
+            async with _client() as client:
                 resp = await client.post("/search", json={"query": "q", "limit": 1})
         finally:
             api_module._embedder = None
@@ -173,7 +147,7 @@ class TestSourcesEndpoint:
             lambda: SimpleNamespace(database_url="postgresql://fake"),
         )
 
-        async with await _client() as client:
+        async with _client() as client:
             resp = await client.get("/sources")
 
         assert resp.status_code == 200
@@ -194,7 +168,7 @@ class TestSourcesEndpoint:
             lambda: SimpleNamespace(database_url="postgresql://fake"),
         )
 
-        async with await _client() as client:
+        async with _client() as client:
             resp = await client.get("/sources")
 
         assert resp.status_code == 503
