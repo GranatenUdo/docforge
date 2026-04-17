@@ -1,7 +1,10 @@
-# Maturity Assessment — Design
+# Maturity Assessment — Design (SUPERSEDED)
+
+> **Superseded by `docs/superpowers/phase-4-plan.md` (2026-04-17).**
+> Retained as early thinking. The readiness assessment is now Spec D in a four-spec Phase 4 plan, with the artifact living in `knowledge-hub/rag/docs/` (DocuWare deployment) rather than `docforge/docs/` (generic engine). Do not implement from this spec — follow the Phase 4 plan instead.
 
 **Date:** 2026-04-17
-**Status:** Approved, ready for implementation
+**Status:** Superseded
 **Scope:** Produce a stakeholder-facing readiness assessment of docforge, framed as a TRL-style artifact for an architecture-group audience.
 
 ## Context
