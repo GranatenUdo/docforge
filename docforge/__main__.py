@@ -1,3 +1,3 @@
-from docforge.cli import main
+from docforge.cli import app
 
-main()
+app()

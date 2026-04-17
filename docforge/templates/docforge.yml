@@ -1,0 +1,11 @@
+# docforge.yml — main configuration
+# Secrets (API tokens, passwords) go in .env, not here.
+
+database_url: postgresql://docforge:localdev@localhost:5432/docforge
+
+embedding:
+  model: google/embeddinggemma-300m
+  dimensions: 768
+  chunk_max_tokens: 500
+
+sources_file: sources.yml

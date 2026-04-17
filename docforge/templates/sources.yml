@@ -1,0 +1,21 @@
+# sources.yml — documentation sources to index
+# Uncomment and edit the examples below.
+
+sources: []
+
+  # Confluence pages (need CONFLUENCE_* vars in .env):
+  # - type: confluence_page
+  #   page_id: "12345"
+  #   space_key: MYSPACE
+  #   title: "My Team's Documentation"
+  #
+  # - type: confluence_page
+  #   page_id: "67890"
+  #   space_key: MYSPACE
+  #   title: "Architecture Guidelines"
+
+  # Local git repos (no auth needed):
+  # - type: git_repo
+  #   repo_path: "/path/to/my-repo"
+  #   include_patterns: ["README.md", "CLAUDE.md", "docs/**/*.md"]
+  #   title: "My Repo"
