@@ -34,14 +34,28 @@ class Embedder:
         except Exception:
             fallback = "sentence-transformers/all-MiniLM-L6-v2"
             logger.warning(
-                "Failed to load %s, falling back to %s", model_name, fallback, exc_info=True
+                "Failed to load %s, falling back to %s",
+                model_name,
+                fallback,
+                exc_info=True,
             )
-            self._model = SentenceTransformer(fallback)
-            self.model_name = fallback
-            self.dimensions = self._model.get_embedding_dimension()
-            logger.info(
-                "Fallback model loaded: %s (%d dimensions)", self.model_name, self.dimensions
-            )
+            try:
+                self._model = SentenceTransformer(fallback)
+                self.model_name = fallback
+                self.dimensions = self._model.get_embedding_dimension()
+                logger.info(
+                    "Fallback model loaded: %s (%d dimensions)",
+                    self.model_name,
+                    self.dimensions,
+                )
+            except Exception:
+                logger.error(
+                    "Failed to load fallback model %s", fallback, exc_info=True
+                )
+                raise RuntimeError(
+                    f"No embedding model available. "
+                    f"Primary ({model_name}) and fallback ({fallback}) both failed."
+                )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts.
