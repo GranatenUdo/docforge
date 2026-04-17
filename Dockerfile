@@ -14,8 +14,6 @@ ARG HF_TOKEN=""
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('google/embeddinggemma-300m', token='${HF_TOKEN}' or None)"
 
 COPY docforge/ docforge/
-COPY schema.sql .
-COPY migrations/ migrations/
 
 EXPOSE 8000
 

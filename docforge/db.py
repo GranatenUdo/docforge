@@ -29,19 +29,20 @@ async def close_pool() -> None:
         _pool = None
 
 
-async def init_db(database_url: str, schema_path: str = "schema.sql") -> None:
-    """Apply schema.sql and any migrations to the database."""
-    from pathlib import Path
+async def init_db(database_url: str) -> None:
+    """Apply schema and migrations from the docforge package."""
+    import importlib.resources as resources
+
+    sql_dir = resources.files("docforge") / "sql"
+    schema_sql = (sql_dir / "schema.sql").read_text(encoding="utf-8")
 
     conn = await asyncpg.connect(database_url)
     try:
-        with open(schema_path) as f:
-            await conn.execute(f.read())
+        await conn.execute(schema_sql)
 
-        migrations_dir = Path(schema_path).parent / "migrations"
-        if migrations_dir.is_dir():
-            for migration in sorted(migrations_dir.glob("*.sql")):
-                with open(migration) as f:
-                    await conn.execute(f.read())
+        migrations_dir = sql_dir / "migrations"
+        for migration in sorted(migrations_dir.iterdir()):
+            if str(migration).endswith(".sql"):
+                await conn.execute(migration.read_text(encoding="utf-8"))
     finally:
         await conn.close()

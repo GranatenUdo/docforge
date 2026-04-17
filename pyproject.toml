@@ -38,7 +38,7 @@ dev = [
 include = ["docforge*"]
 
 [tool.setuptools.package-data]
-docforge = ["templates/**/*"]
+docforge = ["templates/**/*", "sql/**/*"]
 
 [tool.ruff]
 line-length = 100
