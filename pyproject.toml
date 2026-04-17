@@ -32,7 +32,9 @@ docforge = "docforge.cli:app"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=7.0",
     "ruff>=0.8",
+    "testcontainers[postgres]>=4.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -51,3 +53,15 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: requires Docker (pgvector container)",
+]
+addopts = "--cov=docforge"
+
+[tool.coverage.report]
+fail_under = 60
+exclude_also = [
+    "if __name__ == \"__main__\":",
+    "pragma: no cover",
+    "raise NotImplementedError",
+]
