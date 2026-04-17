@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -34,6 +35,7 @@ def _get_settings() -> Settings:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Load the embedding model at startup; close the DB pool on shutdown."""
     global _embedder
     settings = _get_settings()
     logger.info("Loading embedding model...")
@@ -68,7 +70,7 @@ class SearchResponse(BaseModel):
 
 
 @app.get("/health")
-async def health() -> dict:
+async def health() -> dict[str, Any]:
     """Health check endpoint."""
     return {
         "status": "ok",
@@ -128,7 +130,7 @@ async def search(req: SearchRequest) -> SearchResponse:
 
 
 @app.get("/sources")
-async def list_sources() -> dict:
+async def list_sources() -> dict[str, Any]:
     """List all indexed documentation sources."""
     settings = _get_settings()
     try:

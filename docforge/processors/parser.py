@@ -1,3 +1,5 @@
+"""Confluence storage-format HTML parser — yields Section objects."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

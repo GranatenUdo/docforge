@@ -1,3 +1,10 @@
+"""Settings loading — merges defaults, docforge.yml, .env, env vars, and kwargs.
+
+Precedence: kwargs > yml > env > .env > defaults. yml values are passed to
+pydantic-settings via `super().__init__(**merged)`, which treats them as
+init-kwargs (highest priority after explicit kwargs).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,7 +36,7 @@ class Settings(BaseSettings):
     # Sources config
     sources_file: str = "sources.yml"
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")
         yml_values = {}

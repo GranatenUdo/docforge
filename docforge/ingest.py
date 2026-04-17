@@ -1,7 +1,15 @@
+"""Ingest pipeline — crawl → parse → chunk → embed → store.
+
+`ingest_all` loads the sources list and runs the appropriate crawler for
+each source type (Confluence page or local git repo). Per-source failures
+are logged but do not abort the run.
+"""
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Callable
 
 import asyncpg
 import numpy as np
@@ -68,7 +76,7 @@ async def _ingest_confluence_source(
     settings: Settings,
     pool: asyncpg.Pool,
     embedder: Embedder,
-    tokenizer_fn: callable,
+    tokenizer_fn: Callable[[str], int],
 ) -> None:
     """Ingest a single Confluence page: crawl, parse HTML, chunk, embed, store."""
     logger.info("Crawling Confluence: %s (page_id=%s)", source.title, source.page_id)
@@ -151,7 +159,7 @@ async def _ingest_git_source(
     source: GitRepoSourceConfig,
     pool: asyncpg.Pool,
     embedder: Embedder,
-    tokenizer_fn: callable,
+    tokenizer_fn: Callable[[str], int],
 ) -> None:
     """Ingest documentation files from a local git repository."""
     logger.info("Crawling git repo: %s (%s)", source.title, source.repo_path)
