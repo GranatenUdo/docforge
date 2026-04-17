@@ -59,6 +59,23 @@ For team-wide use, deploy the search API to Azure Container Apps (~$24/month):
 
 See `infrastructure/` for Bicep templates and `docs/deploy-azure.md` for instructions.
 
+## Troubleshooting
+
+### "Cannot connect to PostgreSQL"
+Check that the database is running: `docker compose up -d db`. Verify `DATABASE_URL` in `.env` points to `postgresql://docforge:localdev@localhost:5432/docforge` (or your custom value).
+
+### "HF_TOKEN required" or model download fails
+The embedding model `google/embeddinggemma-300m` requires a Hugging Face token with access to the gated model. Create one at https://huggingface.co/settings/tokens, accept the model license at https://huggingface.co/google/embeddinggemma-300m, and set `HF_TOKEN=hf_...` in `.env`.
+
+### "No results found" after ingest
+Run `docforge status` to confirm sources and chunks exist. If counts are zero, check the ingest logs for per-source failures — the summary at the end lists sources that failed.
+
+### First ingest / first container start is very slow
+The first run downloads the 300M embedding model (~1.2GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts don't re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`.
+
+### "Ingest skipped everything"
+docforge skips sources whose `content_hash` matches the stored hash (no changes detected). To force re-ingest, clear the hash: `UPDATE sources SET content_hash = NULL;` then run `docforge ingest`.
+
 ## License
 
 MIT
