@@ -63,17 +63,17 @@ This keeps the fast path fast (unit tests run in <2s) while giving us real confi
 
 | Module | Target | How |
 |---|---:|---|
-| `__main__.py` | 100% | Import test |
+| `__main__.py` | ~50% | Subprocess invocation (`python -m docforge --help`) — importing directly runs `app()` which parses argv |
 | `cli.py` | ~75% | `CliRunner` + patched internal coroutines for each subcommand |
 | `ingest.py` | ~70% | Mock `get_pool`, `crawl_page`, `crawl_repo`, `Embedder`; integration test covers git flow end-to-end |
 | `mcp_server.py` | ~85% | Call `search_documentation` / `list_sources` directly with mocked pool + embedder |
-| `crawlers/confluence.py` | ~85% | `httpx.MockTransport` covering success, 401, 404, pagination edge cases |
+| `crawlers/confluence.py` | ~85% | `httpx.MockTransport` covering: success, 401 auth error, 404 not found, 429/503 transient retry, max-retries-exceeded, timeout retry |
 | `db.py` | ~90% | Integration test covers `init_db`, pool lifecycle, `close_pool` |
 | `api.py` | ~85% | Extend existing tests: `/search` success path, `/sources`, DB-error paths |
 | `config.py` | ~95% | YAML loading, env-var override precedence, missing-file fallback |
-| `embedder.py` | ~40% | Mock `SentenceTransformer` at class level; verify fallback-model logic only |
+| `embedder.py` | ~85% | Patch `sentence_transformers.SentenceTransformer` to exercise primary-load, fallback-load, and both-fail paths; test `embed`, `embed_query`, `get_tokenizer_fn` with a fake model |
 
-**Projected total: ~75-80%**, comfortably above the 60% gate.
+**Projected total: ~80-85%**, comfortably above the 60% gate.
 
 ### Test layout
 
@@ -113,24 +113,20 @@ testpaths = ["tests"]
 markers = [
     "integration: requires Docker (pgvector container)",
 ]
-addopts = "--cov=docforge --cov-fail-under=60"
+addopts = "--cov=docforge"
+
+[tool.coverage.report]
+fail_under = 60
+exclude_also = [
+    "if __name__ == \"__main__\":",
+    "pragma: no cover",
+    "raise NotImplementedError",
+]
 ```
 
-Note: `addopts` applies `--cov` on every invocation. Integration runs extend the same coverage report rather than run it separately.
+Rationale for not putting `--cov-fail-under=60` in `addopts`: it would cause single-file runs like `pytest tests/unit/test_parser.py` to fail the gate, since a single file only exercises part of the code. `[tool.coverage.report] fail_under = 60` is honored by pytest-cov on full-suite runs and by `coverage report` separately.
 
-Create `.coveragerc`:
-
-```ini
-[run]
-omit =
-    docforge/templates/*
-
-[report]
-exclude_also =
-    if __name__ == "__main__":
-    pragma: no cover
-    raise NotImplementedError
-```
+Coverage configuration lives inline in `pyproject.toml` (above) — no separate `.coveragerc` needed.
 
 ### Integration test fixtures
 
@@ -223,17 +219,64 @@ No exhaustive audit; these are the concrete issues found while reading the code.
 
 ## Dockerfile hardening
 
-Current `Dockerfile` has no HEALTHCHECK, runs as root, has no `.dockerignore`.
+Current `Dockerfile` has no HEALTHCHECK, runs as root, has no `.dockerignore`, and bakes the 1.2GB embedding model into the image via an `HF_TOKEN` build arg.
 
-Changes:
-1. Add `curl` to the apt-get install line (~1MB) for the HEALTHCHECK command.
-2. Add `HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD curl -fsS http://localhost:8000/health || exit 1`. The 60s `start-period` covers model loading on cold start.
-3. After `COPY docforge/ docforge/`, add:
-   ```
-   RUN useradd -m -u 1000 docforge && chown -R docforge:docforge /app
-   USER docforge
-   ```
-4. Create `.dockerignore` at repo root excluding `.venv/`, `.git/`, `__pycache__/`, `*.pyc`, `tests/`, `.pytest_cache/`, `.coverage`, `*.egg-info/`, `docs/`, `infrastructure/`. Cuts build context dramatically.
+**Key decision:** drop the build-time model pre-download. Resulting image is ~800MB instead of ~2GB. First container start downloads the model into `/app/.cache/huggingface/` — which should be a mounted volume in production so restarts don't re-download.
+
+Changes to `Dockerfile`:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir "."
+
+COPY docforge/ docforge/
+
+RUN useradd -m -u 1000 docforge && \
+    mkdir -p /app/.cache/huggingface && \
+    chown -R docforge:docforge /app
+
+USER docforge
+
+ENV HF_HOME=/app/.cache/huggingface
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').read() else 1)"
+
+CMD ["uvicorn", "docforge.api:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Notes on each change:
+- **HEALTHCHECK**: uses Python stdlib instead of `curl` to avoid a ~3MB apt install. Python is already present. `start-period=300s` covers the first-start model download (the FastAPI `lifespan` loads the model before the app serves, so `/health` is unresponsive during download).
+- **Non-root user (UID 1000)**: user home is `/home/docforge` (created by `useradd -m`), app code and cache are in `/app` (owned by docforge).
+- **`HF_HOME=/app/.cache/huggingface`**: gives the model cache a predictable, mountable location. Without this, the default `~/.cache/huggingface/` lands in the user's home dir which is harder to mount.
+- **Removed `ARG HF_TOKEN` and the pre-download `RUN python -c ...` step**: no longer needed.
+- **HF_TOKEN at runtime**: container operators must still pass `HF_TOKEN` as an environment variable at runtime (for gated models); this is a runtime concern, not a build concern.
+
+Create `.dockerignore` at repo root:
+```
+.venv/
+.git/
+__pycache__/
+*.pyc
+tests/
+.pytest_cache/
+.coverage
+*.egg-info/
+docs/
+infrastructure/
+```
+
+Cuts build context dramatically.
 
 ## README troubleshooting section
 
@@ -251,8 +294,8 @@ The embedding model `google/embeddinggemma-300m` requires a Hugging Face token w
 ### "No results found" after ingest
 Run `docforge status` to confirm sources and chunks exist. If counts are zero, check the ingest logs for per-source failures — the summary at the end lists sources that failed.
 
-### First ingest is very slow
-The first run downloads the 300M embedding model (~1.2GB) from Hugging Face. The model is cached at `~/.cache/huggingface/` and subsequent runs skip the download.
+### First ingest / first container start is very slow
+The first run downloads the 300M embedding model (~1.2GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts don't re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`.
 
 ### "Ingest skipped everything"
 docforge skips sources whose `content_hash` matches the stored hash (no changes detected). To force re-ingest, clear the hash: `UPDATE sources SET content_hash = NULL;` then run `docforge ingest`.
@@ -265,12 +308,13 @@ docforge skips sources whose `content_hash` matches the stored hash (no changes 
 - [ ] `pytest -m integration` runs against a pgvector testcontainer and passes.
 - [ ] All modules listed in the docstring audit have a module-level docstring.
 - [ ] `ingest.py` and `api.py` type-hint issues fixed.
-- [ ] `docker build .` succeeds; resulting image has HEALTHCHECK configured (`docker inspect` shows it) and runs as UID 1000.
-- [ ] `.dockerignore` exists at repo root.
+- [ ] `docker build .` succeeds with no `HF_TOKEN` build arg required.
+- [ ] `docker inspect <image>` shows HEALTHCHECK configured and `User: docforge` (UID 1000).
+- [ ] `.dockerignore` exists at repo root and excludes `.venv/`, `.git/`, `tests/`, `__pycache__/`, `docs/`.
 - [ ] README has a `## Troubleshooting` section with the 5 entries above.
 
-## Risks and open questions
+## Risks and notes
 
-- **Docker in CI**: `testcontainers` needs a Docker daemon. If CI runs on hosts without Docker, integration tests must be gated (`pytest -m "not integration"` as the CI default, run integration separately). The plan should specify CI config if one exists.
-- **Baseline mismatch**: User referenced a 12.8% baseline but current measured baseline is 35%. Not blocking — we are still targeting ≥60%.
-- **pytest-cov dep**: Need to add `pytest-cov>=7.0` and `testcontainers[postgres]>=4.0` to `[project.optional-dependencies].dev`.
+- **No CI config currently exists** in this repo. Phase 3 adds no CI — integration tests are expected to run on dev machines (Docker Desktop confirmed available). If/when CI is added, it must run a Docker-capable runner for integration tests, or default to `pytest -m "not integration"`.
+- **Baseline mismatch**: user referenced a 12.8% figure but the measured baseline at start of Phase 3 is 35%. Not blocking; target remains ≥60%.
+- **First container start downloads ~1.2GB**: dropped from Phase 2's build-time pre-download. Operators should mount a named volume at `/app/.cache/huggingface` for production deployments.
