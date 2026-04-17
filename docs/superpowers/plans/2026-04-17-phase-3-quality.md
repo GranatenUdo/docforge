@@ -1102,10 +1102,13 @@ class _Conn:
         self.executed = []
 
     async def fetchval(self, query, *args):
-        if "source_id" in query.lower() or "RETURNING id" in query:
+        q = query.strip().lower()
+        # Match INSERT ... RETURNING id specifically (avoids false positives
+        # on strings like "source_identifier" which contain "source_id").
+        if "returning id" in q:
             self.inserted_sources.append(args)
             return "fake-source-id"
-        if "content_hash" in query:
+        if q.startswith("select content_hash"):
             return self.existing_hash
         return None
 
@@ -1546,12 +1549,9 @@ def pg_container():
 @pytest.fixture
 async def pg_url(pg_container):
     """Fresh schema per test; truncate between tests for isolation."""
-    url = pg_container.get_connection_url()
-    # asyncpg uses postgresql://, not postgresql+psycopg2://
-    if url.startswith("postgresql+psycopg2://"):
-        url = url.replace("postgresql+psycopg2://", "postgresql://")
-    elif url.startswith("postgresql+psycopg://"):
-        url = url.replace("postgresql+psycopg://", "postgresql://")
+    # driver=None gives a plain postgresql:// URL (no +psycopg2 suffix),
+    # which is what asyncpg expects. Verified against testcontainers 4.14.
+    url = pg_container.get_connection_url(driver=None)
 
     from docforge.db import close_pool, init_db
 
