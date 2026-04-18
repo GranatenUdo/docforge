@@ -298,6 +298,44 @@ resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview
   }
 }
 
+// First-pass (no real image): minimal Container App — no ACR registries,
+// no KV secrets, no probes, port 80 (hello-world default). This avoids
+// identity/role-propagation races that block revision provisioning.
+// Second-pass (containerImage set): full config with KV-backed secrets,
+// ACR pull via identity, HTTP probes on /health, port 8000.
+var realContainerSecrets = [
+  {
+    name: 'hf-token'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/hf-token'
+    identity: 'system'
+  }
+  {
+    name: 'confluence-api-token'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/confluence-api-token'
+    identity: 'system'
+  }
+  {
+    name: 'database-url'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/database-url'
+    identity: 'system'
+  }
+]
+
+var realContainerEnv = [
+  {
+    name: 'HF_TOKEN'
+    secretRef: 'hf-token'
+  }
+  {
+    name: 'CONFLUENCE_API_TOKEN'
+    secretRef: 'confluence-api-token'
+  }
+  {
+    name: 'DATABASE_URL'
+    secretRef: 'database-url'
+  }
+]
+
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
@@ -310,33 +348,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: hasRealImage ? 8000 : 80
         allowInsecure: false
         transport: 'http'
       }
-      registries: [
+      registries: hasRealImage ? [
         {
           server: acr.properties.loginServer
           identity: 'system'
         }
-      ]
-      secrets: [
-        {
-          name: 'hf-token'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/hf-token'
-          identity: 'system'
-        }
-        {
-          name: 'confluence-api-token'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/confluence-api-token'
-          identity: 'system'
-        }
-        {
-          name: 'database-url'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/database-url'
-          identity: 'system'
-        }
-      ]
+      ] : []
+      secrets: hasRealImage ? realContainerSecrets : []
     }
     template: {
       containers: [
@@ -347,20 +369,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          env: [
-            {
-              name: 'HF_TOKEN'
-              secretRef: 'hf-token'
-            }
-            {
-              name: 'CONFLUENCE_API_TOKEN'
-              secretRef: 'confluence-api-token'
-            }
-            {
-              name: 'DATABASE_URL'
-              secretRef: 'database-url'
-            }
-          ]
+          env: hasRealImage ? realContainerEnv : []
           probes: probes
         }
       ]
