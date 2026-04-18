@@ -255,8 +255,38 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 
 // ─── Container App ──────────────────────────────────────────────────────
 
+// If containerImage is empty (first-pass deploy before the docforge image
+// is pushed to ACR), use a hello-world placeholder and omit the probes —
+// hello-world has no /health endpoint, so probes would fail-loop and kill
+// the revision. After pushing the real image, re-deploy with containerImage
+// set to enable the probes.
 var defaultImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-var effectiveImage = empty(containerImage) ? defaultImage : containerImage
+var hasRealImage = !empty(containerImage)
+var effectiveImage = hasRealImage ? containerImage : defaultImage
+var probes = hasRealImage ? [
+  {
+    type: 'Startup'
+    httpGet: {
+      path: '/health'
+      port: 8000
+    }
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 60
+  }
+  {
+    type: 'Liveness'
+    httpGet: {
+      path: '/health'
+      port: 8000
+    }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  }
+] : []
 
 var databaseUrl = 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${databaseName}?sslmode=require'
 
@@ -331,35 +361,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               secretRef: 'database-url'
             }
           ]
-          probes: [
-            {
-              // Startup probe: runs first; allows up to 10 min for the
-              // FastAPI lifespan to finish loading the 1.2GB embedding
-              // model before Container Apps considers the revision ready.
-              // (Container Apps caps initialDelaySeconds at 60, so the
-              // long startup is expressed via periodSeconds * failureThreshold.)
-              type: 'Startup'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 10
-              periodSeconds: 10
-              timeoutSeconds: 5
-              failureThreshold: 60
-            }
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 30
-              periodSeconds: 30
-              timeoutSeconds: 5
-              failureThreshold: 3
-            }
-          ]
+          probes: probes
         }
       ]
       scale: {
