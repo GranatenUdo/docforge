@@ -333,12 +333,28 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           ]
           probes: [
             {
+              // Startup probe: runs first; allows up to 10 min for the
+              // FastAPI lifespan to finish loading the 1.2GB embedding
+              // model before Container Apps considers the revision ready.
+              // (Container Apps caps initialDelaySeconds at 60, so the
+              // long startup is expressed via periodSeconds * failureThreshold.)
+              type: 'Startup'
+              httpGet: {
+                path: '/health'
+                port: 8000
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 60
+            }
+            {
               type: 'Liveness'
               httpGet: {
                 path: '/health'
                 port: 8000
               }
-              initialDelaySeconds: 300
+              initialDelaySeconds: 30
               periodSeconds: 30
               timeoutSeconds: 5
               failureThreshold: 3
