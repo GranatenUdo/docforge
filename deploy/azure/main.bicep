@@ -84,6 +84,9 @@ param hfToken string
 @secure()
 param confluenceApiToken string
 
+@description('Tags applied to every created resource. Useful for cost allocation or org policies that require specific tags.')
+param tags object = {}
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
@@ -97,6 +100,7 @@ var containerAppName = '${namePrefix}-search-api'
 resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
   name: keyVaultName
   location: location
+  tags: tags
   properties: {
     tenantId: subscription().tenantId
     sku: {
@@ -106,7 +110,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
     enableRbacAuthorization: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
-    enablePurgeProtection: null
+    enablePurgeProtection: true
   }
 }
 
@@ -139,6 +143,7 @@ resource secretPostgresPassword 'Microsoft.KeyVault/vaults/secrets@2024-04-01-pr
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: postgresServerName
   location: location
+  tags: tags
   sku: {
     name: postgresSku
     tier: postgresTier
@@ -207,6 +212,7 @@ resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-0
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   name: acrName
   location: location
+  tags: tags
   sku: {
     name: 'Basic'
   }
@@ -221,6 +227,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
   location: location
+  tags: tags
   properties: {
     sku: {
       name: 'PerGB2018'
@@ -234,6 +241,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerAppsEnvName
   location: location
+  tags: tags
   properties: {
     appLogsConfiguration: {
       destination: 'log-analytics'
@@ -263,6 +271,7 @@ resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
+  tags: tags
   identity: {
     type: 'SystemAssigned'
   }
