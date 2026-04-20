@@ -41,7 +41,7 @@ BANNED_RULES: list[tuple[str, str, str]] = [
     ),
     (
         "readme-boilerplate",
-        r"(ASP\.NET Core|Microsoft/vscode|ChakraCore).*(readme|inspiration)",
+        r"(github\.com/aspnet/Home|Microsoft/vscode|Microsoft/ChakraCore)",
         "Azure DevOps default boilerplate — delete whole block",
     ),
     (
@@ -76,7 +76,26 @@ def _discover_files(repo_root: Path) -> list[Path]:
 
 def lint_repo(repo_root: Path) -> list[LintFinding]:
     """Walk the repo's doc surface; return all banned-content findings. Read-only."""
-    raise NotImplementedError
+    findings: list[LintFinding] = []
+    for file_path in _discover_files(repo_root):
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(file_path.relative_to(repo_root)).replace("\\", "/")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for rule_name, pattern, message in _COMPILED_BANNED_RULES:
+                if pattern.search(line):
+                    findings.append(
+                        LintFinding(
+                            severity="fail",
+                            file=rel,
+                            line=lineno,
+                            rule=rule_name,
+                            message=message,
+                        )
+                    )
+    return findings
 
 
 def format_report(findings: list[LintFinding], scanned_files: list[Path], repo_root: Path) -> str:
