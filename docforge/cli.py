@@ -128,7 +128,7 @@ def status():
 def lint_docs(
     repo_path: Path = typer.Argument(..., help="Path to the repo root to lint"),
 ) -> None:
-    """Lint a repo's README + CLAUDE.md + docs/ for banned-content rules from the authoring guideline."""
+    """Lint a repo's README + CLAUDE.md + docs/ for banned-content rules."""
     from docforge.lint import _discover_files, format_report, has_failures, lint_repo
 
     if not repo_path.is_dir():

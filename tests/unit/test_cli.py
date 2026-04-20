@@ -136,9 +136,7 @@ class TestLintDocsCommand:
         assert "PASS" in result.output
 
     def test_failing_repo_exits_one(self, tmp_path, monkeypatch):
-        (tmp_path / "README.md").write_text(
-            "# Repo\n\nTODO: Explain\n", encoding="utf-8"
-        )
+        (tmp_path / "README.md").write_text("# Repo\n\nTODO: Explain\n", encoding="utf-8")
         result = runner.invoke(app, ["lint-docs", str(tmp_path)])
         assert result.exit_code == 1
         assert "FAIL" in result.output

@@ -32,7 +32,8 @@ class TestScoreQuery:
         assert score_query([], "anything") is None
 
     def test_expected_substring_as_whole_word_substring(self):
-        assert score_query(["Organization Lifecycle — team responsibilities"], "Organization Lifecycle") == 1
+        titles = ["Organization Lifecycle — team responsibilities"]
+        assert score_query(titles, "Organization Lifecycle") == 1
 
 
 def _qr(query: str, expected: str, match_rank: int | None) -> QueryResult:

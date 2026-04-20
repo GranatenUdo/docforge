@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from docforge.lint import (
-    BANNED_RULES,
     LintFinding,
     _discover_files,
     format_report,
@@ -48,7 +45,7 @@ class TestDiscoverFiles:
 
 class TestLintRepo:
     def test_clean_repo_has_no_findings(self, tmp_path: Path):
-        _write(tmp_path / "README.md", "# Clean Repo\n\nThis is a clean README with real content.\n")
+        _write(tmp_path / "README.md", "# Clean Repo\n\nClean README with real content.\n")
         _write(tmp_path / "CLAUDE.md", "# Working Notes\n\nNormal content.\n")
         _write(tmp_path / "docs" / "arch.md", "# Architecture\n\nReal content.\n")
         assert lint_repo(tmp_path) == []

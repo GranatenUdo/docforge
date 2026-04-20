@@ -55,7 +55,7 @@ _COMPILED_BANNED_RULES = [(name, re.compile(pat), msg) for name, pat, msg in BAN
 
 
 def _discover_files(repo_root: Path) -> list[Path]:
-    """Return absolute paths of README.md (case-insensitive), CLAUDE.md, and all *.md under docs/."""
+    """Return paths of README.md (case-insensitive), CLAUDE.md, and all *.md under docs/."""
     found: list[Path] = []
     if repo_root.is_dir():
         for entry in sorted(repo_root.iterdir()):

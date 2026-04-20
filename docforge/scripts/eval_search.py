@@ -130,8 +130,10 @@ def format_report(results: list[QueryResult], summary: dict[str, float | int], k
     recall1 = summary["recall@1"]
     recall_k = summary[f"recall@{k}"]
     total = summary["queries"] or 1
-    lines.append(f"  recall@1:              {int(recall1 * total)}/{total} ({recall1 * 100:.0f}%)")
-    lines.append(f"  recall@{k}:              {int(recall_k * total)}/{total} ({recall_k * 100:.0f}%)")
+    r1_pct = f"{recall1 * 100:.0f}%"
+    rk_pct = f"{recall_k * 100:.0f}%"
+    lines.append(f"  recall@1:              {int(recall1 * total)}/{total} ({r1_pct})")
+    lines.append(f"  recall@{k}:              {int(recall_k * total)}/{total} ({rk_pct})")
     lines.append(f"  mean reciprocal rank:  {summary['mrr']:.3f}")
 
     misses = [r for r in results if r.match_rank is None or r.match_rank > k]
@@ -154,9 +156,7 @@ def _load_ground_truth(path: Path) -> list[dict]:
         raise ValueError(f"{path}: missing or empty 'queries' list")
     for i, q in enumerate(queries):
         if "q" not in q or "expected_title_contains" not in q:
-            raise ValueError(
-                f"{path}: entry {i} must have 'q' and 'expected_title_contains' keys"
-            )
+            raise ValueError(f"{path}: entry {i} must have 'q' and 'expected_title_contains' keys")
     return queries
 
 
@@ -167,14 +167,10 @@ def main() -> int:
     parser.add_argument(
         "--api-url", required=True, help="Base URL of the search API (no trailing slash)"
     )
-    parser.add_argument(
-        "--ground-truth", required=True, type=Path, help="Path to ground_truth.yml"
-    )
+    parser.add_argument("--ground-truth", required=True, type=Path, help="Path to ground_truth.yml")
     parser.add_argument("--user", required=True, help="Your identity — forwarded as user_name")
     parser.add_argument("--team", required=True, help="Your team tag — forwarded as team_name")
-    parser.add_argument(
-        "--area", default=None, help="Optional area tag — forwarded as area_name"
-    )
+    parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
     args = parser.parse_args()
 
