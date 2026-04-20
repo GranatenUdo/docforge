@@ -247,17 +247,17 @@ One-time: register `.pipelines/config-validation.yml` in the ADO UI as a pipelin
 
 ## Expected first-run behavior
 
-On first merge with CI enabled:
+**Pre-CI requirement (discovered during spec review):** `ruff format` was never actually run on the codebase despite Phase 3 claiming "ruff for formatting and linting." `ruff format --check` currently fails on 22 of 41 files; the diff is purely mechanical (one-arg-per-line style). The implementation plan MUST include a prep step that runs `ruff format docforge tests` and commits the result before enabling CI.
 
-**docforge `lint` job:** expected green. Phase 3's ruff pass made the code conformant; `ruff format --check` will pass because `ruff format` was part of that pass.
+With that prep done:
 
-**docforge `test` job:** expected green. `pytest -m "not integration"` currently passes 99/99, coverage 80%, gate 60%.
+**docforge `lint` job:** expected green. `ruff check` already passes. `ruff format --check` passes after the prep step.
+
+**docforge `test` job:** expected green. `pytest -m "not integration"` currently passes 99/99, coverage 80%, gate 60% — verified.
 
 **docforge Dependabot:** first weekly run (Monday) opens ~0-3 PRs. Dep versions are fresh (Phase 4 recent).
 
-**knowledge-hub pipeline:** expected green. `sources.yml` has 72 entries, all tagged (`ccl` + `org` + `cross-team`). `teams.yml` vocabulary covers those.
-
-If any of these fail on first run: fix inline. Most likely failure is a `ruff format --check` diff if `ruff format` was never run on a file added post-Phase-3; resolution is `ruff format docforge tests`.
+**knowledge-hub pipeline:** expected green. `sources.yml` has 72 entries, all tagged (`ccl` + `org`). `teams.yml` vocabulary covers those.
 
 ## Success criteria
 
