@@ -45,7 +45,18 @@ def score_query(returned_titles: list[str], expected_substring: str) -> int | No
 
 def summarize(results: list[QueryResult], k: int) -> dict[str, float | int]:
     """Return {queries, recall@1, recall@k, mrr}. Pure function."""
-    raise NotImplementedError
+    total = len(results)
+    if total == 0:
+        return {"queries": 0, "recall@1": 0.0, f"recall@{k}": 0.0, "mrr": 0.0}
+    hits_at_1 = sum(1 for r in results if r.match_rank == 1)
+    hits_at_k = sum(1 for r in results if r.match_rank is not None and r.match_rank <= k)
+    mrr = sum(1.0 / r.match_rank for r in results if r.match_rank is not None) / total
+    return {
+        "queries": total,
+        "recall@1": hits_at_1 / total,
+        f"recall@{k}": hits_at_k / total,
+        "mrr": mrr,
+    }
 
 
 async def run_queries(
