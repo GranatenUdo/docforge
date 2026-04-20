@@ -3,7 +3,11 @@
 **Date:** 2026-04-20
 **Status:** Approved, ready for implementation plan
 **Part of:** Phase 4 Spec C (hardening sprint) — sub-spec 2 of 4. Siblings: C1 (CI + supply-chain, shipped), C3 (security + privacy, pending), C4 (operational readiness, pending).
-**Scope:** Ship two quality-measurement tools: (a) a `docforge lint-docs` CLI subcommand that enforces Spec B's authoring guideline rules against a target repo, and (b) a `docforge/scripts/eval_search.py` runner that measures retrieval quality against the live Azure deployment using a DocuWare-specific ground-truth set.
+**Scope:** Ship two quality-measurement tools: (a) a `docforge lint-docs` CLI subcommand that enforces Spec B's banned-content rules against a target repo, and (b) a `docforge/scripts/eval_search.py` runner that measures retrieval quality against the live Azure deployment using a DocuWare-specific ground-truth set.
+
+**Revision 2026-04-20 (post-critical-review):**
+- Dropped `REQUIRED_TOPICS` regex checks from linter v1 — false-positives on the cloudstatus exemplar (headings like `## Architecture Notes` and `## Deployment Architecture` pass but `## Scope` / `## Communication` are absent, satisfied structurally by file names in `docs/` rather than H2 headings). Spec B's own stance: content principles resist mechanical enforcement. Linter v1 = banned-content only. Required-topics check deferred to future work when authoring patterns converge.
+- Dropped "first run recall@5 ≥ 50% sanity bar" — arbitrary; recall magnitude depends on ground-truth authoring style. Replaced with baseline-setting: first run records recall@1, recall@5, MRR as the baseline alongside ground_truth.yml; regressions against baseline are the signal.
 
 ## Context
 
@@ -13,7 +17,7 @@ C2 closes both. The two tools are independent — different audiences, different
 
 ## Goals
 
-1. Ship `docforge lint-docs <repo-path>` that scans README + `docs/` for Spec B banned-content rules and missing required topics; exits non-zero on any fail.
+1. Ship `docforge lint-docs <repo-path>` that scans README + `docs/` for Spec B banned-content rules; exits non-zero on any hit.
 2. Ship `docforge/scripts/eval_search.py` that runs a query set against a deployed `/search` endpoint and reports recall@1, recall@5, and MRR.
 3. Ship a DocuWare-specific ground-truth query set (`knowledge-hub/rag/eval/ground_truth.yml`, 20-30 entries, user-authored).
 4. Maintain the ≥60% coverage gate; add unit tests covering linter logic and eval scorer (pure-function).
@@ -75,18 +79,16 @@ BANNED_RULES: list[tuple[str, str, str]] = [
 ]
 
 
-REQUIRED_TOPICS: list[tuple[str, str]] = [
-    ("title",                      r"^#\s+\S"),
-    ("intro-paragraph",            r"^(?!#)\S+.{50,}"),
-    ("scope-or-use-cases",         r"(?i)##\s+(scope|use case)"),
-    ("architecture",               r"(?i)##\s+architecture"),
-    ("communication-or-integration", r"(?i)##\s+(communication|integration|api)"),
-    ("operations-or-deploy",       r"(?i)##\s+(operations|deploy|running)"),
-]
+# NOTE: REQUIRED_TOPICS (regex check for ## Architecture, ## Scope, etc.) was
+# considered and rejected in v1. Cloudstatus — the Spec B exemplar — satisfies
+# these topics structurally (via numbered files in docs/) rather than via H2
+# headings in README, so a regex-only check would false-positive on the
+# exemplar itself. Deferred until authoring patterns converge enough to check
+# reliably; see "Follow-up items".
 
 
 def lint_repo(repo_root: Path) -> list[LintFinding]:
-    """Walk the repo's doc surface; return all findings. Read-only."""
+    """Walk the repo's doc surface; return all banned-content findings. Read-only."""
     ...
 
 
@@ -106,7 +108,7 @@ def has_failures(findings: list[LintFinding]) -> bool:
 def lint_docs(
     repo_path: Path = typer.Argument(..., help="Path to the repo root"),
 ) -> None:
-    """Lint a repo's README + CLAUDE.md + docs/ against the authoring guideline."""
+    """Lint a repo's README + CLAUDE.md + docs/ for banned-content rules from the authoring guideline."""
     from docforge.lint import format_report, has_failures, lint_repo
 
     if not repo_path.is_dir():
@@ -126,19 +128,15 @@ def lint_docs(
 - Root-level `CLAUDE.md`
 - All `*.md` under `docs/` (recursive)
 
-Missing files don't crash — they reduce what can be checked, and can cause topic-level failures (e.g., if the repo has no `README.md`, "title" is missing).
-
-### Required-topics semantics
-
-A topic (e.g., "architecture") is satisfied if ANY of the scanned files contains a matching heading. This reflects Spec B's "README + docs/ together must cover X" principle. The finding's `file` field reads `"README + docs/"` for topic-level findings.
+Missing files don't crash — they reduce what can be checked. An entirely empty repo produces a clean pass (nothing to fail on); that's a known v1 limitation, tolerable because linting is user-invoked and the "empty repo" case is not the target of concern.
 
 ### Output format
 
 Sample clean repo:
 ```
 E:/cloudstatusrepos/cloudstatus — PASS
-  3 files scanned (readme.md, CLAUDE.md, 12 under docs/)
-  No banned content, all required topics present
+  14 files scanned (readme.md, CLAUDE.md, 12 under docs/)
+  No banned content
 ```
 
 Sample failing repo:
@@ -151,13 +149,7 @@ E:/DataCenter.Organization.Creation — FAIL
     FAIL  README.md:8   readme-inspiration-link  Microsoft README inspirational link — delete
     FAIL  README.md:12  readme-boilerplate   Azure DevOps default boilerplate — delete whole block
 
-  Required topics (across README + docs/):
-    ✗ scope-or-use-cases      missing; add ## heading in README or docs/
-    ✗ architecture            missing
-    ✗ communication-or-integration  missing
-    ✗ operations-or-deploy    missing
-
-  Summary: 3 banned-content hits, 4 missing topics
+  Summary: 3 banned-content hits
 ```
 
 Exit code 1 on any fail, 0 on clean.
@@ -170,9 +162,10 @@ Exit code 1 on any fail, 0 on clean.
 - `test_banned_todo_placeholder` — README with `TODO: Explain` → 1 finding
 - `test_banned_create_readme_link` — README with `create-a-readme` URL → 1 finding
 - `test_banned_lastpass_reference` — README mentioning `LastPass` → 1 finding
-- `test_missing_architecture_topic` — README without `## Architecture` AND docs/ without it → topic-level finding
-- `test_architecture_satisfied_by_docs` — README missing it but `docs/architecture.md` contains `## Architecture` → no finding
-- `test_empty_repo` — no README, no CLAUDE, no docs → multiple topic-level findings
+- `test_banned_ado_boilerplate` — README with `ASP.NET Core ... readme inspiration` block → 1 finding
+- `test_multiple_banned_hits_reported_separately` — README with 3 distinct violations → 3 findings
+- `test_docs_subfolder_scanned_recursively` — `docs/deep/nested.md` containing `LastPass` → finding
+- `test_empty_repo_has_no_findings` — no README, no CLAUDE, no docs → empty (documents v1 limitation)
 - `test_line_numbers_reported` — finding's `line` matches the actual line of the hit
 
 Plus `tests/unit/test_cli.py` extension:
@@ -367,8 +360,9 @@ queries:
 1-page operator doc. Primary content:
 
 - Run command with env-var-sourced identity
-- Expected output (recall@5 ≥ 50% sanity bar; target ≥70%)
-- When to update `ground_truth.yml` (sources.yml changes, query drift)
+- How to interpret the first run: record recall@1, recall@5, MRR as the **baseline** — no fixed pass/fail bar. Future runs compare against the baseline; regressions are the signal.
+- Where to store the baseline: commit `baseline.md` next to `ground_truth.yml` with the metrics and the commit SHA of `sources.yml` at authoring time.
+- When to update `ground_truth.yml` (sources.yml changes, query drift) — and re-baseline when you do.
 
 ## File summary
 
@@ -383,18 +377,19 @@ queries:
 | `tests/unit/test_eval_search.py` | NEW | Eval scorer unit tests | ~60 |
 | `tests/unit/test_cli.py` | MODIFY | Tests for `lint-docs` | +20 |
 | `knowledge-hub/rag/eval/ground_truth.yml` | NEW | DocuWare query set | ~80 (data) |
+| `knowledge-hub/rag/eval/baseline.md` | NEW | First-run baseline metrics | ~20 |
 | `knowledge-hub/rag/eval/README.md` | NEW | Operator doc | ~50 |
 
 7 new + 2 modified files across both repos.
 
 ## Success criteria
 
-- [ ] `docforge lint-docs <path>` exits 1 on banned-content hits or missing required topics; exits 0 on clean.
+- [ ] `docforge lint-docs <path>` exits 1 on banned-content hits; exits 0 on clean.
 - [ ] `docforge lint-docs E:/cloudstatusrepos/cloudstatus` exits 0 (exemplar repo passes).
 - [ ] `docforge lint-docs E:/DataCenter.Organization.Creation` exits 1 (unretrofitted repo with ADO-default README fails).
 - [ ] `python -m docforge.scripts.eval_search ...` runs end-to-end, prints per-query detail + summary with recall@1, recall@5, MRR.
 - [ ] `knowledge-hub/rag/eval/ground_truth.yml` has 20-30 user-authored entries; every `expected_title_contains` matches a real source title in current `sources.yml`.
-- [ ] First live-Azure eval run achieves **recall@5 ≥ 50%**. (Below this suggests ground-truth mis-specification or ingest drift — investigate before claiming the harness works.)
+- [ ] First live-Azure eval run produces a recorded **baseline** (recall@1, recall@5, MRR) committed to `knowledge-hub/rag/eval/baseline.md` alongside the `sources.yml` SHA. No pass/fail bar — the baseline IS the success criterion; future regressions against it are the signal.
 - [ ] All new unit tests pass. Coverage gate ≥60% preserved (projected ~78-82% with additions).
 
 ## Out of scope (deferred)
@@ -408,13 +403,15 @@ queries:
 
 ## Risks
 
-- **Risk: first eval run's recall@5 is disappointingly low (< 50%).** Mitigation: treat it as signal — either ground truth is phrased too far from indexed content (rewrite), or there's a real retrieval issue to investigate.
+- **Risk: first eval run's recall is low in absolute terms.** Mitigation: no fixed threshold — the first run establishes the baseline. If the numbers feel implausibly low, inspect a handful of per-query results to distinguish "ground truth phrased too far from indexed titles" from "real retrieval issue" before concluding.
 - **Risk: linter produces noise on CCL repos that haven't opted in.** Mitigation: linter is user-invoked only. Running it on an un-retrofitted repo is an explicit choice; the noise is the point.
-- **Risk: ground truth decays as `sources.yml` changes.** Mitigation: the YAML header comments the sources.yml SHA at authoring time. When eval results drift, check that first.
+- **Risk: ground truth decays as `sources.yml` changes, invalidating the baseline.** Mitigation: `ground_truth.yml` header records the sources.yml SHA at authoring time; `baseline.md` records the same. When results drift significantly, re-check ground truth against current titles before investigating retrieval.
+- **Risk: dropping `REQUIRED_TOPICS` means the linter doesn't enforce content structure.** Mitigation: accepted tradeoff — Spec B's structural principles are already documented; the linter catches the mechanical boilerplate Spec B targets. Structural enforcement revisits when authoring patterns converge.
 
 ## Follow-up items (noted for future specs)
 
 - Extend linter with additional rules: Confluence link validation, link-rot detection, diagram-file presence check, section-length heuristics, Title capitalization consistency.
-- Eval harness: CSV output + `--baseline <file>` for regression detection.
+- Revisit **structural / required-topics linting** once authoring patterns converge across retrofitted CCL repos. Candidate approaches: heading-OR-filename check (cloudstatus's `docs/05-communication.md` satisfies "communication" without an H2 heading), or Pattern-A vs Pattern-B detection + per-pattern required topics. Out of scope for v1; re-evaluate after 3+ repos retrofit against the Spec B guideline.
+- Eval harness: CSV output + `--baseline <file>` for automated regression detection (currently `baseline.md` is human-read).
 - Eval harness: support multiple valid answers per query (list form).
 - Integrate linter into a discoverable place: `docforge --help` already lists it; consider a badge in the Spec B guideline pointing at `docforge lint-docs`.
