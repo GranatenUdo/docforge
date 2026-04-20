@@ -68,12 +68,80 @@ async def run_queries(
     k: int,
 ) -> list[QueryResult]:
     """POST each query to <api_url>/search via httpx; collect results. Sequential."""
-    raise NotImplementedError
+    results: list[QueryResult] = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for entry in ground_truth:
+            q: str = entry["q"]
+            expected: str = entry["expected_title_contains"]
+            try:
+                resp = await client.post(
+                    f"{api_url}/search",
+                    json={
+                        "query": q,
+                        "user_name": user_name,
+                        "team_name": team_name,
+                        "area_name": area_name,
+                        "limit": k,
+                    },
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                hits = payload.get("results", [])
+            except (httpx.HTTPError, ValueError) as e:
+                print(f"  Query failed ({q!r}): {e}", file=sys.stderr)
+                hits = []
+            titles = [h.get("source_title", "") for h in hits]
+            scores = [float(h.get("similarity", 0.0)) for h in hits]
+            results.append(
+                QueryResult(
+                    query=q,
+                    expected_substring=expected,
+                    returned_titles=titles,
+                    returned_scores=scores,
+                    match_rank=score_query(titles, expected),
+                )
+            )
+    return results
 
 
 def format_report(results: list[QueryResult], summary: dict[str, float | int], k: int) -> str:
     """Per-query detail + summary. Human-readable stdout."""
-    raise NotImplementedError
+    lines: list[str] = []
+    for r in results:
+        lines.append(f"Query: {r.query!r}")
+        lines.append(f"  Expected: contains {r.expected_substring!r}")
+        if r.returned_titles:
+            lines.append(f"  Top {len(r.returned_titles)}:")
+            for i, (title, score) in enumerate(
+                zip(r.returned_titles, r.returned_scores, strict=False), start=1
+            ):
+                marker = "  <-- MATCH" if r.match_rank == i else ""
+                lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
+        else:
+            lines.append("  Top: (no results)")
+        if r.match_rank is not None and r.match_rank <= k:
+            lines.append(f"  recall@{k}: HIT  rank: {r.match_rank}")
+        else:
+            lines.append(f"  recall@{k}: MISS")
+        lines.append("")
+
+    lines.append("Summary:")
+    lines.append(f"  queries:               {summary['queries']}")
+    recall1 = summary["recall@1"]
+    recall_k = summary[f"recall@{k}"]
+    total = summary["queries"] or 1
+    lines.append(f"  recall@1:              {int(recall1 * total)}/{total} ({recall1 * 100:.0f}%)")
+    lines.append(f"  recall@{k}:              {int(recall_k * total)}/{total} ({recall_k * 100:.0f}%)")
+    lines.append(f"  mean reciprocal rank:  {summary['mrr']:.3f}")
+
+    misses = [r for r in results if r.match_rank is None or r.match_rank > k]
+    if misses:
+        lines.append("")
+        lines.append(f"  Missed (no match in top {k}):")
+        for r in misses:
+            lines.append(f"    - {r.query!r}  (expected {r.expected_substring!r})")
+
+    return "\n".join(lines)
 
 
 def _load_ground_truth(path: Path) -> list[dict]:
