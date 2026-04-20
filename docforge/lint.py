@@ -56,7 +56,22 @@ _COMPILED_BANNED_RULES = [(name, re.compile(pat), msg) for name, pat, msg in BAN
 
 def _discover_files(repo_root: Path) -> list[Path]:
     """Return absolute paths of README.md (case-insensitive), CLAUDE.md, and all *.md under docs/."""
-    raise NotImplementedError
+    found: list[Path] = []
+    if repo_root.is_dir():
+        for entry in sorted(repo_root.iterdir()):
+            if entry.is_file() and entry.name.lower() == "readme.md":
+                found.append(entry)
+                break
+        for entry in sorted(repo_root.iterdir()):
+            if entry.is_file() and entry.name == "CLAUDE.md":
+                found.append(entry)
+                break
+    docs_dir = repo_root / "docs"
+    if docs_dir.is_dir():
+        for md in sorted(docs_dir.rglob("*.md")):
+            if md.is_file():
+                found.append(md)
+    return found
 
 
 def lint_repo(repo_root: Path) -> list[LintFinding]:
