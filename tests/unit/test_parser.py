@@ -4,8 +4,7 @@ from docforge.processors.parser import parse_confluence_html
 class TestParseConfluenceHtml:
     def test_simple_headings_and_paragraphs(self):
         html = (
-            "<h2>Overview</h2><p>This is the overview.</p>"
-            "<h2>Details</h2><p>These are details.</p>"
+            "<h2>Overview</h2><p>This is the overview.</p><h2>Details</h2><p>These are details.</p>"
         )
         sections = parse_confluence_html(html)
 
@@ -64,8 +63,7 @@ class TestParseConfluenceHtml:
 
     def test_emoji_macro_stripped(self):
         html = (
-            '<p><custom data-type="emoji" data-id="id-0">:arrow_down:</custom>'
-            " Team info below.</p>"
+            '<p><custom data-type="emoji" data-id="id-0">:arrow_down:</custom> Team info below.</p>'
         )
         sections = parse_confluence_html(html)
 

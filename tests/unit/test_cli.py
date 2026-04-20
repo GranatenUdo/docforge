@@ -29,7 +29,9 @@ class TestInit:
 
 class TestInitDb:
     def test_success(self, monkeypatch):
-        async def fake(): return None
+        async def fake():
+            return None
+
         monkeypatch.setattr("docforge.cli._init_db", fake)
         result = runner.invoke(app, ["init-db"])
         assert result.exit_code == 0
@@ -66,8 +68,11 @@ class TestSearchCommand:
         )
         assert result.exit_code == 0
         assert captured == {
-            "query": "q", "user": "tobias", "team": "ccl",
-            "area": "cloud", "limit": 3,
+            "query": "q",
+            "user": "tobias",
+            "team": "ccl",
+            "area": "cloud",
+            "limit": 3,
         }
 
     def test_area_optional(self, monkeypatch):
@@ -78,7 +83,8 @@ class TestSearchCommand:
 
         monkeypatch.setattr("docforge.cli._search", fake)
         result = runner.invoke(
-            app, ["search", "q", "--user", "u", "--team", "t"],
+            app,
+            ["search", "q", "--user", "u", "--team", "t"],
         )
         assert result.exit_code == 0
         assert captured["area"] is None
@@ -105,8 +111,7 @@ class TestSearchCommand:
         monkeypatch.setattr("docforge.cli._search", fake)
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "default_user_name: tobias.default\n"
-            "default_team_name: ccl.default\n"
+            "default_user_name: tobias.default\ndefault_team_name: ccl.default\n"
         )
         result = runner.invoke(app, ["search", "q"])
         assert result.exit_code == 0
@@ -115,7 +120,9 @@ class TestSearchCommand:
 
 class TestStatusCommand:
     def test_success(self, monkeypatch):
-        async def fake(): return None
+        async def fake():
+            return None
+
         monkeypatch.setattr("docforge.cli._status", fake)
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0

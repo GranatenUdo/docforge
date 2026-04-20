@@ -61,15 +61,18 @@ def ingest():
 def search(
     query: str = typer.Argument(help="Search query"),
     user_name: str = typer.Option(
-        None, "--user",
+        None,
+        "--user",
         help="Your name (required; falls back to default_user_name setting)",
     ),
     team_name: str = typer.Option(
-        None, "--team",
+        None,
+        "--team",
         help="Your team tag (required; falls back to default_team_name setting)",
     ),
     area_name: str = typer.Option(
-        None, "--area",
+        None,
+        "--area",
         help="Your area tag (optional; falls back to default_area_name setting)",
     ),
     limit: int = typer.Option(5, help="Max results"),
@@ -173,9 +176,7 @@ async def _ingest():
         await close_pool()
 
 
-async def _search(
-    query: str, user_name: str, team_name: str, area_name: str | None, limit: int
-):
+async def _search(query: str, user_name: str, team_name: str, area_name: str | None, limit: int):
     import numpy as np
 
     from docforge.config import Settings
@@ -185,9 +186,7 @@ async def _search(
 
     settings = Settings()
     try:
-        embedder = Embedder(
-            settings.embedding_model, hf_token=settings.hf_token.get_secret_value()
-        )
+        embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     except RuntimeError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

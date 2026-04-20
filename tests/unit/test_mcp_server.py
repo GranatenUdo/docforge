@@ -57,7 +57,8 @@ def patch_mcp_deps(monkeypatch):
         monkeypatch.setattr(mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(mod, "_get_embedder", lambda: fake_embedder)
         monkeypatch.setattr(
-            mod, "_get_settings",
+            mod,
+            "_get_settings",
             lambda: SimpleNamespace(
                 database_url="postgresql://fake",
                 tag_match_weight=0.1,
@@ -86,7 +87,11 @@ async def test_search_documentation_formats_results(patch_mcp_deps):
     from docforge.mcp_server import search_documentation
 
     result = await search_documentation(
-        "who owns orgs", user_name="tobias.ens", team_name="ccl", area_name="cloud", limit=5,
+        "who owns orgs",
+        user_name="tobias.ens",
+        team_name="ccl",
+        area_name="cloud",
+        limit=5,
     )
 
     assert "Platform team owns orgs." in result
@@ -114,7 +119,9 @@ async def test_search_documentation_no_tags_no_tag_line(patch_mcp_deps):
     from docforge.mcp_server import search_documentation
 
     result = await search_documentation(
-        "q", user_name="u", team_name="t",
+        "q",
+        user_name="u",
+        team_name="t",
     )
     assert "Tags:" not in result
 

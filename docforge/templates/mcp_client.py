@@ -74,9 +74,7 @@ async def list_sources() -> str:
 
     lines = [f"**{data['count']} indexed sources:**\n"]
     for src in data["sources"]:
-        lines.append(
-            f"- **{src['title']}** ({src['chunk_count']} chunks, {src['status']})"
-        )
+        lines.append(f"- **{src['title']}** ({src['chunk_count']} chunks, {src['status']})")
 
     return "\n".join(lines)
 

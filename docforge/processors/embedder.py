@@ -15,9 +15,7 @@ class Embedder:
     Falls back to all-MiniLM-L6-v2 (384 dimensions) if the primary model fails to load.
     """
 
-    def __init__(
-        self, model_name: str = "google/embeddinggemma-300m", hf_token: str = ""
-    ) -> None:
+    def __init__(self, model_name: str = "google/embeddinggemma-300m", hf_token: str = "") -> None:
         from sentence_transformers import SentenceTransformer
 
         # Use provided token, fall back to environment variable
@@ -29,9 +27,7 @@ class Embedder:
             self._model = SentenceTransformer(model_name, token=hf_token or None)
             self.model_name = model_name
             self.dimensions = self._model.get_embedding_dimension()
-            logger.info(
-                "Model loaded: %s (%d dimensions)", self.model_name, self.dimensions
-            )
+            logger.info("Model loaded: %s (%d dimensions)", self.model_name, self.dimensions)
         except Exception:
             fallback = "sentence-transformers/all-MiniLM-L6-v2"
             logger.warning(
@@ -50,9 +46,7 @@ class Embedder:
                     self.dimensions,
                 )
             except Exception:
-                logger.error(
-                    "Failed to load fallback model %s", fallback, exc_info=True
-                )
+                logger.error("Failed to load fallback model %s", fallback, exc_info=True)
                 raise RuntimeError(
                     f"No embedding model available. "
                     f"Primary ({model_name}) and fallback ({fallback}) both failed."

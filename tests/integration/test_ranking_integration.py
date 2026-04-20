@@ -16,7 +16,9 @@ async def _insert_source(conn, title: str, tags: list[str]) -> str:
         VALUES ('git_repo', $1, $2, $1, 'active', $3, 'h', now())
         RETURNING id
         """,
-        f"file:///{title}", title, tags,
+        f"file:///{title}",
+        title,
+        tags,
     )
 
 
@@ -26,7 +28,9 @@ async def _insert_chunk(conn, source_id: str, text: str, vec: np.ndarray):
         INSERT INTO chunks (source_id, chunk_index, text, embedding, section_title)
         VALUES ($1, 0, $2, $3, NULL)
         """,
-        source_id, text, vec,
+        source_id,
+        text,
+        vec,
     )
 
 
@@ -62,7 +66,10 @@ async def test_team_tagged_source_ranks_above_untagged_on_similar_similarity(pg_
             FROM chunks c JOIN sources s ON c.source_id = s.id
             ORDER BY score DESC
             """,
-            query_vec, 0.1, ["ccl"], 0.05,
+            query_vec,
+            0.1,
+            ["ccl"],
+            0.05,
         )
         titles = [r["title"] for r in rows]
         assert titles == ["TaggedDoc", "UntaggedDoc"]
@@ -91,7 +98,9 @@ async def test_two_tag_overlap_outranks_one_tag_overlap(pg_url):
             FROM chunks c JOIN sources s ON c.source_id = s.id
             ORDER BY score DESC
             """,
-            vec, 0.1, ["ccl", "cloud"],
+            vec,
+            0.1,
+            ["ccl", "cloud"],
         )
         assert [r["title"] for r in rows] == ["TwoTag", "OneTag"]
     finally:
@@ -117,7 +126,8 @@ async def test_org_tag_baseline_boost_applies_when_user_tags_empty(pg_url):
             FROM chunks c JOIN sources s ON c.source_id = s.id
             ORDER BY score DESC
             """,
-            vec, 0.05,
+            vec,
+            0.05,
         )
         assert [r["title"] for r in rows] == ["OrgDoc", "PlainDoc"]
     finally:

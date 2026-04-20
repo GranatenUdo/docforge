@@ -132,9 +132,7 @@ def _table_to_text(table: Tag) -> str:
 
         if headers and len(values) == len(headers):
             # Format as "header: value" pairs, skip empty values
-            pairs = [
-                f"{h}: {v}" for h, v in zip(headers, values) if v
-            ]
+            pairs = [f"{h}: {v}" for h, v in zip(headers, values) if v]
             if pairs:
                 lines.append(" | ".join(pairs))
         elif values:
