@@ -125,3 +125,27 @@ class TestHasFailures:
     def test_any_failure_returns_true(self):
         f = LintFinding(severity="fail", file="x.md", line=1, rule="r", message="m")
         assert has_failures([f]) is True
+
+
+class TestFormatReport:
+    def test_clean_report_says_pass(self, tmp_path: Path):
+        _write(tmp_path / "README.md", "# Clean\n")
+        scanned = [tmp_path / "README.md"]
+        out = format_report([], scanned, tmp_path)
+        assert "PASS" in out
+        assert "No banned content" in out
+        assert "1 files scanned" in out
+
+    def test_failing_report_lists_findings_grouped_by_file(self, tmp_path: Path):
+        findings = [
+            LintFinding("fail", "README.md", 3, "todo-placeholder", "Placeholder TODO"),
+            LintFinding("fail", "README.md", 8, "lastpass-reference", "Credential ref"),
+            LintFinding("fail", "docs/x.md", 2, "lastpass-reference", "Credential ref"),
+        ]
+        scanned = [tmp_path / "README.md", tmp_path / "docs" / "x.md"]
+        out = format_report(findings, scanned, tmp_path)
+        assert "FAIL" in out
+        assert "README.md:3" in out
+        assert "README.md:8" in out
+        assert "docs/x.md:2" in out
+        assert "3 banned-content hits" in out

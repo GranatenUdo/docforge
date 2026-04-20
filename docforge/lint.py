@@ -100,7 +100,27 @@ def lint_repo(repo_root: Path) -> list[LintFinding]:
 
 def format_report(findings: list[LintFinding], scanned_files: list[Path], repo_root: Path) -> str:
     """Human-readable stdout string, grouped by file with summary line."""
-    raise NotImplementedError
+    lines: list[str] = []
+    header = "FAIL" if findings else "PASS"
+    lines.append(f"{repo_root} — {header}")
+    lines.append(f"  {len(scanned_files)} files scanned")
+    if not findings:
+        lines.append("  No banned content")
+        return "\n".join(lines)
+
+    lines.append("")
+    lines.append("  Banned content:")
+    by_file: dict[str, list[LintFinding]] = {}
+    for f in findings:
+        by_file.setdefault(f.file, []).append(f)
+    for file_rel, file_findings in by_file.items():
+        for f in file_findings:
+            location = f"{file_rel}:{f.line}" if f.line is not None else file_rel
+            lines.append(f"    FAIL  {location:<30}  {f.rule:<22}  {f.message}")
+
+    lines.append("")
+    lines.append(f"  Summary: {len(findings)} banned-content hits")
+    return "\n".join(lines)
 
 
 def has_failures(findings: list[LintFinding]) -> bool:
