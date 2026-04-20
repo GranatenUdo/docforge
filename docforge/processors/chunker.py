@@ -61,9 +61,7 @@ def chunk_sections(
     return chunks
 
 
-def _split_by_paragraphs(
-    text: str, max_tokens: int, tokenizer_fn: callable
-) -> list[str]:
+def _split_by_paragraphs(text: str, max_tokens: int, tokenizer_fn: callable) -> list[str]:
     """Split text into chunks by paragraph boundaries."""
     paragraphs = text.split("\n")
     result: list[str] = []

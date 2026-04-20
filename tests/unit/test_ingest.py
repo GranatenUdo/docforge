@@ -98,9 +98,7 @@ class _FakePool:
 
 
 @pytest.mark.asyncio
-async def test_ingest_all_with_empty_sources_list(
-    tmp_path, monkeypatch, fake_embedder
-):
+async def test_ingest_all_with_empty_sources_list(tmp_path, monkeypatch, fake_embedder):
     sources_file = tmp_path / "sources.yml"
     sources_file.write_text("sources: []\n")
 
@@ -120,9 +118,7 @@ async def test_ingest_all_with_empty_sources_list(
 
 
 @pytest.mark.asyncio
-async def test_ingest_git_source_inserts_chunks(
-    tmp_path, monkeypatch, fake_embedder
-):
+async def test_ingest_git_source_inserts_chunks(tmp_path, monkeypatch, fake_embedder):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "README.md").write_text("# Title\n\nContent one.\n\n## Sub\n\nContent two.")
@@ -132,8 +128,8 @@ async def test_ingest_git_source_inserts_chunks(
         "sources:\n"
         "  - type: git_repo\n"
         f'    repo_path: "{repo.as_posix()}"\n'
-        "    include_patterns: [\"README.md\"]\n"
-        "    title: \"RepoX\"\n"
+        '    include_patterns: ["README.md"]\n'
+        '    title: "RepoX"\n'
         "    tags: [ccl]\n"
     )
 
@@ -157,9 +153,7 @@ async def test_ingest_git_source_inserts_chunks(
 
 
 @pytest.mark.asyncio
-async def test_ingest_skips_when_hash_unchanged(
-    tmp_path, monkeypatch, fake_embedder
-):
+async def test_ingest_skips_when_hash_unchanged(tmp_path, monkeypatch, fake_embedder):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "README.md").write_text("# Title\n\nUnchanged content.")
@@ -169,8 +163,8 @@ async def test_ingest_skips_when_hash_unchanged(
         "sources:\n"
         "  - type: git_repo\n"
         f'    repo_path: "{repo.as_posix()}"\n'
-        "    include_patterns: [\"README.md\"]\n"
-        "    title: \"RepoX\"\n"
+        '    include_patterns: ["README.md"]\n'
+        '    title: "RepoX"\n'
     )
 
     import hashlib
@@ -196,9 +190,7 @@ async def test_ingest_skips_when_hash_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_ingest_continues_on_per_source_failure(
-    tmp_path, monkeypatch, fake_embedder
-):
+async def test_ingest_continues_on_per_source_failure(tmp_path, monkeypatch, fake_embedder):
     repo_ok = tmp_path / "ok"
     repo_ok.mkdir()
     (repo_ok / "README.md").write_text("# OK\n\nContent.")
@@ -208,12 +200,12 @@ async def test_ingest_continues_on_per_source_failure(
         "sources:\n"
         "  - type: git_repo\n"
         '    repo_path: "E:/definitely/missing/repo"\n'
-        "    include_patterns: [\"README.md\"]\n"
-        "    title: \"Missing\"\n"
+        '    include_patterns: ["README.md"]\n'
+        '    title: "Missing"\n'
         "  - type: git_repo\n"
         f'    repo_path: "{repo_ok.as_posix()}"\n'
-        "    include_patterns: [\"README.md\"]\n"
-        "    title: \"OK\"\n"
+        '    include_patterns: ["README.md"]\n'
+        '    title: "OK"\n'
     )
 
     conn = _Conn()

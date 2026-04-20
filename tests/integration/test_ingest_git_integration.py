@@ -17,25 +17,21 @@ from docforge.ingest import ingest_all
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_ingest_and_search(
-    tmp_path, pg_url, fake_embedder
-):
+async def test_end_to_end_ingest_and_search(tmp_path, pg_url, fake_embedder):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "README.md").write_text(
         "# Project\n\nThis project does orgs.\n\n## Details\n\nPlatform team owns it."
     )
-    (repo / "CLAUDE.md").write_text(
-        "# Claude Guide\n\nUse docforge for cross-team knowledge."
-    )
+    (repo / "CLAUDE.md").write_text("# Claude Guide\n\nUse docforge for cross-team knowledge.")
 
     sources_file = tmp_path / "sources.yml"
     sources_file.write_text(
         "sources:\n"
         "  - type: git_repo\n"
         f'    repo_path: "{repo.as_posix()}"\n'
-        "    include_patterns: [\"README.md\", \"CLAUDE.md\"]\n"
-        "    title: \"TestRepo\"\n"
+        '    include_patterns: ["README.md", "CLAUDE.md"]\n'
+        '    title: "TestRepo"\n'
         "    tags: [ccl, cloud]\n"
     )
 

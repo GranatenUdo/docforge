@@ -29,7 +29,11 @@ async def log_query(
                     (user_name, team_name, area_name, query, result_count)
                 VALUES ($1, $2, $3, $4, $5)
                 """,
-                user_name, team_name, area_name, query, result_count,
+                user_name,
+                team_name,
+                area_name,
+                query,
+                result_count,
             )
     except Exception as e:
         logger.warning("query_log insert failed: %s", e)

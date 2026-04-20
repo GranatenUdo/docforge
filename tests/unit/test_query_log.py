@@ -77,6 +77,10 @@ async def test_log_query_swallows_failures():
     pool = _FakePool(conn)
     # Must not raise
     await log_query(
-        pool=pool, user_name="a", team_name="b", area_name=None,
-        query="q", result_count=0,
+        pool=pool,
+        user_name="a",
+        team_name="b",
+        area_name=None,
+        query="q",
+        result_count=0,
     )

@@ -12,9 +12,7 @@ from pgvector.asyncpg import register_vector
 async def test_init_db_creates_schema_and_pgvector(pg_url):
     conn = await asyncpg.connect(pg_url)
     try:
-        ext = await conn.fetchval(
-            "SELECT extname FROM pg_extension WHERE extname = 'vector'"
-        )
+        ext = await conn.fetchval("SELECT extname FROM pg_extension WHERE extname = 'vector'")
         assert ext == "vector"
 
         tables = await conn.fetch(
@@ -91,8 +89,13 @@ async def test_query_log_table_exists(pg_url):
         )
         names = [row["column_name"] for row in cols]
         assert names == [
-            "id", "user_name", "team_name", "area_name",
-            "query", "result_count", "created_at",
+            "id",
+            "user_name",
+            "team_name",
+            "area_name",
+            "query",
+            "result_count",
+            "created_at",
         ]
     finally:
         await conn.close()

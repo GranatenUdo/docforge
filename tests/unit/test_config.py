@@ -48,10 +48,7 @@ class TestYamlLoading:
     def test_embedding_section_is_flattened(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "embedding:\n"
-            "  model: custom/model\n"
-            "  dimensions: 384\n"
-            "  chunk_max_tokens: 200\n"
+            "embedding:\n  model: custom/model\n  dimensions: 384\n  chunk_max_tokens: 200\n"
         )
 
         from docforge.config import Settings
@@ -72,16 +69,12 @@ class TestYamlLoading:
 
 
 class TestPrecedence:
-    def test_yml_overrides_env_due_to_init_kwarg_pass_through(
-        self, tmp_path, monkeypatch
-    ):
+    def test_yml_overrides_env_due_to_init_kwarg_pass_through(self, tmp_path, monkeypatch):
         # yml values flow through super().__init__(**merged), which
         # pydantic-settings treats as init-kwargs — higher priority than
         # env vars.
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "docforge.yml").write_text(
-            "database_url: postgresql://yml:yml@yml:5432/yml\n"
-        )
+        (tmp_path / "docforge.yml").write_text("database_url: postgresql://yml:yml@yml:5432/yml\n")
         monkeypatch.setenv("DATABASE_URL", "postgresql://env:env@env:5432/env")
 
         from docforge.config import Settings
@@ -92,9 +85,7 @@ class TestPrecedence:
     def test_env_used_when_no_yml_entry(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         # yml does NOT set confluence_email; env should win
-        (tmp_path / "docforge.yml").write_text(
-            "database_url: postgresql://yml\n"
-        )
+        (tmp_path / "docforge.yml").write_text("database_url: postgresql://yml\n")
         monkeypatch.setenv("CONFLUENCE_EMAIL", "env@user.com")
 
         from docforge.config import Settings

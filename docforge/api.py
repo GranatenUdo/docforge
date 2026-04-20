@@ -39,9 +39,7 @@ async def lifespan(app: FastAPI):
     global _embedder
     settings = _get_settings()
     logger.info("Loading embedding model...")
-    _embedder = Embedder(
-        settings.embedding_model, hf_token=settings.hf_token.get_secret_value()
-    )
+    _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
     yield
     await close_pool()
@@ -133,9 +131,8 @@ async def search(req: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     from docforge.query_log import log_query
-    await log_query(
-        pool, req.user_name, req.team_name, req.area_name, req.query, len(rows)
-    )
+
+    await log_query(pool, req.user_name, req.team_name, req.area_name, req.query, len(rows))
 
     results = [
         SearchResult(

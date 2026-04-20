@@ -56,10 +56,7 @@ class FakeEmbedder:
         pass
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return [
-            [0.0] * 767 + [float(i + 1) / 1000.0]
-            for i, _ in enumerate(texts)
-        ]
+        return [[0.0] * 767 + [float(i + 1) / 1000.0] for i, _ in enumerate(texts)]
 
     def embed_query(self, text: str) -> list[float]:
         return [0.0] * 767 + [0.001]

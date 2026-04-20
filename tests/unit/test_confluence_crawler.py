@@ -29,9 +29,7 @@ def mock_confluence(monkeypatch):
         def client_factory(**kwargs):
             return real_async_client(transport=httpx.MockTransport(handler))
 
-        monkeypatch.setattr(
-            "docforge.crawlers.confluence.httpx.AsyncClient", client_factory
-        )
+        monkeypatch.setattr("docforge.crawlers.confluence.httpx.AsyncClient", client_factory)
 
     return _install
 

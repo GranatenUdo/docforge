@@ -139,9 +139,7 @@ class TestSearchEndpoint:
         assert body["results"][0]["text"] == "Platform owns orgs."
         assert body["results"][0]["source_tags"] == ["ccl", "cloud"]
         # query_log insert happened
-        assert any(
-            "INSERT INTO query_log" in q for q, _ in pool.executes
-        )
+        assert any("INSERT INTO query_log" in q for q, _ in pool.executes)
 
     @pytest.mark.asyncio
     async def test_returns_503_on_db_error(self, monkeypatch):
@@ -160,7 +158,10 @@ class TestSearchEndpoint:
                 resp = await client.post(
                     "/search",
                     json={
-                        "query": "q", "user_name": "u", "team_name": "t", "limit": 1,
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 1,
                     },
                 )
         finally:
@@ -180,7 +181,10 @@ class TestSearchEndpoint:
                 resp = await client.post(
                     "/search",
                     json={
-                        "query": "q", "user_name": "u", "team_name": "t", "limit": 1,
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 1,
                     },
                 )
         finally:

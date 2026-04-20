@@ -36,9 +36,7 @@ async def ingest_all(settings: Settings) -> None:
     logger.info("Loaded %d sources from %s", len(sources), settings.sources_file)
 
     logger.info("Loading embedding model...")
-    embedder = Embedder(
-        settings.embedding_model, hf_token=settings.hf_token.get_secret_value()
-    )
+    embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
 
     pool = await get_pool(settings.database_url)
     tokenizer_fn = embedder.get_tokenizer_fn()
@@ -50,9 +48,7 @@ async def ingest_all(settings: Settings) -> None:
     for source in sources:
         try:
             if isinstance(source, ConfluenceSourceConfig):
-                await _ingest_confluence_source(
-                    source, settings, pool, embedder, tokenizer_fn
-                )
+                await _ingest_confluence_source(source, settings, pool, embedder, tokenizer_fn)
             elif isinstance(source, GitRepoSourceConfig):
                 await _ingest_git_source(source, pool, embedder, tokenizer_fn)
             succeeded += 1
@@ -97,9 +93,7 @@ async def _ingest_confluence_source(
     sections = parse_confluence_html(page.html_content)
     logger.info("Found %d sections", len(sections))
 
-    chunks = chunk_sections(
-        sections, max_tokens=500, tokenizer_fn=tokenizer_fn
-    )
+    chunks = chunk_sections(sections, max_tokens=500, tokenizer_fn=tokenizer_fn)
     logger.info("Created %d chunks", len(chunks))
 
     if not chunks:
@@ -177,9 +171,7 @@ async def _ingest_git_source(
             continue
 
         sections = _parse_markdown(file.content)
-        chunks = chunk_sections(
-            sections, max_tokens=500, tokenizer_fn=tokenizer_fn
-        )
+        chunks = chunk_sections(sections, max_tokens=500, tokenizer_fn=tokenizer_fn)
 
         if not chunks:
             continue
@@ -215,9 +207,7 @@ async def _ingest_git_source(
                     source.tags,
                 )
 
-                await conn.execute(
-                    "DELETE FROM chunks WHERE source_id = $1", source_id
-                )
+                await conn.execute("DELETE FROM chunks WHERE source_id = $1", source_id)
 
                 for chunk, embedding in zip(chunks, embeddings):
                     await conn.execute(
@@ -248,9 +238,7 @@ def _parse_markdown(content: str) -> list[Section]:
             if current_parts:
                 text = "\n".join(current_parts).strip()
                 if text:
-                    sections.append(
-                        Section(title=current_title, text=text, level=current_level)
-                    )
+                    sections.append(Section(title=current_title, text=text, level=current_level))
                 current_parts = []
 
             level = len(line) - len(line.lstrip("#"))
@@ -262,9 +250,7 @@ def _parse_markdown(content: str) -> list[Section]:
     if current_parts:
         text = "\n".join(current_parts).strip()
         if text:
-            sections.append(
-                Section(title=current_title, text=text, level=current_level)
-            )
+            sections.append(Section(title=current_title, text=text, level=current_level))
 
     return sections
 
