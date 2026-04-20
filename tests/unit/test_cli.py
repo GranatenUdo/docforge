@@ -128,6 +128,29 @@ class TestStatusCommand:
         assert result.exit_code == 0
 
 
+class TestLintDocsCommand:
+    def test_clean_repo_exits_zero(self, tmp_path, monkeypatch):
+        (tmp_path / "README.md").write_text("# Clean repo\n", encoding="utf-8")
+        result = runner.invoke(app, ["lint-docs", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "PASS" in result.output
+
+    def test_failing_repo_exits_one(self, tmp_path, monkeypatch):
+        (tmp_path / "README.md").write_text(
+            "# Repo\n\nTODO: Explain\n", encoding="utf-8"
+        )
+        result = runner.invoke(app, ["lint-docs", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "FAIL" in result.output
+        assert "todo-placeholder" in result.output
+
+    def test_missing_directory_exits_one(self, tmp_path):
+        missing = tmp_path / "does-not-exist"
+        result = runner.invoke(app, ["lint-docs", str(missing)])
+        assert result.exit_code == 1
+        assert "not a directory" in (result.output + (result.stderr or ""))
+
+
 class TestServeCommand:
     def test_serve_mcp_calls_mcp_run(self, monkeypatch):
         calls = {"mcp": 0}
