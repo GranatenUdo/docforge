@@ -85,8 +85,11 @@ async def lifespan(app: FastAPI):
     _azure_scheme = _build_auth_scheme(settings)
     if _azure_scheme is not None:
         await _azure_scheme.openid_config.load_config()
-        logger.info("Entra auth enabled (tenant=%s, audience=%s)",
-                    settings.auth.tenant_id, settings.auth.audience)
+        logger.info(
+            "Entra auth enabled (tenant=%s, audience=%s)",
+            settings.auth.tenant_id,
+            settings.auth.audience,
+        )
     logger.info("Loading embedding model...")
     _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)

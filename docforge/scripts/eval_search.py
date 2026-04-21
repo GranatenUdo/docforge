@@ -76,6 +76,7 @@ async def run_queries(
     credential = None
     if audience:
         from azure.identity.aio import DefaultAzureCredential
+
         credential = DefaultAzureCredential()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -192,7 +193,10 @@ def main() -> int:
     parser.add_argument(
         "--audience",
         default=None,
-        help="Entra API audience (e.g., api://<app-id>). When set, attaches a Bearer token via DefaultAzureCredential. Omit for auth.mode=none endpoints.",
+        help=(
+            "Entra API audience (e.g., api://<app-id>). When set, attaches a "
+            "Bearer token via DefaultAzureCredential. Omit for auth.mode=none."
+        ),
     )
     args = parser.parse_args()
 

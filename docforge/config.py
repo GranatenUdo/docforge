@@ -26,12 +26,12 @@ class AuthSettings(BaseModel):
             if not self.tenant_id:
                 raise ValueError(
                     "auth.mode=entra requires auth.tenant_id to be set "
-                    "(via docforge.yml or DOCFORGE_AUTH__TENANT_ID env var)"
+                    "(via docforge.yml or AUTH__TENANT_ID env var)"
                 )
             if not self.audience:
                 raise ValueError(
                     "auth.mode=entra requires auth.audience to be set "
-                    "(via docforge.yml or DOCFORGE_AUTH__AUDIENCE env var)"
+                    "(via docforge.yml or AUTH__AUDIENCE env var)"
                 )
         return self
 

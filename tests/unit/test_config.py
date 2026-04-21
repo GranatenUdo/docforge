@@ -120,6 +120,7 @@ class TestAuthSettings:
     def test_default_mode_is_none(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         from docforge.config import Settings
+
         s = Settings()
         assert s.auth.mode == "none"
         assert s.auth.tenant_id == ""
@@ -128,13 +129,11 @@ class TestAuthSettings:
     def test_loads_auth_from_yml(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "auth:\n"
-            "  mode: entra\n"
-            "  tenant_id: t-123\n"
-            "  audience: api://a-456\n",
+            "auth:\n  mode: entra\n  tenant_id: t-123\n  audience: api://a-456\n",
             encoding="utf-8",
         )
         from docforge.config import Settings
+
         s = Settings()
         assert s.auth.mode == "entra"
         assert s.auth.tenant_id == "t-123"
@@ -149,6 +148,7 @@ class TestAuthSettings:
         monkeypatch.setenv("AUTH__TENANT_ID", "t-from-env")
         monkeypatch.setenv("AUTH__AUDIENCE", "api://env")
         from docforge.config import Settings
+
         s = Settings()
         assert s.auth.mode == "entra"
         assert s.auth.tenant_id == "t-from-env"
@@ -161,6 +161,7 @@ class TestAuthSettings:
             encoding="utf-8",
         )
         from docforge.config import Settings
+
         with pytest.raises(ValueError, match="tenant_id"):
             Settings()
 
@@ -168,9 +169,11 @@ class TestAuthSettings:
         """Regression: a yml without any auth: block must still load."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "database_url: postgresql://example/db\n", encoding="utf-8",
+            "database_url: postgresql://example/db\n",
+            encoding="utf-8",
         )
         from docforge.config import Settings
+
         s = Settings()
         assert s.auth.mode == "none"
 
@@ -179,14 +182,17 @@ class TestQueryLogRetention:
     def test_default_retention_days(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         from docforge.config import Settings
+
         s = Settings()
         assert s.query_log_retention_days == 180
 
     def test_retention_overridable_in_yml(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "query_log_retention_days: 90\n", encoding="utf-8",
+            "query_log_retention_days: 90\n",
+            encoding="utf-8",
         )
         from docforge.config import Settings
+
         s = Settings()
         assert s.query_log_retention_days == 90

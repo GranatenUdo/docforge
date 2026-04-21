@@ -23,6 +23,7 @@ def stub_downstream(monkeypatch):
             return [0.0] * 768
 
     import docforge.api as api_mod
+
     monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
 
     class _Conn:
@@ -77,6 +78,7 @@ def stub_entra(monkeypatch):
 
     # Force mode=entra at settings load.
     import docforge.api as api_mod
+
     monkeypatch.setenv("AUTH__MODE", "entra")
     monkeypatch.setenv("AUTH__TENANT_ID", "test-tenant")
     monkeypatch.setenv("AUTH__AUDIENCE", "api://test-app")
@@ -97,19 +99,28 @@ class TestAuthModeNone:
     @pytest.mark.asyncio
     async def test_search_accepts_unauthenticated(self, monkeypatch, stub_downstream):
         import docforge.api as api_mod
+
         monkeypatch.setattr(api_mod, "_azure_scheme", None)
 
         from docforge.api import app
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.post("/search", json={
-                "query": "test", "user_name": "tobias",
-                "team_name": "ccl", "area_name": None, "limit": 3,
-            })
+            resp = await c.post(
+                "/search",
+                json={
+                    "query": "test",
+                    "user_name": "tobias",
+                    "team_name": "ccl",
+                    "area_name": None,
+                    "limit": 3,
+                },
+            )
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_health_always_unauthenticated(self):
         from docforge.api import app
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get("/health")
         assert resp.status_code == 200
@@ -121,11 +132,18 @@ class TestAuthModeEntra:
     @pytest.mark.asyncio
     async def test_search_rejects_missing_bearer_token(self, stub_entra, stub_downstream):
         from docforge.api import app
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.post("/search", json={
-                "query": "test", "user_name": "tobias",
-                "team_name": "ccl", "area_name": None, "limit": 3,
-            })
+            resp = await c.post(
+                "/search",
+                json={
+                    "query": "test",
+                    "user_name": "tobias",
+                    "team_name": "ccl",
+                    "area_name": None,
+                    "limit": 3,
+                },
+            )
         # fastapi-azure-auth raises 401 for missing tokens; HTTPBearer base class
         # would default to 403. Accept either — library-version dependent.
         assert resp.status_code in (401, 403)
@@ -133,6 +151,7 @@ class TestAuthModeEntra:
     @pytest.mark.asyncio
     async def test_health_still_unauthenticated_under_entra(self, stub_entra):
         from docforge.api import app
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get("/health")
         assert resp.status_code == 200
@@ -144,11 +163,22 @@ class TestAuthModeEntra:
         from docforge.api import _auth_dependency, app
 
         fake_user = User(
-            claims={}, preferred_username="tobias.ens", oid="abc-oid-123",
-            sub="sub", tid="test-tenant", aud="api://test-app",
-            access_token="mock", is_guest=False,
-            iat=1, nbf=1, exp=99999999,
-            iss="iss", aio="aio", uti="uti", rh="rh", ver="2.0",
+            claims={},
+            preferred_username="tobias.ens",
+            oid="abc-oid-123",
+            sub="sub",
+            tid="test-tenant",
+            aud="api://test-app",
+            access_token="mock",
+            is_guest=False,
+            iat=1,
+            nbf=1,
+            exp=99999999,
+            iss="iss",
+            aio="aio",
+            uti="uti",
+            rh="rh",
+            ver="2.0",
         )
 
         async def fake_dep():
@@ -157,10 +187,16 @@ class TestAuthModeEntra:
         app.dependency_overrides[_auth_dependency] = fake_dep
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.post("/search", json={
-                    "query": "test", "user_name": "ignored-in-entra-mode",
-                    "team_name": "ccl", "area_name": None, "limit": 3,
-                })
+                resp = await c.post(
+                    "/search",
+                    json={
+                        "query": "test",
+                        "user_name": "ignored-in-entra-mode",
+                        "team_name": "ccl",
+                        "area_name": None,
+                        "limit": 3,
+                    },
+                )
             assert resp.status_code == 200
         finally:
             app.dependency_overrides.clear()
@@ -195,12 +231,11 @@ class TestQueryLogCleanup:
             return _Pool()
 
         import docforge.api as api_mod
+
         monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
 
-        task = asyncio.create_task(
-            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
-        )
+        task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
         await asyncio.sleep(0.12)  # time for at least 2 iterations
         task.cancel()
         try:
@@ -243,12 +278,11 @@ class TestQueryLogCleanup:
             return _Pool()
 
         import docforge.api as api_mod
+
         monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
 
-        task = asyncio.create_task(
-            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
-        )
+        task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
         await asyncio.sleep(0.15)
         task.cancel()
         try:
