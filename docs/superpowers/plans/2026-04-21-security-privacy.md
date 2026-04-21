@@ -4,9 +4,9 @@
 
 **Goal:** Ship Entra ID authentication on `/search` + `/sources` (delegated-user flow, hard-enforced when `auth.mode == entra`), add `user_oid` to `query_log` as an additive migration, and publish the threat model + log-privacy supporting documents.
 
-**Architecture:** Auth is opt-in via config. Engine default stays `auth.mode: none` (local dev + other consumers unaffected). When `auth.mode == entra`, FastAPI validates JWTs via `fastapi-azure-auth` against DocuWare's tenant; client-side uses `azure-identity.DefaultAzureCredential` for silent token acquisition. The `query_log` migration is additive — `user_oid TEXT NULL` added; pre-Entra rows keep NULL. `/health` stays open for Container Apps probes; `/search` and `/sources` are gated. Retention is 180-day via pg_cron.
+**Architecture:** Auth is opt-in via config. Engine default stays `auth.mode: none` (local dev + other consumers unaffected). When `auth.mode == entra`, FastAPI validates JWTs via `fastapi-azure-auth` against DocuWare's tenant; client-side uses `azure-identity.DefaultAzureCredential` for silent token acquisition. The `query_log` migration is additive — `user_oid TEXT NULL` added; pre-Entra rows keep NULL. `/health` stays open for Container Apps probes; `/search` and `/sources` are gated. 180-day retention enforced by a background asyncio task in FastAPI's `lifespan` (idempotent hourly DELETE; multi-replica-safe).
 
-**Tech Stack:** Python 3.12+, FastAPI, `fastapi-azure-auth>=5.0` (new optional dep), `azure-identity>=1.19` (new optional dep), pydantic-settings, asyncpg + pgvector, Azure Container Apps + Bicep IaC, pg_cron (Postgres extension).
+**Tech Stack:** Python 3.12+, FastAPI, `fastapi-azure-auth>=5.0` (new optional dep), `azure-identity>=1.19` (new optional dep), pydantic-settings, asyncpg + pgvector, Azure Container Apps + Bicep IaC.
 
 **Spec:** `docs/superpowers/specs/2026-04-21-security-privacy-design.md`
 
@@ -22,7 +22,7 @@
 - `docforge/query_log.py` — MODIFY. Add `user_oid` param; write to new column.
 - `docforge/sql/migrations/005_add_query_log_user_oid.sql` — NEW. Additive migration.
 - `docforge/pyproject.toml` — MODIFY. `[project.optional-dependencies] entra = [...]`.
-- `docforge/deploy/azure/main.bicep` — MODIFY. 3 new auth params + env vars; pg_cron in `azure.extensions`.
+- `docforge/deploy/azure/main.bicep` — MODIFY. 3 new auth params + env vars. (pg_cron considered and rejected during plan review — app-level cleanup instead.)
 - `docforge/scripts/eval_search.py` — MODIFY. `DefaultAzureCredential` + `--audience` flag.
 - `docforge/scripts/README.md` — MODIFY. Document `--audience` + `az login` prereq.
 - `docforge/docs/threat-model.md` — NEW. Per spec §3 outline.
@@ -69,16 +69,26 @@ Under the new app registration → **Expose an API** → **Add a scope**:
 
 The full scope identifier becomes `api://<client-id>/search`.
 
-- [ ] **Step 3: Record identifiers in a local note (not committed)**
+- [ ] **Step 3: Grant admin consent for the `search` scope**
 
-Capture these values — they are **not secrets** but are needed for Task 18 (populate `knowledge-hub/rag/docforge.yml`) and Task 21 (deploy):
+Without this, every first-use surfaces a consent popup. As tenant admin:
+
+- Go to **API permissions** (still on the app-registration blade).
+- Click **Add a permission** → **My APIs** → select the `docforge-search-api` app you just registered → **Delegated permissions** → check `search`.
+- Click **Grant admin consent for DocuWare** (top of the permissions grid).
+
+Verify: the `search` row now shows "Granted for DocuWare" in green.
+
+- [ ] **Step 4: Record identifiers in a local note (not committed)**
+
+Capture these values — they are **not secrets** but are needed for Task 16 (populate `knowledge-hub/rag/docforge.yml`) and Task 17 (deploy):
 
 ```
 AZURE_TENANT_ID = <tenant guid>
 AZURE_AUDIENCE  = api://<client-id>
 ```
 
-- [ ] **Step 4: No commit — external task only**
+- [ ] **Step 5: No commit — external task only**
 
 No code change yet. Proceed to Phase 1.
 
@@ -541,177 +551,149 @@ cd /e/docforge && git add docforge/api.py && git -c commit.gpgsign=false commit 
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/unit/test_auth.py`:
+Create `tests/unit/test_auth.py`. Uses the same `AsyncClient(transport=ASGITransport(app=app))` pattern as the existing `tests/unit/test_api.py`:
 
 ```python
 """Tests for Entra auth integration in docforge.api."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
-from fastapi import Request
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 
-def _build_app_with_auth_mode(mode: str, monkeypatch, tmp_path):
-    """Set env vars to force auth mode, then import app fresh."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DOCFORGE_AUTH__MODE", mode)
-    if mode == "entra":
-        monkeypatch.setenv("DOCFORGE_AUTH__TENANT_ID", "test-tenant-id")
-        monkeypatch.setenv("DOCFORGE_AUTH__AUDIENCE", "api://test-app-id")
-    # Reset module-level state in api.py
+@pytest.fixture
+def stub_downstream(monkeypatch):
+    """Stub out embedder, DB pool, and log_query so /search reaches its return path
+    without touching real infra."""
+    class FakeEmbedder:
+        model_name = "test"
+        dimensions = 768
+        def embed_query(self, q): return [0.0] * 768
+
     import docforge.api as api_mod
+    monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
+
+    class _Conn:
+        async def fetch(self, *a, **k): return []
+        async def execute(self, *a, **k): pass
+
+    class _Ctx:
+        async def __aenter__(self): return _Conn()
+        async def __aexit__(self, *a): pass
+
+    class _Pool:
+        def acquire(self): return _Ctx()
+
+    async def fake_get_pool(url): return _Pool()
+    monkeypatch.setattr("docforge.db.get_pool", fake_get_pool)
+
+    async def fake_log_query(*args, **kwargs): pass
+    monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
+
+
+@pytest.fixture
+def stub_entra(monkeypatch):
+    """Install a stub SingleTenantAzureAuthorizationCodeBearer so lifespan doesn't
+    hit real Entra URLs. Returns the installed stub scheme so tests can override
+    the dependency."""
+    import docforge.api as api_mod
+    from fastapi_azure_auth.openid_config import OpenIdConfig
+
+    # Stop openid discovery from hitting the real Entra tenant.
+    async def fake_load(self): return None
+    monkeypatch.setattr(OpenIdConfig, "load_config", fake_load)
+
+    # Force mode=entra at settings load.
+    monkeypatch.setenv("DOCFORGE_AUTH__MODE", "entra")
+    monkeypatch.setenv("DOCFORGE_AUTH__TENANT_ID", "test-tenant")
+    monkeypatch.setenv("DOCFORGE_AUTH__AUDIENCE", "api://test-app")
     monkeypatch.setattr(api_mod, "_settings", None)
-    monkeypatch.setattr(api_mod, "_embedder", None)
-    monkeypatch.setattr(api_mod, "_azure_scheme", None)
-    return api_mod
+
+    # Build the scheme manually and install it in place of lifespan wiring.
+    from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
+    scheme = SingleTenantAzureAuthorizationCodeBearer(
+        app_client_id="test-app",
+        tenant_id="test-tenant",
+        scopes={"api://test-app/search": "Search docforge"},
+    )
+    monkeypatch.setattr(api_mod, "_azure_scheme", scheme)
+    return scheme
 
 
 class TestAuthModeNone:
-    def test_search_accepts_unauthenticated(self, monkeypatch, tmp_path):
-        api_mod = _build_app_with_auth_mode("none", monkeypatch, tmp_path)
-        # Stub the embedder + DB so the endpoint short-circuits cleanly.
-        class FakeEmbedder:
-            model_name = "test"
-            dimensions = 768
-            def embed_query(self, q): return [0.0] * 768
-        monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
+    """Default auth.mode=none keeps existing behavior."""
 
-        async def fake_get_pool(url):
-            class P:
-                async def acquire(self):
-                    class C:
-                        async def fetch(self, *a, **k): return []
-                        async def execute(self, *a, **k): pass
-                        async def __aenter__(self): return self
-                        async def __aexit__(self, *a): pass
-                    return C()
-            return P()
-        monkeypatch.setattr("docforge.db.get_pool", fake_get_pool)
+    @pytest.mark.asyncio
+    async def test_search_accepts_unauthenticated(self, monkeypatch, stub_downstream):
+        import docforge.api as api_mod
+        monkeypatch.setattr(api_mod, "_azure_scheme", None)  # mode=none
 
-        async def fake_log_query(*args, **kwargs): pass
-        monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
-
-        client = TestClient(api_mod.app)
-        resp = client.post("/search", json={
-            "query": "test",
-            "user_name": "tobias",
-            "team_name": "ccl",
-            "area_name": None,
-            "limit": 3,
-        })
+        from docforge.api import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post("/search", json={
+                "query": "test", "user_name": "tobias",
+                "team_name": "ccl", "area_name": None, "limit": 3,
+            })
         assert resp.status_code == 200
 
-    def test_health_always_unauthenticated(self, monkeypatch, tmp_path):
-        api_mod = _build_app_with_auth_mode("none", monkeypatch, tmp_path)
-        client = TestClient(api_mod.app)
-        resp = client.get("/health")
+    @pytest.mark.asyncio
+    async def test_health_always_unauthenticated(self):
+        from docforge.api import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get("/health")
         assert resp.status_code == 200
 
 
 class TestAuthModeEntra:
-    def test_search_requires_bearer_token(self, monkeypatch, tmp_path):
-        api_mod = _build_app_with_auth_mode("entra", monkeypatch, tmp_path)
+    """auth.mode=entra gates /search and /sources, leaves /health open."""
 
-        # Bypass openid_config.load_config (it would hit real Entra).
-        async def noop(): pass
-        from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
-        monkeypatch.setattr(
-            SingleTenantAzureAuthorizationCodeBearer,
-            "__call__",
-            lambda self, request: (_ for _ in ()).throw(
-                __import__("fastapi").HTTPException(status_code=401, detail="Unauthorized"),
-            ),
-        )
+    @pytest.mark.asyncio
+    async def test_search_rejects_missing_bearer_token(self, stub_entra, stub_downstream):
+        # No Authorization header -> fastapi-azure-auth's HTTPBearer base raises.
+        from docforge.api import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post("/search", json={
+                "query": "test", "user_name": "tobias",
+                "team_name": "ccl", "area_name": None, "limit": 3,
+            })
+        # fastapi-azure-auth raises 401 for missing/invalid tokens. HTTPBearer
+        # base-class default would be 403; the library overrides to 401.
+        assert resp.status_code in (401, 403)  # accept either — library version dependent
+        assert resp.status_code != 200
 
-        # Stub the embedder so the app can start even if auth fails first.
-        class FakeEmbedder:
-            model_name = "test"
-            dimensions = 768
-            def embed_query(self, q): return [0.0] * 768
-        monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
-
-        client = TestClient(api_mod.app)
-        resp = client.post("/search", json={
-            "query": "test",
-            "user_name": "tobias",
-            "team_name": "ccl",
-            "area_name": None,
-            "limit": 3,
-        })
-        assert resp.status_code == 401
-
-    def test_health_still_unauthenticated_under_entra(self, monkeypatch, tmp_path):
-        api_mod = _build_app_with_auth_mode("entra", monkeypatch, tmp_path)
-        client = TestClient(api_mod.app)
-        resp = client.get("/health")
+    @pytest.mark.asyncio
+    async def test_health_still_unauthenticated_under_entra(self, stub_entra):
+        from docforge.api import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get("/health")
         assert resp.status_code == 200
 
-    def test_search_accepts_with_mock_user(self, monkeypatch, tmp_path):
-        api_mod = _build_app_with_auth_mode("entra", monkeypatch, tmp_path)
+    @pytest.mark.asyncio
+    async def test_search_accepts_with_mock_user(self, stub_entra, stub_downstream):
         from fastapi_azure_auth.user import User
+        from docforge.api import app, _auth_dependency
 
-        # Override the scheme dependency to return a fake user.
         fake_user = User(
-            claims={},
-            preferred_username="tobias.ens",
-            oid="abc-oid-123",
-            sub="sub",
-            tid="test-tenant-id",
-            aud="api://test-app-id",
-            access_token="mock",
-            is_guest=False,
-            iat=1, nbf=1, exp=99999999,
+            claims={}, preferred_username="tobias.ens", oid="abc-oid-123",
+            sub="sub", tid="test-tenant", aud="api://test-app",
+            access_token="mock", is_guest=False, iat=1, nbf=1, exp=99999999,
             iss="iss", aio="aio", uti="uti", rh="rh", ver="2.0",
         )
-        # _azure_scheme is constructed at lifespan; test runtime patches it.
-        # Use fastapi dependency_overrides instead.
-        from docforge.api import app
 
-        # We need to reach the scheme after app.startup runs. Use TestClient's
-        # `with` form so lifespan runs:
-        # Stub openid discovery to avoid real HTTP:
-        from fastapi_azure_auth.openid_config import OpenIdConfig
-        async def fake_load(self): pass
-        monkeypatch.setattr(OpenIdConfig, "load_config", fake_load)
-
-        # Stub embedder + DB + log_query as in TestAuthModeNone.
-        class FakeEmbedder:
-            model_name = "test"
-            dimensions = 768
-            def embed_query(self, q): return [0.0] * 768
-        monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
-
-        async def fake_get_pool(url):
-            class P:
-                async def acquire(self):
-                    class C:
-                        async def fetch(self, *a, **k): return []
-                        async def execute(self, *a, **k): pass
-                        async def __aenter__(self): return self
-                        async def __aexit__(self, *a): pass
-                    return C()
-            return P()
-        monkeypatch.setattr("docforge.db.get_pool", fake_get_pool)
-
-        async def fake_log_query(*args, **kwargs): pass
-        monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
-
-        with TestClient(app) as client:
-            # After startup, _azure_scheme is set. Override it:
-            import docforge.api as api_live
-            if api_live._azure_scheme is not None:
-                app.dependency_overrides[api_live._azure_scheme] = lambda: fake_user
-
-            resp = client.post("/search", json={
-                "query": "test",
-                "user_name": "ignored-in-entra-mode",
-                "team_name": "ccl",
-                "area_name": None,
-                "limit": 3,
-            })
+        # Override the wrapper dependency to skip real JWT validation.
+        async def fake_dep(): return fake_user
+        app.dependency_overrides[_auth_dependency] = fake_dep
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                resp = await c.post("/search", json={
+                    "query": "test", "user_name": "ignored-in-entra-mode",
+                    "team_name": "ccl", "area_name": None, "limit": 3,
+                })
             assert resp.status_code == 200
+        finally:
             app.dependency_overrides.clear()
 ```
 
@@ -1007,7 +989,7 @@ cd /e/docforge && git add docforge/scripts/eval_search.py docforge/scripts/READM
 
 ---
 
-## Phase 5 — Bicep + pg_cron extension
+## Phase 5 — Bicep updates (auth params)
 
 ### Task 11: Add auth params + env vars to `main.bicep`
 
@@ -1054,7 +1036,7 @@ Run:
 ```bash
 cd /e/docforge && az bicep build --file deploy/azure/main.bicep --stdout 2>&1 | head -5
 ```
-Expected: no errors; the ARM template JSON is emitted. (If `az` is not installed locally, skip this step — the next deploy in Task 19 will surface any errors.)
+Expected: no errors; the ARM template JSON is emitted. (If `az` is not installed locally, skip this step — the next deploy in Task 17 will surface any errors.)
 
 - [ ] **Step 4: Commit**
 
@@ -1064,32 +1046,217 @@ cd /e/docforge && git add deploy/azure/main.bicep && git -c commit.gpgsign=false
 
 ---
 
-### Task 12: Enable `pg_cron` extension on Postgres Flexible Server
+### Task 12: App-level `query_log` cleanup loop in FastAPI lifespan
 
 **Files:**
-- Modify: `E:/docforge/deploy/azure/main.bicep`
+- Modify: `E:/docforge/docforge/config.py`
+- Modify: `E:/docforge/docforge/api.py`
+- Modify: `E:/docforge/tests/unit/test_config.py`
+- Modify: `E:/docforge/tests/unit/test_auth.py` (extend)
 
-- [ ] **Step 1: Add `pg_cron` to the server parameter `azure.extensions`**
+Post-review change: rather than pg_cron on Azure Flexible Server (which requires `shared_preload_libraries` + `CREATE EXTENSION` in the `postgres` database + `cron.schedule_in_database` for cross-db scheduling), the cleanup runs as an asyncio task from FastAPI's `lifespan`. Idempotent, works regardless of replica count, no Azure-specific setup.
 
-In `main.bicep`, locate the `Microsoft.DBforPostgreSQL/flexibleServers` resource. Azure Flexible Server requires extensions to be declared on the server resource via a `configurations` sub-resource:
+- [ ] **Step 1: Add `query_log_retention_days` setting (TDD)**
 
-```bicep
-resource postgresExtensionsConfig 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2024-11-01-preview' = {
-  parent: postgresServer
-  name: 'azure.extensions'
-  properties: {
-    value: 'PG_CRON'
-    source: 'user-override'
-  }
-}
+Append to `tests/unit/test_config.py`:
+
+```python
+class TestQueryLogRetention:
+    def test_default_retention_days(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from docforge.config import Settings
+        s = Settings()
+        assert s.query_log_retention_days == 180
+
+    def test_retention_overridable_in_yml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "query_log_retention_days: 90\n", encoding="utf-8",
+        )
+        from docforge.config import Settings
+        s = Settings()
+        assert s.query_log_retention_days == 90
 ```
 
-(Use the same API version as the existing `postgresServer` resource. If the existing resource uses a different version, adapt.)
+Run:
+```bash
+cd /e/docforge && /e/docforge/.venv/Scripts/python.exe -m pytest tests/unit/test_config.py::TestQueryLogRetention -v --no-cov
+```
+Expected: both fail.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Add the field to `Settings`**
+
+In `docforge/config.py`, add alongside the other flat settings:
+
+```python
+query_log_retention_days: int = 180
+```
+
+Run the tests again — both pass.
+
+- [ ] **Step 3: Add the cleanup loop to `api.py`**
+
+In `docforge/api.py`, at module level, add:
+
+```python
+import asyncio
+
+_cleanup_task: asyncio.Task | None = None
+
+_CLEANUP_INTERVAL_SECONDS = 3600  # one hour
+
+
+async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> None:
+    """Runs hourly. Deletes query_log rows older than retention_days.
+    Idempotent: no-op when nothing to delete, so multi-replica is safe."""
+    from docforge.db import get_pool
+    while True:
+        try:
+            pool = await get_pool(database_url)
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM query_log WHERE created_at < now() - $1::interval",
+                    f"{retention_days} days",
+                )
+            logger.info("query_log cleanup: %s", result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Never let the loop die on a transient failure — just log and retry.
+            logger.exception("query_log cleanup failed: %s", e)
+        try:
+            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+```
+
+Update `lifespan`:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _embedder, _azure_scheme, _cleanup_task
+    settings = _get_settings()
+    _azure_scheme = _build_auth_scheme(settings)
+    if _azure_scheme is not None:
+        await _azure_scheme.openid_config.load_config()
+    logger.info("Loading embedding model...")
+    _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
+    logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
+
+    _cleanup_task = asyncio.create_task(
+        _query_log_cleanup_loop(settings.database_url, settings.query_log_retention_days)
+    )
+
+    yield
+
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+    await close_pool()
+```
+
+- [ ] **Step 4: Unit test the loop logic**
+
+Append to `tests/unit/test_auth.py` (the test module already imports `asyncio`):
+
+```python
+class TestQueryLogCleanup:
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_runs_delete_once_per_iteration(self, monkeypatch):
+        calls = []
+
+        class _Conn:
+            async def execute(self, query, *args):
+                calls.append((query, args))
+                return "DELETE 0"
+
+        class _Ctx:
+            async def __aenter__(self): return _Conn()
+            async def __aexit__(self, *a): pass
+
+        class _Pool:
+            def acquire(self): return _Ctx()
+
+        async def fake_get_pool(url): return _Pool()
+        monkeypatch.setattr("docforge.db.get_pool", fake_get_pool)
+
+        # Shrink the sleep so we can assert without waiting an hour.
+        import docforge.api as api_mod
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+
+        task = asyncio.create_task(
+            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
+        )
+        await asyncio.sleep(0.12)  # time for at least 2 iterations
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert len(calls) >= 2
+        # Verify the DELETE query and the retention interval argument.
+        assert "DELETE FROM query_log" in calls[0][0]
+        assert calls[0][1] == ("180 days",)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_continues_after_db_error(self, monkeypatch):
+        iteration = {"n": 0}
+
+        async def fake_get_pool(url):
+            iteration["n"] += 1
+            if iteration["n"] == 1:
+                raise OSError("simulated DB hiccup")
+            class _Conn:
+                async def execute(self, q, *a): return "DELETE 0"
+            class _Ctx:
+                async def __aenter__(self): return _Conn()
+                async def __aexit__(self, *a): pass
+            class _Pool:
+                def acquire(self): return _Ctx()
+            return _Pool()
+
+        monkeypatch.setattr("docforge.db.get_pool", fake_get_pool)
+
+        import docforge.api as api_mod
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+
+        task = asyncio.create_task(
+            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
+        )
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # We expect iteration to have advanced past the failing first try.
+        assert iteration["n"] >= 2
+```
+
+- [ ] **Step 5: Run the tests**
 
 ```bash
-cd /e/docforge && git add deploy/azure/main.bicep && git -c commit.gpgsign=false commit -m "Bicep: enable pg_cron extension on Postgres Flexible Server"
+cd /e/docforge && /e/docforge/.venv/Scripts/python.exe -m pytest tests/unit/test_config.py tests/unit/test_auth.py -v --no-cov
+```
+Expected: all pass.
+
+- [ ] **Step 6: Run the full suite**
+
+```bash
+cd /e/docforge && /e/docforge/.venv/Scripts/python.exe -m pytest tests/unit/ -q
+```
+Expected: all pass; coverage ≥60%.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /e/docforge && git add docforge/config.py docforge/api.py tests/unit/test_config.py tests/unit/test_auth.py && git -c commit.gpgsign=false commit -m "Add query_log cleanup loop in FastAPI lifespan (180-day retention)"
 ```
 
 ---
@@ -1251,17 +1418,19 @@ Create `knowledge-hub/rag/docs/log-privacy.md`:
 
 **180 days rolling.** Rows with `created_at < now() - interval '180 days'` are deleted by an automated job.
 
-**Cleanup mechanism:** `pg_cron` extension, scheduled to run daily at 02:00 UTC:
+**Cleanup mechanism:** the docforge API process runs this DELETE hourly from its FastAPI lifespan background task:
 
 ```sql
 DELETE FROM query_log WHERE created_at < now() - interval '180 days';
 ```
 
-**Cutover date:** The Entra authentication rollout completed on `<POPULATE-AT-TASK-22>`. Rows with `created_at < <cutover-date>` have `user_oid = NULL`; rows from the cutover onward have a populated `user_oid`. Reports that require trustworthy identity filter `WHERE user_oid IS NOT NULL` or `created_at >= '<cutover-date>'`.
+The query is idempotent (no-op when nothing to delete), so multi-replica deployments run it in parallel safely — Postgres serializes.
+
+**Cutover date:** The Entra authentication rollout completed on `<POPULATE-AT-TASK-21>`. Rows with `created_at < <cutover-date>` have `user_oid = NULL`; rows from the cutover onward have a populated `user_oid`. Reports that require trustworthy identity filter `WHERE user_oid IS NOT NULL` or `created_at >= '<cutover-date>'`.
 
 **Rationale for 180 days:** operational window for multi-quarter adoption-trend analysis. Not longer because the data is not needed for year-over-year comparisons given single-team scope. Not shorter because adoption signals emerge over multi-sprint cycles.
 
-**Fallback mechanism:** if `pg_cron` is unavailable on the Flexible Server, the cleanup runs hourly from FastAPI's lifespan (app-level). This is documented here so the alternate path is discoverable.
+**Why not pg_cron:** the original spec considered pg_cron. Azure Flexible Server setup (allowlist + `shared_preload_libraries` + `CREATE EXTENSION` in the `postgres` database + `cron.schedule_in_database` for cross-DB jobs) is more infrastructure than the idempotent cleanup query warrants. Revisit if the cleanup ever grows beyond a single DELETE.
 
 ## Access
 
@@ -1535,56 +1704,26 @@ Expected: summary shows `recall@1: 10/25 (40%)`, `recall@5: 19/25 (76%)`, `mrr: 
 
 - [ ] **Step 7: No commit (validation task)**
 
-If any of the above fails, stop and diagnose before proceeding. Record the Entra go-live date (this task's completion date) — it's the cutover date used in Task 22.
+If any of the above fails, stop and diagnose before proceeding. Record the Entra go-live date (this task's completion date) — it's the cutover date used in Task 21.
 
 ---
 
-## Phase 8 — Cleanup automation
+## Phase 8 — Cleanup verification in production
 
-### Task 19: Schedule the daily `query_log` cleanup job
+### Task 19: Verify the app-level cleanup runs end-to-end against the deployed API
 
-**Files:** None (SQL command against production DB via admin connection).
+**Files:** None (validation task against the live Azure deployment).
 
-- [ ] **Step 1: Schedule the pg_cron job**
+The cleanup loop is wired into the lifespan in Task 12 and ships with the deployment in Task 17. This task confirms the deployed container actually runs it.
 
-Using the admin DB connection (connection string in Key Vault):
+- [ ] **Step 1: Confirm the cleanup loop started at container boot**
 
 ```bash
-/e/docforge/.venv/Scripts/python.exe -c "
-import asyncio, asyncpg, os
-async def schedule():
-    conn = await asyncpg.connect(os.environ['ADMIN_DB_URL'])
-    # pg_cron cron.schedule: (job_name, schedule_expr, command)
-    await conn.execute(\"\"\"
-        SELECT cron.schedule(
-            'query-log-cleanup',
-            '0 2 * * *',
-            \$\$DELETE FROM query_log WHERE created_at < now() - interval '180 days'\$\$
-        );
-    \"\"\")
-    jobs = await conn.fetch('SELECT jobid, jobname, schedule FROM cron.job')
-    for j in jobs:
-        print(dict(j))
-    await conn.close()
-asyncio.run(schedule())
-"
+az containerapp logs show --name docforge-search-api --resource-group cloudcl-test-docforge-rg --tail 200 2>&1 | grep -E "query_log cleanup|Loading embedding"
 ```
+Expected: at least one `query_log cleanup: DELETE <n>` log line from the most recent container start. `<n>` will usually be 0 on a fresh deployment.
 
-Expected: the `query-log-cleanup` job is registered. If `cron.schedule` is not found, `pg_cron` was not enabled by the Bicep change (Task 12). In that case, apply the Bicep change manually and retry, OR fall back to app-level cleanup (see Task 20 fallback note).
-
-- [ ] **Step 2: Verify the job is registered**
-
-Run the same query from Step 1 again; confirm `query-log-cleanup` is listed.
-
-- [ ] **Step 3: No commit (infra task)**
-
----
-
-### Task 20: Verify cleanup works end-to-end (dated test row)
-
-**Files:** None (validation task).
-
-- [ ] **Step 1: Insert a synthetic row dated >180 days ago**
+- [ ] **Step 2: Insert a synthetic row dated >180 days ago**
 
 ```bash
 /e/docforge/.venv/Scripts/python.exe -c "
@@ -1602,23 +1741,15 @@ asyncio.run(ins())
 "
 ```
 
-- [ ] **Step 2: Trigger the cleanup manually (instead of waiting until 02:00 UTC)**
+- [ ] **Step 3: Trigger a container restart to force the lifespan cleanup to run within seconds (instead of waiting up to an hour)**
 
 ```bash
-/e/docforge/.venv/Scripts/python.exe -c "
-import asyncio, asyncpg, os
-async def run():
-    conn = await asyncpg.connect(os.environ['ADMIN_DB_URL'])
-    deleted = await conn.execute(\"DELETE FROM query_log WHERE created_at < now() - interval '180 days'\")
-    print(f'Deleted rows: {deleted}')
-    await conn.close()
-asyncio.run(run())
-"
+az containerapp revision restart --name docforge-search-api --resource-group cloudcl-test-docforge-rg --revision $(az containerapp revision list --name docforge-search-api --resource-group cloudcl-test-docforge-rg --query "[0].name" -o tsv)
 ```
 
-Expected: `Deleted rows: DELETE 1` (or more, if there are other aged rows).
+Wait ~30 seconds for the new container to boot past the embedding-model-load warm-up.
 
-- [ ] **Step 3: Confirm the synthetic row is gone**
+- [ ] **Step 4: Confirm the synthetic row was deleted**
 
 ```bash
 /e/docforge/.venv/Scripts/python.exe -c "
@@ -1626,20 +1757,20 @@ import asyncio, asyncpg, os
 async def check():
     conn = await asyncpg.connect(os.environ['ADMIN_DB_URL'])
     row = await conn.fetchrow(\"SELECT * FROM query_log WHERE user_name = 'synthetic-cleanup-test'\")
-    print('still present' if row else 'deleted as expected')
+    print('still present — cleanup did not run' if row else 'deleted as expected')
     await conn.close()
 asyncio.run(check())
 "
 ```
-Expected: `deleted as expected`.
+Expected: `deleted as expected`. If `still present`, check the container logs (Step 1) — if there's no "query_log cleanup" line, the container hasn't booted yet; wait longer. If there IS a line but the row survived, the DELETE query has a bug — compare to the SQL in Task 12 Step 3.
 
-- [ ] **Step 4: No commit (validation task)**
+- [ ] **Step 5: No commit (validation task)**
 
 ---
 
 ## Phase 9 — Team-setup docs + cutover annotation
 
-### Task 21: Update `team-setup-azure.md` and `team-setup.md`
+### Task 20: Update `team-setup-azure.md` and `team-setup.md`
 
 **Files:**
 - Modify: `E:/knowledge-hub/rag/docs/team-setup-azure.md`
@@ -1701,14 +1832,14 @@ cd /e/knowledge-hub && git add rag/docs/team-setup-azure.md rag/docs/team-setup.
 
 ---
 
-### Task 22: Record the Entra cutover date in `log-privacy.md`
+### Task 21: Record the Entra cutover date in `log-privacy.md`
 
 **Files:**
 - Modify: `E:/knowledge-hub/rag/docs/log-privacy.md`
 
 - [ ] **Step 1: Replace the placeholder cutover date**
 
-The doc created in Task 15 has `<POPULATE-AT-TASK-22>` as a placeholder. Replace it with the actual date from Task 18 (the first successful authenticated query). Format: `YYYY-MM-DD`.
+The doc created in Task 15 has `<POPULATE-AT-TASK-21>` as a placeholder. Replace it with the actual date from Task 18 (the first successful authenticated query). Format: `YYYY-MM-DD`.
 
 - [ ] **Step 2: Commit (in knowledge-hub)**
 
@@ -1720,7 +1851,7 @@ cd /e/knowledge-hub && git add rag/docs/log-privacy.md && git -c commit.gpgsign=
 
 ## Final verification
 
-### Task 23: End-to-end verification pass
+### Task 22: End-to-end verification pass
 
 - [ ] **Step 1: Unit tests green on docforge**
 
@@ -1774,7 +1905,7 @@ Implements Spec C3 (spec at docs/superpowers/specs/2026-04-21-security-privacy-d
 - C3.1 Entra ID auth on /search + /sources (fastapi-azure-auth server-side; azure-identity DefaultAzureCredential clients in mcp_client.py + eval_search.py)
 - C3.2 Entra app registration (DocuWare tenant; tobias holds admin rights)
 - C3.3 docforge/docs/threat-model.md + DocuWare deployment context section appended to knowledge-hub deployment.md
-- C3.4 knowledge-hub/rag/docs/log-privacy.md with 180-day retention + pg_cron cleanup
+- C3.4 knowledge-hub/rag/docs/log-privacy.md with 180-day retention + app-level cleanup loop in FastAPI lifespan
 - C3.5 Additive query_log.user_oid migration (pre-Entra rows keep NULL)
 
 ## Test plan
@@ -1785,7 +1916,7 @@ Implements Spec C3 (spec at docs/superpowers/specs/2026-04-21-security-privacy-d
 - [x] Live deployment: /health open (200), /search without auth (401), /search with Entra token (200)
 - [x] query_log.user_oid populated on post-cutover rows
 - [x] Eval harness reproduces baseline (recall@1 40%, recall@5 76%, MRR 0.533) with auth enabled
-- [x] pg_cron cleanup job verified with dated test row
+- [x] App-level cleanup loop verified against deployed API with dated test row
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -1804,17 +1935,17 @@ cd /e/knowledge-hub && git push origin master
 
 - [x] `docforge[entra]` extra installs `fastapi-azure-auth` + `azure-identity`; plain install does not. (Task 5)
 - [x] `auth.mode=none` default: unauthenticated requests accepted (backward-compatible). (Task 8 tests)
-- [x] `auth.mode=entra`: `/search` + `/sources` return 401 on missing/invalid/expired/wrong-audience/wrong-tenant JWT. (Task 8 tests + Task 17 Step 5)
+- [x] `auth.mode=entra`: `/search` + `/sources` return 401 on missing/invalid JWT. (Task 8 tests + Task 17 Step 5)
 - [x] `auth.mode=entra`: `/health` accepts unauthenticated. (Task 8 tests + Task 17 Step 4)
 - [x] App fails fast if `auth.mode=entra` without tenant_id or audience. (Task 6 tests)
 - [x] `query_log.user_oid` exists; pre-Entra NULL; post-Entra populated. (Tasks 2, 3, 18 Step 5)
 - [x] MCP client + eval harness authenticate; live end-to-end query succeeds. (Task 18)
 - [x] Bicep ships auth params + env vars. (Tasks 11, 16, 17)
-- [x] `pg_cron` enabled; cleanup scheduled; verified with dated row. (Tasks 12, 19, 20)
+- [x] App-level cleanup runs hourly in FastAPI lifespan; unit-tested and verified against the deployed API with a dated synthetic row. (Tasks 12, 19)
 - [x] `docforge/docs/threat-model.md` committed per outline. (Task 13)
 - [x] `knowledge-hub/rag/docs/log-privacy.md` committed per outline. (Task 15)
 - [x] `knowledge-hub/rag/docs/deployment.md` has DocuWare-context section. (Task 14)
-- [x] Team-setup docs updated: `az login` added; "scales to zero" corrected. (Task 21)
-- [x] Unit suite passes; coverage ≥60%. (Task 23)
+- [x] Team-setup docs updated: `az login` added; "scales to zero" corrected. (Task 20)
+- [x] Unit suite passes; coverage ≥60%. (Task 22)
 - [x] Baseline reproduces with auth. (Task 18 Step 6)
-- [x] CI green on both repos. (Task 23 Step 5)
+- [x] CI green on both repos. (Task 22 Step 5)

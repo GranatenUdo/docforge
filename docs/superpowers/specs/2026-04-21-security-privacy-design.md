@@ -14,7 +14,7 @@ Five supporting decisions are locked by the Spec C3 brainstorm (see Q&A trail):
 
 1. **Delegated-user flow only** (not app-identity). Every current caller is a human at a workstation (MCP client through Claude Code, eval harness run interactively).
 2. **Hard enforcement** when `auth.mode == entra`; `/health` is the only unauthenticated endpoint (for Container Apps probes). No dev-bypass header.
-3. **180-day `query_log` retention** with automated cleanup via `pg_cron` (fallback: app-level cleanup in FastAPI lifespan).
+3. **180-day `query_log` retention** with automated cleanup run hourly from the FastAPI lifespan (revised during plan review: see "Post-review revision" below — pg_cron on Azure Flexible Server requires `shared_preload_libraries` + explicit `CREATE EXTENSION` in the `postgres` database + `cron.schedule_in_database` for cross-database jobs, more complexity than the idempotent cleanup query warrants).
 4. **Single threat-model doc in docforge** covering engine code + Bicep template; DocuWare-specific deployment context gets a short section appended to `knowledge-hub/rag/docs/deployment.md` (the Bicep template already lives in the docforge repo, so deployment topology *is* engine-side content).
 5. **`auth.mode` in yml; `tenant_id` and `audience` in knowledge-hub's yml with env-var override.** Public identifiers, not secrets. pydantic-settings nested-delimiter pattern.
 
@@ -236,7 +236,7 @@ Single doc at `knowledge-hub/rag/docs/log-privacy.md`, ~2 pages rendered. DocuWa
 
 2. **What `query_log` contains** (~⅓ page, schema table). Columns · types · source · sensitivity. Defines "semi-sensitive" as internal-to-DocuWare-only; not exported in aggregate that would re-identify individuals.
 
-3. **Retention** (~¼ page). 180 days rolling. Cleanup via `pg_cron`: `DELETE FROM query_log WHERE created_at < now() - interval '180 days'` daily at 02:00 UTC. Rationale: operational window for multi-quarter adoption trends; not longer because single-team scope doesn't need YoY comparisons; not shorter because adoption signals emerge over multi-sprint cycles. Pre-Entra rows subject to the same 180-day retention.
+3. **Retention** (~¼ page). 180 days rolling. Cleanup runs hourly from the FastAPI lifespan: `DELETE FROM query_log WHERE created_at < now() - interval '180 days'`. Idempotent (no-op when nothing to delete), so multi-replica is fine — Postgres serializes. Rationale: operational window for multi-quarter adoption trends; not longer because single-team scope doesn't need YoY comparisons; not shorter because adoption signals emerge over multi-sprint cycles. Pre-Entra rows subject to the same 180-day retention.
 
 4. **Access** (~¼ page). Read: Tobias via admin DB connection. Write: only the FastAPI app. Audit: Key Vault logs + Postgres connection logs, review-on-incident.
 
@@ -265,11 +265,13 @@ CREATE INDEX IF NOT EXISTS query_log_user_oid_idx ON query_log (user_oid);
 
 **Cutover date** captured in `log-privacy.md` §3 at write time. Reports spanning the cutover either filter to post-cutover data or annotate the cutover in narrative.
 
-### `pg_cron` enablement
+### Cleanup mechanism (revised from spec-originally pg_cron)
 
-`pg_cron` is enabled on Azure Postgres Flexible Server by adding it to the `azure.extensions` server parameter (Bicep update or portal). Acceptance criterion: extension enabled before scheduling the cleanup job.
+**Post-review revision (2026-04-21):** The original spec routed retention cleanup through pg_cron. Plan review surfaced the actual Azure Flexible Server setup burden — adding `pg_cron` to `azure.extensions` is only step 1; it also requires `shared_preload_libraries = pg_cron` (restart-triggering server parameter), `CREATE EXTENSION pg_cron` in the `postgres` database (not the docforge database), and `cron.schedule_in_database('job', 'schedule', 'SQL', 'docforge')` to run jobs in the right database. Several failure modes each warrant runbook entries.
 
-**Fallback** (if `pg_cron` unavailable, unexpected): app-level cleanup called hourly from FastAPI's lifespan. Documented in `log-privacy.md` §3 as the alternate mechanism.
+**Chosen alternative:** app-level cleanup. The FastAPI `lifespan` spawns a background task that runs `DELETE FROM query_log WHERE created_at < now() - interval '180 days'` every hour. The query is idempotent (no-op when nothing to delete), so multi-replica deployments don't require leader election. ~15 LoC, no Azure-specific infrastructure, runs on every container boot regardless of scaling events.
+
+The `log-privacy.md` doc describes "automated hourly cleanup" without naming a specific mechanism.
 
 ## File summary
 
@@ -280,7 +282,7 @@ CREATE INDEX IF NOT EXISTS query_log_user_oid_idx ON query_log (user_oid);
 | `docforge/docforge/query_log.py` | MODIFY | Accept optional `user_oid` | +~5 |
 | `docforge/docforge/sql/migrations/005_add_query_log_user_oid.sql` | NEW | Additive migration | ~3 |
 | `docforge/pyproject.toml` | MODIFY | `[project.optional-dependencies] entra = ...` | +~4 |
-| `docforge/deploy/azure/main.bicep` | MODIFY | 3 params + 3 env vars + `pg_cron` in `azure.extensions` | +~25 |
+| `docforge/deploy/azure/main.bicep` | MODIFY | 3 params + 3 env vars (auth only; no pg_cron per post-review revision) | +~20 |
 | `docforge/tests/unit/test_auth.py` | NEW | Mock-JWT validation; `mode=none` path; `mode=entra` path | ~120 |
 | `docforge/tests/unit/test_api.py` | MODIFY | Auth-enabled + auth-disabled paths | +~40 |
 | `docforge/docs/threat-model.md` | NEW | Per outline above | ~3 pages / ~400 lines |
@@ -307,7 +309,7 @@ CREATE INDEX IF NOT EXISTS query_log_user_oid_idx ON query_log (user_oid);
 - [ ] `log_query()` accepts `user_oid` and writes it.
 - [ ] MCP client + eval harness authenticate against Entra; live end-to-end query from Claude Code returns results.
 - [ ] Azure deployment updated: new env vars flow from `docforge.bicepparam` through `main.bicep` to container.
-- [ ] `pg_cron` extension enabled; scheduled cleanup job deletes rows older than 180 days (verified with a dated-past-180d test row).
+- [ ] App-level cleanup task in FastAPI lifespan deletes rows older than 180 days; runs hourly; verified with a dated-past-180d test row.
 - [ ] `docforge/docs/threat-model.md` committed per outline; all table entries populated; banned-vague-terms audit passes.
 - [ ] `knowledge-hub/rag/docs/log-privacy.md` committed per outline.
 - [ ] `knowledge-hub/rag/docs/deployment.md` DocuWare-context section populated with real names.
@@ -320,7 +322,7 @@ CREATE INDEX IF NOT EXISTS query_log_user_oid_idx ON query_log (user_oid);
 
 - **R1 — `fastapi-azure-auth` behavior surprises.** Library is Entra-specific but well-trodden. Mitigation: implement C3.2 (app registration) first so we have a real tenant to test against; auth is flagged behind `auth.mode` so existing local dev is unbroken; PR lands against master only after end-to-end manual test.
 - **R2 — `DefaultAzureCredential` picks up the wrong identity.** E.g., az CLI signed into a personal account rather than DocuWare's tenant. Symptom: 401 from `/search`. Mitigation: team-setup docs explicitly say `az login --tenant <DocuWare-tenant-id>`; the 401 error surfaces in the MCP client response with actionable text.
-- **R3 — `pg_cron` not available on Flexible Server.** Low probability; officially supported. Mitigation: fallback to app-level cleanup in FastAPI lifespan, documented in `log-privacy.md` §3.
+- **R3 — App-level cleanup loop silently stops after a transient DB error.** The `asyncio.create_task` returned handle must keep retrying rather than dying on first exception. Mitigation: the loop wraps each iteration in try/except, logs failures, and continues on the next hour tick. Covered by unit tests in the plan.
 - **R4 — Token-acquisition latency.** First `DefaultAzureCredential.get_token()` may take 100–500 ms. Subsequent calls use cached tokens. Mitigation: library handles caching; flag for observation once C4.3 timing middleware lands.
 - **R5 — Entra app registration misconfigured.** Wrong scope name, wrong redirect URL, wrong audience. Symptom: 401 everywhere. Mitigation: C3.2 has explicit acceptance criteria; test against a throwaway user before team rollout.
 - **R6 — `preferred_username` collisions.** If two engineers share a `preferred_username` somehow, `query_log.user_name` is ambiguous. Mitigation: `user_oid` is the canonical identity post-Entra; reports use OID, not `user_name`.
