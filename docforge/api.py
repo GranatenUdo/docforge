@@ -33,10 +33,10 @@ _CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
 
 
 async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> None:
-    """Runs forever. Deletes query_log rows older than retention_days every
-    _CLEANUP_INTERVAL_SECONDS. Idempotent: no-op when nothing to delete, so
-    multi-replica is safe."""
-    # Coerce to int up-front — protects the f-string SQL below from anything odd.
+    """Deletes query_log rows older than retention_days every
+    _CLEANUP_INTERVAL_SECONDS. Idempotent, so multi-replica is safe."""
+    # int() coercion makes the f-string SQL below injection-safe. asyncpg's
+    # $1::interval parameter binding doesn't accept str, hence the literal.
     days = int(retention_days)
     while True:
         try:
@@ -46,14 +46,9 @@ async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> Non
                     f"DELETE FROM query_log WHERE created_at < now() - interval '{days} days'"
                 )
             logger.info("query_log cleanup: %s", result)
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.exception("query_log cleanup failed: %s", e)
-        try:
-            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            raise
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
 
 
 def _get_settings() -> Settings:
@@ -113,16 +108,12 @@ app = FastAPI(title="docforge", lifespan=lifespan)
 
 
 async def _auth_dependency(request: Request):
-    """Resolve the current user from the auth scheme when auth.mode==entra.
-    Returns None when auth.mode==none (so endpoint handlers can still read
-    req.user_name for the legacy unauthenticated path).
-
-    Manual invocation of the Entra scheme avoids FastAPI's Security() pattern,
-    which would make auth unconditionally required. Passing an empty
-    SecurityScopes lets the scheme's signature match what it expects from
-    FastAPI's security dependency resolution."""
+    """Return the authenticated User under auth.mode=entra, None otherwise."""
     if _azure_scheme is None:
         return None
+    # Empty SecurityScopes: we don't enforce scope-level authorization beyond
+    # the token validation the scheme itself does. Without this arg the call
+    # signature mismatches what fastapi-azure-auth expects.
     return await _azure_scheme(request, SecurityScopes())
 
 
@@ -210,19 +201,16 @@ async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchRe
 
     from docforge.query_log import log_query
 
-    # When auth.mode==entra, trust the JWT claims over the self-declared
-    # user_name request field. team_name and area_name remain self-declared
-    # (they are routing hints, not identity).
-    effective_user_name = user.preferred_username if user else req.user_name
-    effective_user_oid = user.oid if user else None
+    # team_name and area_name remain self-declared (routing hints, not identity).
+    # user_name and user_oid come from the token when present.
     await log_query(
         pool,
-        effective_user_name,
+        user.preferred_username if user else req.user_name,
         req.team_name,
         req.area_name,
         req.query,
         len(rows),
-        user_oid=effective_user_oid,
+        user_oid=user.oid if user else None,
     )
 
     results = [

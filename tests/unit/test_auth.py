@@ -3,60 +3,37 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.conftest import FakePool
+
 
 @pytest.fixture
-def stub_downstream(monkeypatch):
-    """Stub embedder, DB pool, settings, and log_query so /search reaches its
-    return path without touching real infra. Patches names as they're bound
-    inside docforge.api (matches the test_api.py pattern)."""
-    from types import SimpleNamespace
-
-    class FakeEmbedder:
-        model_name = "test"
-        dimensions = 768
-
-        def embed_query(self, q):
-            return [0.0] * 768
-
+def stub_downstream(monkeypatch, fake_embedder):
+    """Short-circuit `/search` past embedder + DB + log_query to keep tests
+    focused on auth behavior. Patches names where they are bound inside
+    `docforge.api` — matches the pattern used by `test_api.py`."""
     import docforge.api as api_mod
 
-    monkeypatch.setattr(api_mod, "_embedder", FakeEmbedder())
-
-    class _Conn:
-        async def fetch(self, *a, **k):
-            return []
-
-        async def execute(self, *a, **k):
-            pass
-
-    class _Ctx:
-        async def __aenter__(self):
-            return _Conn()
-
-        async def __aexit__(self, *a):
-            pass
-
-    class _Pool:
-        def acquire(self):
-            return _Ctx()
+    monkeypatch.setattr(api_mod, "_embedder", fake_embedder())
 
     async def fake_get_pool(url):
-        return _Pool()
+        return FakePool(rows=[])
 
     monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
 
-    def fake_settings():
-        return SimpleNamespace(
+    monkeypatch.setattr(
+        api_mod,
+        "_get_settings",
+        lambda: SimpleNamespace(
             database_url="postgresql://fake",
             tag_match_weight=0.1,
             org_tag_weight=0.05,
-        )
-
-    monkeypatch.setattr(api_mod, "_get_settings", fake_settings)
+        ),
+    )
 
     async def fake_log_query(*args, **kwargs):
         pass
@@ -66,8 +43,8 @@ def stub_downstream(monkeypatch):
 
 @pytest.fixture
 def stub_entra(monkeypatch):
-    """Install a stub SingleTenantAzureAuthorizationCodeBearer so lifespan
-    doesn't hit real Entra URLs. Returns the installed stub scheme."""
+    """Install a real `SingleTenantAzureAuthorizationCodeBearer` but stub the
+    openid-discovery HTTP call so lifespan doesn't hit Entra."""
     from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
     from fastapi_azure_auth.openid_config import OpenIdConfig
 
@@ -76,7 +53,6 @@ def stub_entra(monkeypatch):
 
     monkeypatch.setattr(OpenIdConfig, "load_config", fake_load)
 
-    # Force mode=entra at settings load.
     import docforge.api as api_mod
 
     monkeypatch.setenv("AUTH__MODE", "entra")
@@ -144,8 +120,8 @@ class TestAuthModeEntra:
                     "limit": 3,
                 },
             )
-        # fastapi-azure-auth raises 401 for missing tokens; HTTPBearer base class
-        # would default to 403. Accept either — library-version dependent.
+        # fastapi-azure-auth raises 401 for missing tokens; HTTPBearer base
+        # class would default to 403. Accept either — library-version dependent.
         assert resp.status_code in (401, 403)
 
     @pytest.mark.asyncio
@@ -236,7 +212,7 @@ class TestQueryLogCleanup:
         monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
 
         task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
-        await asyncio.sleep(0.12)  # time for at least 2 iterations
+        await asyncio.sleep(0.12)
         task.cancel()
         try:
             await task
@@ -253,6 +229,8 @@ class TestQueryLogCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_loop_continues_after_db_error(self, monkeypatch):
+        # Poll for >=2 iterations rather than sleeping a fixed duration —
+        # avoids flakes on slow CI where 0.15 s isn't enough for 2 iterations.
         iteration = {"n": 0}
 
         async def fake_get_pool(url):
@@ -280,15 +258,17 @@ class TestQueryLogCleanup:
         import docforge.api as api_mod
 
         monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
-        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.02)
 
         task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
-        await asyncio.sleep(0.15)
+        for _ in range(50):  # up to 1 s total
+            await asyncio.sleep(0.02)
+            if iteration["n"] >= 2:
+                break
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
 
-        # Loop must have survived the first iteration's failure.
-        assert iteration["n"] >= 2
+        assert iteration["n"] >= 2, f"loop died after first failure (reached n={iteration['n']})"
