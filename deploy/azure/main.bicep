@@ -84,6 +84,15 @@ param hfToken string
 @secure()
 param confluenceApiToken string
 
+@description('Auth mode for /search + /sources: "none" or "entra".')
+param authMode string = 'none'
+
+@description('Entra tenant ID (required when authMode=entra).')
+param authTenantId string = ''
+
+@description('Entra API audience, e.g. api://<app-id> (required when authMode=entra).')
+param authAudience string = ''
+
 @description('Tags applied to every created resource. Useful for cost allocation or org policies that require specific tags.')
 param tags object = {}
 
@@ -333,6 +342,18 @@ var realContainerEnv = [
   {
     name: 'DATABASE_URL'
     secretRef: 'database-url'
+  }
+  {
+    name: 'AUTH__MODE'
+    value: authMode
+  }
+  {
+    name: 'AUTH__TENANT_ID'
+    value: authTenantId
+  }
+  {
+    name: 'AUTH__AUDIENCE'
+    value: authAudience
   }
 ]
 
