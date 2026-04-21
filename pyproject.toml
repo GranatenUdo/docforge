@@ -39,6 +39,8 @@ dev = [
 entra = [
     "fastapi-azure-auth>=5.0",
     "azure-identity>=1.19",
+    # aiohttp is required by azure-identity.aio's async pipeline
+    "aiohttp>=3.10",
 ]
 
 [tool.setuptools.packages.find]
