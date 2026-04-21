@@ -114,3 +114,62 @@ class TestSecrets:
         s = Settings()
         assert s.hf_token.get_secret_value() == "secret_token_shhh"
         assert "secret_token_shhh" not in repr(s)
+
+
+class TestAuthSettings:
+    def test_default_mode_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from docforge.config import Settings
+        s = Settings()
+        assert s.auth.mode == "none"
+        assert s.auth.tenant_id == ""
+        assert s.auth.audience == ""
+
+    def test_loads_auth_from_yml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "auth:\n"
+            "  mode: entra\n"
+            "  tenant_id: t-123\n"
+            "  audience: api://a-456\n",
+            encoding="utf-8",
+        )
+        from docforge.config import Settings
+        s = Settings()
+        assert s.auth.mode == "entra"
+        assert s.auth.tenant_id == "t-123"
+        assert s.auth.audience == "api://a-456"
+
+    def test_env_populates_when_yml_absent(self, tmp_path, monkeypatch):
+        """Env vars populate auth fields when the yml has no `auth:` block.
+        (Matches docforge's established yml>env precedence: yml wins when both
+        are set; env is the only source when yml is absent.)"""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("AUTH__MODE", "entra")
+        monkeypatch.setenv("AUTH__TENANT_ID", "t-from-env")
+        monkeypatch.setenv("AUTH__AUDIENCE", "api://env")
+        from docforge.config import Settings
+        s = Settings()
+        assert s.auth.mode == "entra"
+        assert s.auth.tenant_id == "t-from-env"
+        assert s.auth.audience == "api://env"
+
+    def test_entra_mode_requires_tenant_and_audience(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "auth:\n  mode: entra\n  tenant_id: ''\n  audience: ''\n",
+            encoding="utf-8",
+        )
+        from docforge.config import Settings
+        with pytest.raises(ValueError, match="tenant_id"):
+            Settings()
+
+    def test_auth_absent_from_yml_loads_cleanly(self, tmp_path, monkeypatch):
+        """Regression: a yml without any auth: block must still load."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "database_url: postgresql://example/db\n", encoding="utf-8",
+        )
+        from docforge.config import Settings
+        s = Settings()
+        assert s.auth.mode == "none"
