@@ -92,7 +92,7 @@ Legend: ✓ exists today · ⚠ partial · ✗ missing (routed to C3/C4/admin)
 
 **Criterion:** Managed infra via IaC; healthchecks/probes; incident runbook; known failure modes documented; backup/restore verified.
 
-**Evidence exists:** Azure Container App + Bicep IaC (`docforge/deploy/azure/main.bicep`); Dockerfile HEALTHCHECK; startup probe (10s init × 10s × 60 failures = 10-min window); cold-start behavior documented in `knowledge-hub/rag/docs/deployment.md`.
+**Evidence exists:** Azure Container App + Bicep IaC (`docforge/deploy/azure/main.bicep`); `minReplicas: 1` (no scale-to-zero; no runtime cold starts); Dockerfile HEALTHCHECK; startup probe (10s init × 10s × 60 failures = 10-min window to cover post-deployment model-load warm-up, ~15–30s for EmbeddingGemma-300M).
 
 **Gaps → C4:**
 
@@ -118,13 +118,13 @@ Legend: ✓ exists today · ⚠ partial · ✗ missing (routed to C3/C4/admin)
 
 ### 6. Scale — L3 ⚠ → C4
 
-**Criterion:** One-team load characteristics instrumented; performance bounds documented; HNSW index parameters rationalized; cold-start behavior measured.
+**Criterion:** One-team load characteristics instrumented; performance bounds documented; HNSW index parameters rationalized.
 
 **Evidence exists:** Volumes known (137 sources / 1,772 chunks); `query_log` captures query counts per user/team/area.
 
 **Gaps → C4:**
 
-- **C4.3** Request-timing middleware writing `request_ms` per `/search` into `query_log`; new column + migration; `scripts/latency_report.py` rolls up P50/P95/P99 with cold-start filter (`NOW() - container_start > 60s`)
+- **C4.3** Request-timing middleware writing `request_ms` per `/search` into `query_log`; new column + migration; `scripts/latency_report.py` rolls up P50/P95/P99. No cold-start filter needed (`minReplicas: 1`); the first ~1–2 queries after each new revision deployment include the embedding-model-load cost and are kept in the data — they represent real user-facing latency at deployment time
 - **C4.4** `knowledge-hub/rag/docs/load-profile.md` citing measurements + HNSW parameter rationale
 
 ### 7. Adoption — L3 ✓
@@ -158,22 +158,22 @@ Legend: ✓ exists today · ⚠ partial · ✗ missing (routed to C3/C4/admin)
 
 | # | Deliverable | Repo | Sizing |
 |---|---|---|---|
-| C3.1 | Entra ID auth on `/search`: `fastapi-azure-auth` server-side; `azure-identity.DefaultAzureCredential` in `knowledge-hub/rag/mcp_client.py` + `docforge search`; Bicep adds `AZURE_TENANT_ID` + `ALLOWED_AUDIENCE`; opt-in config flag in `docforge.yml` keeps the engine generic | docforge + knowledge-hub | ~200 LoC + tests; ≈1 wk |
+| C3.1 | Entra ID auth on `/search`. Server: `fastapi-azure-auth` (new dep) validates JWT against DocuWare tenant. Clients: `azure-identity.DefaultAzureCredential` (new dep) in `knowledge-hub/rag/mcp_client.py` and `docforge/scripts/eval_search.py` (the only two API callers — `docforge search` CLI uses asyncpg directly and is unaffected). Bicep adds `AZURE_TENANT_ID` + `ALLOWED_AUDIENCE`. Opt-in config flag in `docforge.yml` keeps the engine generic. Updates `knowledge-hub/rag/docs/team-setup-azure.md` + `team-setup.md` to add the `az login` step | docforge + knowledge-hub | ~230 LoC + tests (mock-JWT fixtures in CI); ≈1 wk |
 | C3.2 | Entra app registration in DocuWare tenant; user-delegated `api://<app-id>/search` scope; app-id + tenant-id recorded in `knowledge-hub/rag/docs/deployment.md` | DocuWare tenant (user has rights) | ≈10 min |
 | C3.3 | `docforge/docs/threat-model.md`: trust model (single-company, single-tenant); assets (indexed docs, `query_log`); threat surfaces (public endpoint, ingest credentials, HF token); mitigations (Entra + Key Vault + non-root + Dependabot); risks-accepted (bus-factor-1, HF-gated model) | docforge | ≈3 pages |
 | C3.4 | `knowledge-hub/rag/docs/log-privacy.md`: `query_log` schema; retention decision (90/180/365 day cutoff); access rules; aggregation for reports; GDPR posture for DocuWare-internal usage | knowledge-hub | ≈2 pages |
-| C3.5 | Replace self-declared `user_name` in `query_log` with token `preferred_username` / `oid`; migration + backfill note | docforge | ≈40 LoC + migration |
+| C3.5 | `query_log` migration: add nullable `user_oid TEXT` column (not a replacement — `user_name` stays so pre-Entra history survives). Post-Entra, new rows populate `user_name` from token `preferred_username` and `user_oid` from token `oid`. Pre-Entra rows have `user_oid = NULL`. Reports that need trustworthy identity filter `WHERE user_oid IS NOT NULL` or `created_at >= '<Entra-go-live-date>'` | docforge | ≈40 LoC + migration |
 
 ### Spec C4 — Operational readiness
 
 | # | Deliverable | Repo | Sizing |
 |---|---|---|---|
-| C4.1 | `knowledge-hub/rag/docs/runbook.md`: Container App failure modes (probe, image pull, KV secret sync, cold-start timeout); DB recovery via Flexible Server point-in-time restore; ingest failures (HF token expiry, rate limits, parse errors); auth failures post-Entra | knowledge-hub | ≈3–4 pages |
+| C4.1 | `knowledge-hub/rag/docs/runbook.md`: Container App failure modes (probe failure, image pull failure, KV secret sync failure, post-deployment warm-up timeout); DB recovery via Flexible Server point-in-time restore (7-day window); ingest failures (HF token expiry, rate limits, parse errors); auth failures post-Entra. Also: correct stale "scales to zero" troubleshooting entry in `team-setup-azure.md:99` — current config has `minReplicas: 1` | knowledge-hub | ≈3–4 pages |
 | C4.2 | Fix 1/72 flaky ingest source; diagnose root cause (parse/HTTP/auth/content); fix or document deliberate exclusion | docforge or knowledge-hub (depends on cause) | ≤1 day |
-| C4.3 | FastAPI request-timing middleware: logs `request_ms` per `/search` into `query_log` (new column + migration); `docforge/scripts/latency_report.py` rolls up P50/P95/P99 with cold-start filter | docforge | ≈60 LoC + migration + report |
-| C4.4 | `knowledge-hub/rag/docs/load-profile.md`: cites P95/P99 from C4.3 + `query_log` counts + cold-start window; HNSW parameter rationale linking to pgvector docs | knowledge-hub | ≈1–2 pages |
+| C4.3 | FastAPI request-timing middleware: logs `request_ms` per `/search` into `query_log` (new column + migration); `docforge/scripts/latency_report.py` rolls up P50/P95/P99 over all data. No cold-start filter (`minReplicas: 1`) | docforge | ≈40 LoC + migration + report |
+| C4.4 | `knowledge-hub/rag/docs/load-profile.md`: cites P95/P99 from C4.3 + `query_log` counts + post-deployment warm-up window (~15–30s, infrequent); HNSW parameter rationale linking to pgvector docs | knowledge-hub | ≈1–2 pages |
 | C4.5 | `docforge/CONTRIBUTING.md`: pre-commit (ruff, pytest, coverage gate); branch flow; PR requirements (Entra app implications, migration notes); pointer to `CLAUDE.md` | docforge | ≈1 page |
-| C4.6 | Backup/restore verification: confirm Postgres Flexible Server backup retention + execute point-in-time restore dry-run; document in runbook (C4.1) or as separate `~/operations/backup.md` | knowledge-hub | ≈0.5 day |
+| C4.6 | Backup/restore verification: current Bicep deploys `Standard_B1ms` with `backupRetentionDays: 7`, so point-in-time restore is available with a **7-day recovery window**. Task: execute a PITR dry-run against a throwaway DB, time it, document the runbook entry; surface the 7-day limit in the Spec D risk register | knowledge-hub | ≈0.5 day |
 
 ### Pre-presentation admin track (not C3, not C4)
 
@@ -189,9 +189,11 @@ The presentation artifact is written **no sooner than 2 weeks after C3 + C4 merg
 - Covers one normal work cycle (one CCL sprint review against the hardened system).
 - Covers one weekly Dependabot pass without human intervention.
 - Covers at least one live ingest/re-index cycle.
-- Allows cold-start, probe, or Key Vault cert-rotation edge cases time to surface.
+- Allows post-deployment warm-up, probe, or Key Vault cert-rotation edge cases time to surface.
 
-If anything material breaks during the soak, extend by another window rather than shrink the window. The soak is what gives the "hardened" claim its credibility — compressing it defeats the point.
+If a **material break** occurs during the soak, fix it and reset the 14-day clock from the fix-commit date. Material break = any one of: CI red for >24h, production incident requiring a code change to resolve, security advisory affecting a direct dependency, or an auth regression affecting more than one user. Non-material issues (flaky test, doc typo, non-security Dependabot bump) do not reset the clock.
+
+The soak is what gives the "hardened" claim its credibility — compressing it defeats the point.
 
 ## The presentation artifact — outline + writing rules
 
@@ -206,7 +208,7 @@ If anything material breaks during the soak, extend by another window rather tha
 2. **Context** (~half page) — problem docforge solves, deployment footprint, relationship between docforge engine and `knowledge-hub/rag` consumer.
 3. **Readiness by dimension** (~1.5 pages) — 8-row compact table (dimension, level, evidence, gap-to-next, investment) + 2–3 narrative paragraphs for dimensions with non-obvious gaps (expected: Security — citing Entra + threat model; Scale — citing P95; Sustainability — citing bus factor).
 4. **Architectural observations** (~half page) — where docforge fits in a DocuWare stack; what it does not replace; overlap/tension with existing patterns.
-5. **Risk register** (~half page) — bus factor of 1; external model dependency (HF-gated EmbeddingGemma-300M); embedding drift (model updates → re-embed cost); pgvector scale ceiling (~1M chunks before alternatives warranted).
+5. **Risk register** (~half page) — bus factor of 1; external model dependency (HF-gated EmbeddingGemma-300M); embedding drift (model updates → re-embed cost); pgvector scale ceiling (~1M chunks before alternatives warranted); DB backup window = 7 days (`Standard_B1ms` default; data older than a week cannot be restored via PITR).
 6. **What L4 would require** (~half page) — multi-team adoption (≥2 teams actively using the shared deployment); second-maintainer onboarding; cross-team ranking validation; post-L3 production-soak evidence.
 
 ### Writing rules
