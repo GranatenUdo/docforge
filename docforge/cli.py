@@ -124,6 +124,23 @@ def status():
     asyncio.run(_status())
 
 
+@app.command(name="lint-docs")
+def lint_docs(
+    repo_path: Path = typer.Argument(..., help="Path to the repo root to lint"),
+) -> None:
+    """Lint a repo's README + CLAUDE.md + docs/ for banned-content rules."""
+    from docforge.lint import format_report, lint_repo
+
+    if not repo_path.is_dir():
+        typer.echo(f"Error: {repo_path} is not a directory", err=True)
+        raise typer.Exit(1)
+
+    report = lint_repo(repo_path)
+    typer.echo(format_report(report, repo_path))
+    if report.findings:
+        raise typer.Exit(1)
+
+
 def _setup_logging():
     logging.basicConfig(
         level=logging.INFO,
