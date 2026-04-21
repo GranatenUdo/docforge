@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.security import SecurityScopes
 from pydantic import BaseModel
 
 from docforge.config import Settings
@@ -68,6 +69,20 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="docforge", lifespan=lifespan)
 
 
+async def _auth_dependency(request: Request):
+    """Resolve the current user from the auth scheme when auth.mode==entra.
+    Returns None when auth.mode==none (so endpoint handlers can still read
+    req.user_name for the legacy unauthenticated path).
+
+    Manual invocation of the Entra scheme avoids FastAPI's Security() pattern,
+    which would make auth unconditionally required. Passing an empty
+    SecurityScopes lets the scheme's signature match what it expects from
+    FastAPI's security dependency resolution."""
+    if _azure_scheme is None:
+        return None
+    return await _azure_scheme(request, SecurityScopes())
+
+
 class SearchRequest(BaseModel):
     query: str
     user_name: str
@@ -101,7 +116,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest) -> SearchResponse:
+async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
     if not _embedder:
         raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
@@ -152,14 +167,19 @@ async def search(req: SearchRequest) -> SearchResponse:
 
     from docforge.query_log import log_query
 
+    # When auth.mode==entra, trust the JWT claims over the self-declared
+    # user_name request field. team_name and area_name remain self-declared
+    # (they are routing hints, not identity).
+    effective_user_name = user.preferred_username if user else req.user_name
+    effective_user_oid = user.oid if user else None
     await log_query(
         pool,
-        req.user_name,
+        effective_user_name,
         req.team_name,
         req.area_name,
         req.query,
         len(rows),
-        user_oid=None,  # Populated from JWT in Task 8 when auth.mode==entra.
+        user_oid=effective_user_oid,
     )
 
     results = [
@@ -178,7 +198,7 @@ async def search(req: SearchRequest) -> SearchResponse:
 
 
 @app.get("/sources")
-async def list_sources() -> dict[str, Any]:
+async def list_sources(user=Depends(_auth_dependency)) -> dict[str, Any]:
     """List all indexed documentation sources."""
     settings = _get_settings()
     try:
