@@ -236,7 +236,7 @@ async def _search(query: str, user_name: str, team_name: str, area_name: str | N
                 settings.org_tag_weight,
                 limit,
             )
-        await log_query(pool, user_name, team_name, area_name, query, len(rows))
+        await log_query(pool, user_name, team_name, area_name, query, len(rows), user_oid=None)
     except OSError as e:
         typer.echo(
             f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",

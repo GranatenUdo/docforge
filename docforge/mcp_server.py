@@ -109,7 +109,7 @@ async def search_documentation(
 
     from docforge.query_log import log_query
 
-    await log_query(pool, user_name, team_name, area_name, query, len(rows))
+    await log_query(pool, user_name, team_name, area_name, query, len(rows), user_oid=None)
 
     if not rows:
         return (

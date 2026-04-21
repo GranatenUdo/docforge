@@ -132,7 +132,15 @@ async def search(req: SearchRequest) -> SearchResponse:
 
     from docforge.query_log import log_query
 
-    await log_query(pool, req.user_name, req.team_name, req.area_name, req.query, len(rows))
+    await log_query(
+        pool,
+        req.user_name,
+        req.team_name,
+        req.area_name,
+        req.query,
+        len(rows),
+        user_oid=None,  # Populated from JWT in Task 8 when auth.mode==entra.
+    )
 
     results = [
         SearchResult(
