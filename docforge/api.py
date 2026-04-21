@@ -36,13 +36,14 @@ async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> Non
     """Runs forever. Deletes query_log rows older than retention_days every
     _CLEANUP_INTERVAL_SECONDS. Idempotent: no-op when nothing to delete, so
     multi-replica is safe."""
+    # Coerce to int up-front — protects the f-string SQL below from anything odd.
+    days = int(retention_days)
     while True:
         try:
             pool = await get_pool(database_url)
             async with pool.acquire() as conn:
                 result = await conn.execute(
-                    "DELETE FROM query_log WHERE created_at < now() - $1::interval",
-                    f"{retention_days} days",
+                    f"DELETE FROM query_log WHERE created_at < now() - interval '{days} days'"
                 )
             logger.info("query_log cleanup: %s", result)
         except asyncio.CancelledError:

@@ -210,7 +210,11 @@ class TestQueryLogCleanup:
 
         assert len(calls) >= 2
         assert "DELETE FROM query_log" in calls[0][0]
-        assert calls[0][1] == ("180 days",)
+        # retention is embedded into the SQL as a literal via f-string (safe —
+        # coerced to int in the production code); asyncpg's $1::interval
+        # parameter binding doesn't accept strings.
+        assert "interval '180 days'" in calls[0][0]
+        assert calls[0][1] == ()
 
     @pytest.mark.asyncio
     async def test_cleanup_loop_continues_after_db_error(self, monkeypatch):
