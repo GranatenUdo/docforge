@@ -129,16 +129,15 @@ def lint_docs(
     repo_path: Path = typer.Argument(..., help="Path to the repo root to lint"),
 ) -> None:
     """Lint a repo's README + CLAUDE.md + docs/ for banned-content rules."""
-    from docforge.lint import _discover_files, format_report, has_failures, lint_repo
+    from docforge.lint import format_report, lint_repo
 
     if not repo_path.is_dir():
         typer.echo(f"Error: {repo_path} is not a directory", err=True)
         raise typer.Exit(1)
 
-    scanned = _discover_files(repo_path)
-    findings = lint_repo(repo_path)
-    typer.echo(format_report(findings, scanned, repo_path))
-    if has_failures(findings):
+    report = lint_repo(repo_path)
+    typer.echo(format_report(report, repo_path))
+    if report.findings:
         raise typer.Exit(1)
 
 
