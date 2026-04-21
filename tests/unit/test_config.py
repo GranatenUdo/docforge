@@ -173,3 +173,20 @@ class TestAuthSettings:
         from docforge.config import Settings
         s = Settings()
         assert s.auth.mode == "none"
+
+
+class TestQueryLogRetention:
+    def test_default_retention_days(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from docforge.config import Settings
+        s = Settings()
+        assert s.query_log_retention_days == 180
+
+    def test_retention_overridable_in_yml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "query_log_retention_days: 90\n", encoding="utf-8",
+        )
+        from docforge.config import Settings
+        s = Settings()
+        assert s.query_log_retention_days == 90

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -162,3 +164,93 @@ class TestAuthModeEntra:
             assert resp.status_code == 200
         finally:
             app.dependency_overrides.clear()
+
+
+class TestQueryLogCleanup:
+    """The app-level cleanup loop deletes rows older than retention_days
+    every _CLEANUP_INTERVAL_SECONDS. Verifies it runs and survives transient
+    DB errors."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_runs_delete_each_iteration(self, monkeypatch):
+        calls: list[tuple] = []
+
+        class _Conn:
+            async def execute(self, query, *args):
+                calls.append((query, args))
+                return "DELETE 0"
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Conn()
+
+            async def __aexit__(self, *a):
+                pass
+
+        class _Pool:
+            def acquire(self):
+                return _Ctx()
+
+        async def fake_get_pool(url):
+            return _Pool()
+
+        import docforge.api as api_mod
+        monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+
+        task = asyncio.create_task(
+            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
+        )
+        await asyncio.sleep(0.12)  # time for at least 2 iterations
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert len(calls) >= 2
+        assert "DELETE FROM query_log" in calls[0][0]
+        assert calls[0][1] == ("180 days",)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_continues_after_db_error(self, monkeypatch):
+        iteration = {"n": 0}
+
+        async def fake_get_pool(url):
+            iteration["n"] += 1
+            if iteration["n"] == 1:
+                raise OSError("simulated DB hiccup")
+
+            class _Conn:
+                async def execute(self, q, *a):
+                    return "DELETE 0"
+
+            class _Ctx:
+                async def __aenter__(self):
+                    return _Conn()
+
+                async def __aexit__(self, *a):
+                    pass
+
+            class _Pool:
+                def acquire(self):
+                    return _Ctx()
+
+            return _Pool()
+
+        import docforge.api as api_mod
+        monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+
+        task = asyncio.create_task(
+            api_mod._query_log_cleanup_loop("postgresql://fake", 180)
+        )
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Loop must have survived the first iteration's failure.
+        assert iteration["n"] >= 2

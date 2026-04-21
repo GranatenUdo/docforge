@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # Auth (opt-in Entra ID for /search + /sources)
     auth: AuthSettings = AuthSettings()
 
+    # query_log retention — app-level cleanup loop deletes rows older than this
+    query_log_retention_days: int = 180
+
     def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")

@@ -8,6 +8,7 @@ Run locally: uvicorn docforge.api:app --reload
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -26,6 +27,32 @@ logger = logging.getLogger(__name__)
 _embedder: Embedder | None = None
 _settings: Settings | None = None
 _azure_scheme = None  # Populated in lifespan when auth.mode == "entra"
+_cleanup_task: asyncio.Task | None = None
+
+_CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
+
+
+async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> None:
+    """Runs forever. Deletes query_log rows older than retention_days every
+    _CLEANUP_INTERVAL_SECONDS. Idempotent: no-op when nothing to delete, so
+    multi-replica is safe."""
+    while True:
+        try:
+            pool = await get_pool(database_url)
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM query_log WHERE created_at < now() - $1::interval",
+                    f"{retention_days} days",
+                )
+            logger.info("query_log cleanup: %s", result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("query_log cleanup failed: %s", e)
+        try:
+            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
 
 
 def _get_settings() -> Settings:
@@ -52,7 +79,7 @@ def _build_auth_scheme(settings: Settings):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the embedding model at startup; close the DB pool on shutdown."""
-    global _embedder, _azure_scheme
+    global _embedder, _azure_scheme, _cleanup_task
     settings = _get_settings()
     _azure_scheme = _build_auth_scheme(settings)
     if _azure_scheme is not None:
@@ -62,7 +89,19 @@ async def lifespan(app: FastAPI):
     logger.info("Loading embedding model...")
     _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
+
+    _cleanup_task = asyncio.create_task(
+        _query_log_cleanup_loop(settings.database_url, settings.query_log_retention_days)
+    )
+
     yield
+
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
     await close_pool()
 
 
