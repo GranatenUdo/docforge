@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _embedder: Embedder | None = None
 _settings: Settings | None = None
+_azure_scheme = None  # Populated in lifespan when auth.mode == "entra"
 
 
 def _get_settings() -> Settings:
@@ -33,11 +34,30 @@ def _get_settings() -> Settings:
     return _settings
 
 
+def _build_auth_scheme(settings: Settings):
+    """Return a SingleTenantAzureAuthorizationCodeBearer if mode==entra, else None."""
+    if settings.auth.mode != "entra":
+        return None
+    from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
+
+    app_client_id = settings.auth.audience.removeprefix("api://")
+    return SingleTenantAzureAuthorizationCodeBearer(
+        app_client_id=app_client_id,
+        tenant_id=settings.auth.tenant_id,
+        scopes={f"{settings.auth.audience}/search": "Search docforge"},
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the embedding model at startup; close the DB pool on shutdown."""
-    global _embedder
+    global _embedder, _azure_scheme
     settings = _get_settings()
+    _azure_scheme = _build_auth_scheme(settings)
+    if _azure_scheme is not None:
+        await _azure_scheme.openid_config.load_config()
+        logger.info("Entra auth enabled (tenant=%s, audience=%s)",
+                    settings.auth.tenant_id, settings.auth.audience)
     logger.info("Loading embedding model...")
     _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
