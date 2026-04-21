@@ -17,6 +17,22 @@ python -m docforge.scripts.eval_search \
   --k 5
 ```
 
+### Running against an Entra-protected deployment
+
+If the target API has `auth.mode: entra` enabled, pass `--audience`:
+
+```bash
+az login --tenant <DocuWare-tenant-id>
+python -m docforge.scripts.eval_search \
+  --api-url https://... \
+  --ground-truth .../ground_truth.yml \
+  --user your.name --team your-team --area your-area \
+  --audience api://<app-id> \
+  --k 5
+```
+
+`DefaultAzureCredential` silently picks up the `az login` token and attaches it as a Bearer header on each request.
+
 ### Ground truth format
 
 YAML with a `queries` list. Each entry is a natural colleague query and a
