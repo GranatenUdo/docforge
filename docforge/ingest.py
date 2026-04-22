@@ -273,6 +273,8 @@ async def _get_hash_by_identifier(pool: asyncpg.Pool, identifier: str) -> str | 
         )
 
 
+# Called from ingest_all() when the user passes `docforge ingest --purge-orphans`.
+# Wiring lands in a later task; this helper is committed stand-alone.
 async def _purge_orphans(
     pool: asyncpg.Pool,
     current_identifiers: set[str],
@@ -291,57 +293,63 @@ async def _purge_orphans(
     chunks.source_id has ON DELETE CASCADE, so deleting from sources
     cascades to chunks automatically.
     """
+    if not current_identifiers and confirm:
+        logger.error(
+            "_purge_orphans called with empty current_identifiers and confirm=True. "
+            "This would delete every source in the DB. Aborting — this is almost "
+            "certainly a caller bug (e.g., load_sources returned empty)."
+        )
+        return (0, 0)
+
     async with pool.acquire() as conn:
-        # All known identifiers in the DB (both columns are populated
-        # exclusively — confluence or source_identifier, never both).
-        rows = await conn.fetch(
-            """
-            SELECT id,
-                   title,
-                   COALESCE(confluence_page_id, source_identifier) AS identifier
-              FROM sources
-             WHERE COALESCE(confluence_page_id, source_identifier) IS NOT NULL
-            """
-        )
-        db_identifiers = {r["identifier"]: r for r in rows}
-        orphan_ids = [
-            r["id"] for ident, r in db_identifiers.items() if ident not in current_identifiers
-        ]
+        async with conn.transaction():
+            rows = await conn.fetch(
+                """
+                SELECT id,
+                       title,
+                       COALESCE(confluence_page_id, source_identifier) AS identifier
+                  FROM sources
+                 WHERE COALESCE(confluence_page_id, source_identifier) IS NOT NULL
+                """
+            )
+            db_identifiers = {r["identifier"]: r for r in rows}
+            orphan_ids = [
+                r["id"] for ident, r in db_identifiers.items() if ident not in current_identifiers
+            ]
 
-        if not orphan_ids:
-            logger.info("No orphan sources detected.")
-            return (0, 0)
+            if not orphan_ids:
+                logger.info("No orphan sources detected.")
+                return (0, 0)
 
-        chunk_count = await conn.fetchval(
-            "SELECT count(*) FROM chunks WHERE source_id = ANY($1::uuid[])",
-            orphan_ids,
-        )
+            chunk_count = await conn.fetchval(
+                "SELECT count(*) FROM chunks WHERE source_id = ANY($1::uuid[])",
+                orphan_ids,
+            )
 
-        logger.info(
-            "Orphans detected: %d sources / %d chunks not in current sources.yml",
-            len(orphan_ids),
-            chunk_count,
-        )
-        for ident, r in db_identifiers.items():
-            if ident not in current_identifiers:
-                logger.info("  orphan: %s  (%s)", r["title"], ident)
-
-        if not confirm:
             logger.info(
-                "Would delete %d orphan sources (%d chunks). Re-run with --confirm to execute.",
+                "Orphans detected: %d sources / %d chunks not in current sources.yml",
                 len(orphan_ids),
                 chunk_count,
             )
-            return (len(orphan_ids), chunk_count)
+            for ident, r in db_identifiers.items():
+                if ident not in current_identifiers:
+                    logger.debug("  orphan: %s  (%s)", r["title"], ident)
 
-        async with conn.transaction():
+            if not confirm:
+                logger.info(
+                    "Would delete %d orphan sources (%d chunks). Re-run with --confirm to execute.",
+                    len(orphan_ids),
+                    chunk_count,
+                )
+                return (len(orphan_ids), chunk_count)
+
             await conn.execute(
                 "DELETE FROM sources WHERE id = ANY($1::uuid[])",
                 orphan_ids,
             )
-        logger.info(
-            "Purged %d orphan sources (%d chunks).",
-            len(orphan_ids),
-            chunk_count,
-        )
-        return (len(orphan_ids), chunk_count)
+            logger.info(
+                "Purged %d orphan sources (%d chunks).",
+                len(orphan_ids),
+                chunk_count,
+            )
+            return (len(orphan_ids), chunk_count)

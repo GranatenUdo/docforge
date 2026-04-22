@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from docforge import ingest as ingest_mod
-from docforge.ingest import _parse_markdown, ingest_all
+from docforge.ingest import _parse_markdown, _purge_orphans, ingest_all
 
 
 class TestParseMarkdown:
@@ -187,6 +187,16 @@ async def test_ingest_skips_when_hash_unchanged(tmp_path, monkeypatch, fake_embe
 
     # No new chunk inserts because hash matches
     assert conn.inserted_chunks == []
+
+
+@pytest.mark.asyncio
+async def test_purge_orphans_empty_identifiers_with_confirm_aborts():
+    """Guard: _purge_orphans must return (0, 0) without touching the DB when
+    current_identifiers is empty and confirm=True (would otherwise delete every row)."""
+
+    pool = _FakePool(_Conn())
+    result = await _purge_orphans(pool, current_identifiers=set(), confirm=True)
+    assert result == (0, 0)
 
 
 @pytest.mark.asyncio
