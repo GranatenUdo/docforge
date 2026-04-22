@@ -271,3 +271,77 @@ async def _get_hash_by_identifier(pool: asyncpg.Pool, identifier: str) -> str | 
             "SELECT content_hash FROM sources WHERE source_identifier = $1",
             identifier,
         )
+
+
+async def _purge_orphans(
+    pool: asyncpg.Pool,
+    current_identifiers: set[str],
+    confirm: bool,
+) -> tuple[int, int]:
+    """Find `sources` rows whose identifier is not in the current sources.yml,
+    report them, and (if confirm=True) delete them along with their chunks.
+
+    Identifier format:
+        - Confluence: the page_id string (e.g., "5108006937")
+        - Git:        f"git:{repo_path}:{file_path}"
+
+    Returns (orphan_source_count, orphan_chunk_count). When confirm=False,
+    returns the counts of what WOULD be deleted and leaves the DB untouched.
+
+    chunks.source_id has ON DELETE CASCADE, so deleting from sources
+    cascades to chunks automatically.
+    """
+    async with pool.acquire() as conn:
+        # All known identifiers in the DB (both columns are populated
+        # exclusively — confluence or source_identifier, never both).
+        rows = await conn.fetch(
+            """
+            SELECT id,
+                   title,
+                   COALESCE(confluence_page_id, source_identifier) AS identifier
+              FROM sources
+             WHERE COALESCE(confluence_page_id, source_identifier) IS NOT NULL
+            """
+        )
+        db_identifiers = {r["identifier"]: r for r in rows}
+        orphan_ids = [
+            r["id"] for ident, r in db_identifiers.items() if ident not in current_identifiers
+        ]
+
+        if not orphan_ids:
+            logger.info("No orphan sources detected.")
+            return (0, 0)
+
+        chunk_count = await conn.fetchval(
+            "SELECT count(*) FROM chunks WHERE source_id = ANY($1::uuid[])",
+            orphan_ids,
+        )
+
+        logger.info(
+            "Orphans detected: %d sources / %d chunks not in current sources.yml",
+            len(orphan_ids),
+            chunk_count,
+        )
+        for ident, r in db_identifiers.items():
+            if ident not in current_identifiers:
+                logger.info("  orphan: %s  (%s)", r["title"], ident)
+
+        if not confirm:
+            logger.info(
+                "Would delete %d orphan sources (%d chunks). Re-run with --confirm to execute.",
+                len(orphan_ids),
+                chunk_count,
+            )
+            return (len(orphan_ids), chunk_count)
+
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM sources WHERE id = ANY($1::uuid[])",
+                orphan_ids,
+            )
+        logger.info(
+            "Purged %d orphan sources (%d chunks).",
+            len(orphan_ids),
+            chunk_count,
+        )
+        return (len(orphan_ids), chunk_count)
