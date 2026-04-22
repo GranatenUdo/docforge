@@ -44,7 +44,7 @@ Remaining to defend L3 "Hardened at single site" per Spec D: **incident runbook,
 - **Prose docs take concrete numbers from code.** The runbook's PITR section cites real `az` commands from C4.6's dry-run; the load-profile cites real P50/P95/P99 from C4.3's latency report. No placeholder numbers.
 - **Additive migrations only.** Migration 006 adds `request_ms TEXT NULL` alongside the existing `user_oid` column. Pre-migration rows keep NULL. No history destruction. Same pattern as C3.5.
 - **Destructive ops require explicit confirmation.** The orphan-purge defaults to dry-run; `--confirm` required to mutate. A misconfigured ingest should produce a report, not delete data.
-- **Maintain engine / consumer split.** Generic deliverables in docforge (migration, middleware, CLI flag, CONTRIBUTING); consumer-specific runbook + load-profile live in knowledge-hub.
+- **Maintain engine / consumer split.** Generic deliverables in docforge (migration, handler timing, CLI flag, CONTRIBUTING); consumer-specific runbook + load-profile live in knowledge-hub.
 
 ## Per-deliverable design
 
@@ -113,7 +113,9 @@ Uses the existing `testcontainers` pattern (from `tests/integration/`). No CLI-l
 
 **Sizing:** ~50 LoC + ~80 LoC tests.
 
-### C4.3 — Request-timing middleware
+### C4.3 — Request-timing instrumentation
+
+**(Revised from "middleware" after plan review: a FastAPI middleware that wraps `call_next` can't publish its measurement in time for the handler to see it, since the handler runs inside `call_next` and is also the caller of `log_query`. The straightforward fix is to measure inside the handler directly — no middleware needed.)**
 
 **Code shape:**
 
@@ -123,10 +125,19 @@ Uses the existing `testcontainers` pattern (from `tests/integration/`). No CLI-l
   ```
   Additive. Pre-migration rows keep NULL.
 
-- `docforge/api.py`:
-  - Middleware `_timing_middleware(request, call_next)` wraps `call_next`, measures wall-clock via `time.perf_counter()`, stashes duration (ms) in `request.state.request_ms`.
-  - Applied to `/search` + `/sources` only. `/health` has no DB access; measurement would be noise.
-  - `/search` handler reads `request.state.request_ms` at return time and passes to `log_query(..., request_ms=...)`. Same pattern as `user_oid` from C3.5.
+- `docforge/api.py` — in-handler timing (no middleware):
+  ```python
+  import time
+
+  @app.post("/search", ...)
+  async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchResponse:
+      start = time.perf_counter()
+      # ... existing embedder + DB query logic ...
+      request_ms = int((time.perf_counter() - start) * 1000)
+      await log_query(..., request_ms=request_ms)
+      return SearchResponse(...)
+  ```
+  Same pattern for `/sources`. `/health` is unchanged (no DB access, no timing value).
 
 - `docforge/query_log.py`:
   ```python
@@ -162,10 +173,10 @@ Uses the existing `testcontainers` pattern (from `tests/integration/`). No CLI-l
 **Tests:**
 
 - `tests/unit/test_query_log.py` — 2 tests for `request_ms` kwarg, mirror of the `user_oid` tests (default None + accepts value).
-- `tests/unit/test_api.py` — 1 test that exercises the middleware (ASGITransport with a custom endpoint that asserts `request.state.request_ms` is set after `call_next`).
+- `tests/unit/test_api.py` — 1 test that asserts `log_query` is called with a non-None `request_ms` (use the existing `_CapturingPool` pattern; check captured args).
 - `tests/unit/test_latency_report.py` — pure-function unit tests for the summarize/format helpers (mirrors `test_eval_search.py` shape).
 
-**Sizing:** ~100 LoC + migration + report + ~80 LoC tests.
+**Sizing:** ~40 LoC (handler timing + kwarg plumbing) + migration + ~80 LoC report script + ~80 LoC tests.
 
 ### C4.4 — `knowledge-hub/rag/docs/load-profile.md`
 
@@ -215,13 +226,13 @@ Every number cited references the query or tool that produced it — re-generata
 |---|---|---|---|
 | `docforge/docforge/cli.py` | MODIFY | `--purge-orphans` + `--confirm` flags on `ingest` | +~15 |
 | `docforge/docforge/ingest.py` | MODIFY | `_purge_orphans(pool, current_identifiers, confirm)` | +~40 |
-| `docforge/docforge/api.py` | MODIFY | `_timing_middleware`; pass `request_ms` to `log_query` | +~25 |
+| `docforge/docforge/api.py` | MODIFY | In-handler `perf_counter()` timing on `/search` + `/sources`; pass `request_ms` to `log_query` | +~12 |
 | `docforge/docforge/query_log.py` | MODIFY | Accept optional `request_ms` kwarg | +~5 |
 | `docforge/docforge/sql/migrations/006_add_query_log_request_ms.sql` | NEW | Additive migration | ~2 |
 | `docforge/docforge/scripts/latency_report.py` | NEW | P50/P95/P99 rollup over `query_log.request_ms` | ~80 |
 | `docforge/tests/unit/test_ingest.py` | MODIFY | 3 purge-orphan tests (testcontainers) | +~80 |
 | `docforge/tests/unit/test_query_log.py` | MODIFY | 2 `request_ms` tests | +~20 |
-| `docforge/tests/unit/test_api.py` | MODIFY | 1 middleware test | +~30 |
+| `docforge/tests/unit/test_api.py` | MODIFY | 1 test asserting `log_query` receives non-None `request_ms` | +~20 |
 | `docforge/tests/unit/test_latency_report.py` | NEW | Pure-function unit tests | +~40 |
 | `docforge/CONTRIBUTING.md` | NEW | Per §C4.5 outline | ~1 page |
 | `knowledge-hub/rag/docs/runbook.md` | NEW | Per §C4.1 outline | ~3–4 pages |
@@ -241,12 +252,12 @@ Every number cited references the query or tool that produced it — re-generata
 - [ ] PITR dry-run executed against a throwaway Postgres server; restore succeeded; step-by-step `az` commands + timing recorded in the runbook's PITR section; throwaway server deleted.
 - [ ] All new unit tests pass; coverage gate ≥60% preserved (projected ~75–78%).
 - [ ] CI green on both repos.
-- [ ] Eval harness reproduces the C2 baseline (recall@1 40%, recall@5 76%, MRR 0.533) — confirms the middleware + purge didn't regress retrieval.
+- [ ] Eval harness rerun after purge: if metrics change vs. the C2 baseline (recall@1 40%, recall@5 76%, MRR 0.533), confirm the change reflects orphan removal (by inspecting which previously-returned titles are now absent), not a retrieval-code regression. For the CCL ground-truth specifically, all 25 expected titles are substrings of current sources.yml titles (validated at C2 Task 12), so numbers should reproduce; this criterion is the guard if that premise breaks.
 
 ## Risks
 
 - **R1 — Purge deletes more than intended.** An identifier mismatch (e.g., path-separator change) could mark live sources as orphans. Mitigation: `--confirm` required; dry-run default; identifier stability (Confluence page_id is a GUID; git file path is stable on a given OS).
-- **R2 — Timing middleware adds latency.** `time.perf_counter()` on both sides of `call_next` plus an int column write is single-microsecond overhead. Not a real concern at our scale; flag if later measurements show otherwise.
+- **R2 — In-handler timing adds latency.** Two `time.perf_counter()` calls + an int column write is single-microsecond overhead. Not a real concern at our scale; flag if later measurements show otherwise.
 - **R3 — Latency P95 is dominated by post-deployment warm-ups.** Per Spec D revision, warm-ups are kept in the data as honest signal. The load-profile doc must call this out so the P95 number isn't misread as steady-state.
 - **R4 — PITR dry-run incurs cost.** Throwaway B1ms + storage for an hour ≈ $1–3. Negligible but named. Mitigation: delete the target server immediately after verification.
 - **R5 — Runbook drifts from reality.** Runbooks atrophy. Mitigation: `Last verified: YYYY-MM-DD` stamp at the top, bumped whenever C4.6-style verification happens. No ongoing enforcement.
@@ -255,13 +266,19 @@ Every number cited references the query or tool that produced it — re-generata
 ## Dependencies and ordering
 
 - **C4.2** (purge flag) is independent of C3 and everything else.
-- **C4.3** (timing middleware) depends on migration 006 being run in prod before its feature lands; plan-level concern.
-- **C4.4** (load profile) depends on C4.3 being in production long enough to have measurable data (ideally several days).
-- **C4.6** (PITR dry-run) depends on C4.1 (runbook file exists) to have a place to document the procedure.
+- **C4.3** depends on migration 006 being run against the production DB as a plan step (same pattern as C3.5's migration 005 — manual application; `docforge init-db` only runs migrations on fresh installs).
+- **C4.4** cites latency numbers measured by C4.3 in production. Since C4.4 lives in knowledge-hub (direct-push to master), it can be committed AFTER the docforge PR merges and a few days of real traffic have populated `query_log.request_ms`. This doesn't delay the soak clock — see merge-and-soak ordering below.
+- **C4.6** produces a runbook section; depends on C4.1 having a file to populate.
 
-**Suggested execution order:** C4.2 → C4.5 → C4.3 → C4.6 → C4.1 → C4.4.
+**Suggested execution order within the plan:** C4.2 → C4.5 → C4.3 (code + migration) → C4.6 (PITR drill) → C4.1 (runbook) → C4.4 (load profile).
 
-Rationale: purge first (small, independent); CONTRIBUTING while thinking; middleware next so data starts accumulating; PITR drill; then the runbook that gets populated from all the above; load profile last once enough latency data exists.
+Rationale: purge first (small, independent); CONTRIBUTING while thinking; request-timing next so data starts accumulating; PITR drill produces the restore section; then the runbook that gets populated from all the above; load profile last once enough latency data exists.
+
+### Merge-and-soak ordering
+
+**One docforge PR, direct-to-master in knowledge-hub.** Everything in docforge ships as a single PR (code + CONTRIBUTING). Knowledge-hub prose docs (runbook, load-profile) land on knowledge-hub master directly, possibly in sequence as each is written. The **14-day Spec D soak clock starts from the LATER of: the docforge C4 merge commit, or the last knowledge-hub C4 commit** — so load-profile's write date effectively starts the clock.
+
+This avoids a two-PR docforge flow and lets load-profile accumulate several days of `request_ms` data before being written. During those days, the soak is not yet started — so the total wait is `days-until-load-profile-is-written` + 14.
 
 ## Follow-up items (tracked, not in C4)
 
@@ -272,4 +289,4 @@ Rationale: purge first (small, independent); CONTRIBUTING while thinking; middle
 
 ## What this unlocks
 
-After C4 merges on both repos, the **14-day soak clock starts** (per Spec D success criterion). No further code changes are required to defend L3. Once the soak completes, Spec D artifact writing can begin — the final Phase 4 deliverable.
+After C4's docforge PR merges AND the knowledge-hub prose docs (runbook, load-profile) land on knowledge-hub master, the **14-day Spec D soak clock starts** from the later of those commits (see "Merge-and-soak ordering" above). No further code changes are required to defend L3. Once the soak completes, Spec D artifact writing can begin — the final Phase 4 deliverable.
