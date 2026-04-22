@@ -116,7 +116,8 @@ async def test_log_query_user_oid_defaults_to_none():
         result_count=0,
     )
     _, args = conn.executed[0]
-    assert args[-1] is None
+    # user_oid is the 6th positional (index 5); request_ms is 7th.
+    assert args[5] is None
 
 
 @pytest.mark.asyncio
