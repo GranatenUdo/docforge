@@ -294,7 +294,6 @@ async def _get_hash_by_identifier(pool: asyncpg.Pool, identifier: str) -> str | 
 
 
 # Called from ingest_all() when the user passes `docforge ingest --purge-orphans`.
-# Wiring lands in a later task; this helper is committed stand-alone.
 async def _purge_orphans(
     pool: asyncpg.Pool,
     current_identifiers: set[str],
