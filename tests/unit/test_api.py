@@ -233,3 +233,51 @@ class TestSourcesEndpoint:
             resp = await client.get("/sources")
 
         assert resp.status_code == 503
+
+
+class TestRequestTimingInstrumentation:
+    """C4.3 — the /search handler measures its own wall-clock time and
+    passes request_ms into log_query."""
+
+    @pytest.mark.asyncio
+    async def test_search_writes_request_ms_to_query_log(self, monkeypatch):
+        captured: dict = {}
+
+        async def fake_log_query(*args, **kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
+        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
+        monkeypatch.setattr(api_module, "_azure_scheme", None)
+
+        class _FakeEmbedder:
+            model_name = "test"
+            dimensions = 768
+
+            def embed_query(self, q):
+                return [0.0] * 768
+
+        monkeypatch.setattr(api_module, "_embedder", _FakeEmbedder())
+
+        async def fake_get_pool(url):
+            return _CapturingPool(rows=[])
+
+        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
+
+        async with _client() as client:
+            resp = await client.post(
+                "/search",
+                json={
+                    "query": "test",
+                    "user_name": "tobias",
+                    "team_name": "ccl",
+                    "area_name": None,
+                    "limit": 3,
+                },
+            )
+        assert resp.status_code == 200
+        assert "request_ms" in captured
+        assert isinstance(captured["request_ms"], int)
+        assert captured["request_ms"] >= 0
+        # Sanity: should be much less than a second for a stubbed handler.
+        assert captured["request_ms"] < 1000

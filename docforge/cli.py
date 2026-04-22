@@ -51,10 +51,24 @@ def init_db():
 
 
 @app.command()
-def ingest():
+def ingest(
+    purge_orphans: bool = typer.Option(
+        False,
+        "--purge-orphans",
+        help="Report DB sources absent from sources.yml. Dry-run; use --confirm to delete.",
+    ),
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Required alongside --purge-orphans to actually delete orphans.",
+    ),
+):
     """Crawl all sources, embed, and store in PostgreSQL."""
     _setup_logging()
-    asyncio.run(_ingest())
+    if confirm and not purge_orphans:
+        typer.echo("Error: --confirm only applies to --purge-orphans", err=True)
+        raise typer.Exit(1)
+    asyncio.run(_ingest(purge_orphans=purge_orphans, confirm=confirm))
 
 
 @app.command()
@@ -169,14 +183,14 @@ async def _init_db():
     typer.echo("Database initialized successfully.")
 
 
-async def _ingest():
+async def _ingest(purge_orphans: bool = False, confirm: bool = False):
     from docforge.config import Settings
     from docforge.db import close_pool
     from docforge.ingest import ingest_all
 
     settings = Settings()
     try:
-        await ingest_all(settings)
+        await ingest_all(settings, purge_orphans=purge_orphans, confirm=confirm)
     except OSError as e:
         typer.echo(
             f"Error: Cannot connect to database. Is PostgreSQL running?\n{e}",

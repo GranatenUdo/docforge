@@ -41,7 +41,7 @@ class TestIngestCommand:
     def test_success(self, monkeypatch):
         called = {"n": 0}
 
-        async def fake():
+        async def fake(purge_orphans=False, confirm=False):
             called["n"] += 1
 
         monkeypatch.setattr("docforge.cli._ingest", fake)
@@ -195,7 +195,7 @@ class TestHelperCoroutines:
 
     @pytest.mark.asyncio
     async def test_ingest_os_error_exits_with_1(self, monkeypatch):
-        async def fake_ingest_all(settings):
+        async def fake_ingest_all(settings, *, purge_orphans=False, confirm=False):
             raise OSError("no db")
 
         async def fake_close():

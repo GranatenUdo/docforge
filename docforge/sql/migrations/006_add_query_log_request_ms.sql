@@ -1,0 +1,1 @@
+ALTER TABLE query_log ADD COLUMN IF NOT EXISTS request_ms INT;

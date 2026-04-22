@@ -30,8 +30,23 @@ from docforge.sources import (
 logger = logging.getLogger(__name__)
 
 
-async def ingest_all(settings: Settings) -> None:
-    """Run the full ingest pipeline for all configured sources."""
+def _git_source_identifier(repo_path: str, file_path: str) -> str:
+    """Canonical identifier for a git-repo source row. Must stay in sync with
+    what _ingest_git_source INSERTs and what _purge_orphans matches against."""
+    return f"git:{repo_path}:{file_path}"
+
+
+async def ingest_all(
+    settings: Settings,
+    *,
+    purge_orphans: bool = False,
+    confirm: bool = False,
+) -> None:
+    """Run the full ingest pipeline for all configured sources.
+
+    When purge_orphans=True, after all sources have been ingested, any
+    `sources` rows whose identifier is not in the current sources.yml are
+    reported (and — if confirm=True — deleted). See _purge_orphans."""
     sources = load_sources(settings.sources_file)
     logger.info("Loaded %d sources from %s", len(sources), settings.sources_file)
 
@@ -44,13 +59,16 @@ async def ingest_all(settings: Settings) -> None:
     succeeded = 0
     failed = 0
     failed_names: list[str] = []
+    current_identifiers: set[str] = set()
 
     for source in sources:
         try:
             if isinstance(source, ConfluenceSourceConfig):
                 await _ingest_confluence_source(source, settings, pool, embedder, tokenizer_fn)
+                current_identifiers.add(source.page_id)
             elif isinstance(source, GitRepoSourceConfig):
-                await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+                git_identifiers = await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+                current_identifiers.update(git_identifiers)
             succeeded += 1
         except Exception:
             failed += 1
@@ -65,6 +83,19 @@ async def ingest_all(settings: Settings) -> None:
     )
     if failed_names:
         logger.warning("Failed sources: %s", ", ".join(failed_names))
+
+    if purge_orphans:
+        # Only purge if ALL sources ingested cleanly. A failed source would
+        # leave its identifier out of current_identifiers and get purged as
+        # an orphan — data loss. Require zero failures before allowing purge.
+        if failed > 0:
+            logger.warning(
+                "Skipping --purge-orphans: %d source(s) failed to ingest; "
+                "their identifiers would be incorrectly classified as orphans.",
+                failed,
+            )
+        else:
+            await _purge_orphans(pool, current_identifiers, confirm=confirm)
 
 
 async def _ingest_confluence_source(
@@ -156,14 +187,29 @@ async def _ingest_git_source(
     pool: asyncpg.Pool,
     embedder: Embedder,
     tokenizer_fn: Callable[[str], int],
-) -> None:
-    """Ingest documentation files from a local git repository."""
+) -> list[str]:
+    """Ingest documentation files from a local git repository.
+
+    Returns the list of source identifiers enumerated from the repo (one per
+    file crawled, not only those actually re-embedded). The caller can feed
+    this into _purge_orphans without re-walking the filesystem.
+
+    Raises FileNotFoundError if the configured repo path does not exist —
+    important because crawl_repo otherwise silently returns [] for a missing
+    path. A silent empty walk would let --purge-orphans delete all of the
+    repo's historical sources as "orphans" on a transient mount failure."""
+    from pathlib import Path
+
     logger.info("Crawling git repo: %s (%s)", source.title, source.repo_path)
 
+    if not Path(source.repo_path).is_dir():
+        raise FileNotFoundError(f"Configured git repo path does not exist: {source.repo_path}")
+
     files = crawl_repo(source.repo_path, source.include_patterns)
+    identifiers = [_git_source_identifier(source.repo_path, f.file_path) for f in files]
 
     for file in files:
-        identifier = f"git:{source.repo_path}:{file.file_path}"
+        identifier = _git_source_identifier(source.repo_path, file.file_path)
 
         existing_hash = await _get_hash_by_identifier(pool, identifier)
         if existing_hash == file.content_hash:
@@ -225,6 +271,8 @@ async def _ingest_git_source(
 
         logger.info("Stored %d chunks for: %s/%s", len(chunks), source.title, file.title)
 
+    return identifiers
+
 
 def _parse_markdown(content: str) -> list[Section]:
     """Parse markdown content into sections by headings."""
@@ -271,3 +319,83 @@ async def _get_hash_by_identifier(pool: asyncpg.Pool, identifier: str) -> str | 
             "SELECT content_hash FROM sources WHERE source_identifier = $1",
             identifier,
         )
+
+
+async def _purge_orphans(
+    pool: asyncpg.Pool,
+    current_identifiers: set[str],
+    confirm: bool,
+) -> tuple[int, int]:
+    """Find `sources` rows whose identifier is not in the current sources.yml,
+    report them, and (if confirm=True) delete them along with their chunks.
+
+    Identifier format:
+        - Confluence: the page_id string (e.g., "5108006937")
+        - Git:        f"git:{repo_path}:{file_path}"
+
+    Returns (orphan_source_count, orphan_chunk_count). When confirm=False,
+    returns the counts of what WOULD be deleted and leaves the DB untouched.
+
+    chunks.source_id has ON DELETE CASCADE, so deleting from sources
+    cascades to chunks automatically.
+    """
+    if not current_identifiers and confirm:
+        logger.error(
+            "_purge_orphans called with empty current_identifiers and confirm=True. "
+            "This would delete every source in the DB. Aborting — this is almost "
+            "certainly a caller bug (e.g., load_sources returned empty)."
+        )
+        return (0, 0)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                """
+                SELECT id,
+                       title,
+                       COALESCE(confluence_page_id, source_identifier) AS identifier
+                  FROM sources
+                 WHERE COALESCE(confluence_page_id, source_identifier) IS NOT NULL
+                """
+            )
+            db_identifiers = {r["identifier"]: r for r in rows}
+            orphan_ids = [
+                r["id"] for ident, r in db_identifiers.items() if ident not in current_identifiers
+            ]
+
+            if not orphan_ids:
+                logger.info("No orphan sources detected.")
+                return (0, 0)
+
+            chunk_count = await conn.fetchval(
+                "SELECT count(*) FROM chunks WHERE source_id = ANY($1::uuid[])",
+                orphan_ids,
+            )
+
+            logger.info(
+                "Orphans detected: %d sources / %d chunks not in current sources.yml",
+                len(orphan_ids),
+                chunk_count,
+            )
+            for ident, r in db_identifiers.items():
+                if ident not in current_identifiers:
+                    logger.debug("  orphan: %s  (%s)", r["title"], ident)
+
+            if not confirm:
+                logger.info(
+                    "Would delete %d orphan sources (%d chunks). Re-run with --confirm to execute.",
+                    len(orphan_ids),
+                    chunk_count,
+                )
+                return (len(orphan_ids), chunk_count)
+
+            await conn.execute(
+                "DELETE FROM sources WHERE id = ANY($1::uuid[])",
+                orphan_ids,
+            )
+            logger.info(
+                "Purged %d orphan sources (%d chunks).",
+                len(orphan_ids),
+                chunk_count,
+            )
+            return (len(orphan_ids), chunk_count)

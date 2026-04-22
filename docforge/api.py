@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -152,6 +153,7 @@ async def health() -> dict[str, Any]:
 @app.post("/search", response_model=SearchResponse)
 async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
+    start = time.perf_counter()
     if not _embedder:
         raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
 
@@ -201,6 +203,8 @@ async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchRe
 
     from docforge.query_log import log_query
 
+    request_ms = int((time.perf_counter() - start) * 1000)
+
     # team_name and area_name remain self-declared (routing hints, not identity).
     # user_name and user_oid come from the token when present.
     await log_query(
@@ -211,6 +215,7 @@ async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchRe
         req.query,
         len(rows),
         user_oid=user.oid if user else None,
+        request_ms=request_ms,
     )
 
     results = [
