@@ -8,14 +8,40 @@ init-kwargs (highest priority after explicit kwargs).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class AuthSettings(BaseModel):
+    mode: Literal["none", "entra"] = "none"
+    tenant_id: str = ""
+    audience: str = ""
+
+    @model_validator(mode="after")
+    def _validate_entra_fields(self):
+        if self.mode == "entra":
+            if not self.tenant_id:
+                raise ValueError(
+                    "auth.mode=entra requires auth.tenant_id to be set "
+                    "(via docforge.yml or AUTH__TENANT_ID env var)"
+                )
+            if not self.audience:
+                raise ValueError(
+                    "auth.mode=entra requires auth.audience to be set "
+                    "(via docforge.yml or AUTH__AUDIENCE env var)"
+                )
+        return self
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_nested_delimiter="__",
+    )
 
     # Database
     database_url: str = "postgresql://docforge:localdev@localhost:5432/docforge"
@@ -44,6 +70,12 @@ class Settings(BaseSettings):
     default_user_name: str = ""
     default_team_name: str = ""
     default_area_name: str = ""
+
+    # Auth (opt-in Entra ID for /search + /sources)
+    auth: AuthSettings = AuthSettings()
+
+    # query_log retention — app-level cleanup loop deletes rows older than this
+    query_log_retention_days: int = 180
 
     def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars

@@ -8,12 +8,14 @@ Run locally: uvicorn docforge.api:app --reload
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.security import SecurityScopes
 from pydantic import BaseModel
 
 from docforge.config import Settings
@@ -24,6 +26,29 @@ logger = logging.getLogger(__name__)
 
 _embedder: Embedder | None = None
 _settings: Settings | None = None
+_azure_scheme = None  # Populated in lifespan when auth.mode == "entra"
+_cleanup_task: asyncio.Task | None = None
+
+_CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
+
+
+async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> None:
+    """Deletes query_log rows older than retention_days every
+    _CLEANUP_INTERVAL_SECONDS. Idempotent, so multi-replica is safe."""
+    # int() coercion makes the f-string SQL below injection-safe. asyncpg's
+    # $1::interval parameter binding doesn't accept str, hence the literal.
+    days = int(retention_days)
+    while True:
+        try:
+            pool = await get_pool(database_url)
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    f"DELETE FROM query_log WHERE created_at < now() - interval '{days} days'"
+                )
+            logger.info("query_log cleanup: %s", result)
+        except Exception as e:
+            logger.exception("query_log cleanup failed: %s", e)
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
 
 
 def _get_settings() -> Settings:
@@ -33,19 +58,63 @@ def _get_settings() -> Settings:
     return _settings
 
 
+def _build_auth_scheme(settings: Settings):
+    """Return a SingleTenantAzureAuthorizationCodeBearer if mode==entra, else None."""
+    if settings.auth.mode != "entra":
+        return None
+    from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
+
+    app_client_id = settings.auth.audience.removeprefix("api://")
+    return SingleTenantAzureAuthorizationCodeBearer(
+        app_client_id=app_client_id,
+        tenant_id=settings.auth.tenant_id,
+        scopes={f"{settings.auth.audience}/search": "Search docforge"},
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the embedding model at startup; close the DB pool on shutdown."""
-    global _embedder
+    global _embedder, _azure_scheme, _cleanup_task
     settings = _get_settings()
+    _azure_scheme = _build_auth_scheme(settings)
+    if _azure_scheme is not None:
+        await _azure_scheme.openid_config.load_config()
+        logger.info(
+            "Entra auth enabled (tenant=%s, audience=%s)",
+            settings.auth.tenant_id,
+            settings.auth.audience,
+        )
     logger.info("Loading embedding model...")
     _embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
+
+    _cleanup_task = asyncio.create_task(
+        _query_log_cleanup_loop(settings.database_url, settings.query_log_retention_days)
+    )
+
     yield
+
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
     await close_pool()
 
 
 app = FastAPI(title="docforge", lifespan=lifespan)
+
+
+async def _auth_dependency(request: Request):
+    """Return the authenticated User under auth.mode=entra, None otherwise."""
+    if _azure_scheme is None:
+        return None
+    # Empty SecurityScopes: we don't enforce scope-level authorization beyond
+    # the token validation the scheme itself does. Without this arg the call
+    # signature mismatches what fastapi-azure-auth expects.
+    return await _azure_scheme(request, SecurityScopes())
 
 
 class SearchRequest(BaseModel):
@@ -81,7 +150,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest) -> SearchResponse:
+async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
     if not _embedder:
         raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
@@ -132,7 +201,17 @@ async def search(req: SearchRequest) -> SearchResponse:
 
     from docforge.query_log import log_query
 
-    await log_query(pool, req.user_name, req.team_name, req.area_name, req.query, len(rows))
+    # team_name and area_name remain self-declared (routing hints, not identity).
+    # user_name and user_oid come from the token when present.
+    await log_query(
+        pool,
+        user.preferred_username if user else req.user_name,
+        req.team_name,
+        req.area_name,
+        req.query,
+        len(rows),
+        user_oid=user.oid if user else None,
+    )
 
     results = [
         SearchResult(
@@ -150,7 +229,7 @@ async def search(req: SearchRequest) -> SearchResponse:
 
 
 @app.get("/sources")
-async def list_sources() -> dict[str, Any]:
+async def list_sources(user=Depends(_auth_dependency)) -> dict[str, Any]:
     """List all indexed documentation sources."""
     settings = _get_settings()
     try:

@@ -52,7 +52,7 @@ async def test_log_query_inserts_row():
     assert len(conn.executed) == 1
     query, args = conn.executed[0]
     assert "INSERT INTO query_log" in query
-    assert args == ("tobias.ens", "ccl", "cloud", "retry policy", 3)
+    assert args == ("tobias.ens", "ccl", "cloud", "retry policy", 3, None)
 
 
 @pytest.mark.asyncio
@@ -84,3 +84,36 @@ async def test_log_query_swallows_failures():
         query="q",
         result_count=0,
     )
+
+
+@pytest.mark.asyncio
+async def test_log_query_accepts_user_oid():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    await log_query(
+        pool=pool,
+        user_name="tobias.ens",
+        team_name="ccl",
+        area_name="cloud",
+        query="q",
+        result_count=3,
+        user_oid="abc-oid-123",
+    )
+    _, args = conn.executed[0]
+    assert args[-1] == "abc-oid-123"
+
+
+@pytest.mark.asyncio
+async def test_log_query_user_oid_defaults_to_none():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    await log_query(
+        pool=pool,
+        user_name="a",
+        team_name="b",
+        area_name=None,
+        query="q",
+        result_count=0,
+    )
+    _, args = conn.executed[0]
+    assert args[-1] is None

@@ -21,6 +21,27 @@ The Container App uses a system-assigned managed identity with:
 
 No admin credentials are stored anywhere except Key Vault.
 
+## Optional: Entra ID authentication
+
+If the deployment should gate `/search` + `/sources` on Entra ID (delegated user auth), run the one-shot bootstrap script **before first deploy**:
+
+```bash
+./bootstrap-entra.sh --name docforge-search-api
+# Prints AZURE_TENANT_ID and AZURE_AUDIENCE. Record them.
+```
+
+The script is idempotent — safe to re-run. It creates the app registration, exposes a `search` scope, grants tenant-wide admin consent, and configures Azure CLI to auto-issue v2 tokens for the scope. Requires Application Administrator or Global Administrator role on the tenant.
+
+Then set three Bicep params at deploy time:
+
+```
+authMode     = 'entra'
+authTenantId = '<AZURE_TENANT_ID from the script>'
+authAudience = '<AZURE_AUDIENCE from the script>'
+```
+
+Deployments that don't need auth can leave these at their defaults (`authMode='none'`).
+
 ## Prerequisites
 
 - Azure CLI 2.47+ (`az --version`) — earlier versions lack `.bicepparam` support.

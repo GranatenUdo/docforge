@@ -66,41 +66,59 @@ async def run_queries(
     team_name: str,
     area_name: str | None,
     k: int,
+    audience: str | None = None,
 ) -> list[QueryResult]:
-    """POST each query to <api_url>/search via httpx; collect results. Sequential."""
+    """POST each query to <api_url>/search via httpx; collect results. Sequential.
+
+    When audience is provided, attach an Entra Bearer token obtained via
+    DefaultAzureCredential. When not, send unauthenticated (auth.mode==none path)."""
     results: list[QueryResult] = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for entry in ground_truth:
-            q: str = entry["q"]
-            expected: str = entry["expected_title_contains"]
-            try:
-                resp = await client.post(
-                    f"{api_url}/search",
-                    json={
-                        "query": q,
-                        "user_name": user_name,
-                        "team_name": team_name,
-                        "area_name": area_name,
-                        "limit": k,
-                    },
+    credential = None
+    if audience:
+        from azure.identity.aio import DefaultAzureCredential
+
+        credential = DefaultAzureCredential()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for entry in ground_truth:
+                q: str = entry["q"]
+                expected: str = entry["expected_title_contains"]
+                headers: dict[str, str] = {}
+                if credential is not None:
+                    token = await credential.get_token(f"{audience}/.default")
+                    headers["Authorization"] = f"Bearer {token.token}"
+                try:
+                    resp = await client.post(
+                        f"{api_url}/search",
+                        headers=headers,
+                        json={
+                            "query": q,
+                            "user_name": user_name,
+                            "team_name": team_name,
+                            "area_name": area_name,
+                            "limit": k,
+                        },
+                    )
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    hits = payload.get("results", [])
+                except (httpx.HTTPError, ValueError) as e:
+                    print(f"  Query failed ({q!r}): {e}", file=sys.stderr)
+                    hits = []
+                titles = [h.get("source_title", "") for h in hits]
+                scores = [float(h.get("similarity", 0.0)) for h in hits]
+                results.append(
+                    QueryResult(
+                        query=q,
+                        expected_substring=expected,
+                        returned_titles=titles,
+                        returned_scores=scores,
+                        match_rank=score_query(titles, expected),
+                    )
                 )
-                resp.raise_for_status()
-                payload = resp.json()
-                hits = payload.get("results", [])
-            except (httpx.HTTPError, ValueError) as e:
-                print(f"  Query failed ({q!r}): {e}", file=sys.stderr)
-                hits = []
-            titles = [h.get("source_title", "") for h in hits]
-            scores = [float(h.get("similarity", 0.0)) for h in hits]
-            results.append(
-                QueryResult(
-                    query=q,
-                    expected_substring=expected,
-                    returned_titles=titles,
-                    returned_scores=scores,
-                    match_rank=score_query(titles, expected),
-                )
-            )
+    finally:
+        if credential is not None:
+            await credential.close()
     return results
 
 
@@ -172,6 +190,14 @@ def main() -> int:
     parser.add_argument("--team", required=True, help="Your team tag — forwarded as team_name")
     parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
+    parser.add_argument(
+        "--audience",
+        default=None,
+        help=(
+            "Entra API audience (e.g., api://<app-id>). When set, attaches a "
+            "Bearer token via DefaultAzureCredential. Omit for auth.mode=none."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -188,6 +214,7 @@ def main() -> int:
             team_name=args.team,
             area_name=args.area,
             k=args.k,
+            audience=args.audience,
         )
     )
     summary = summarize(results, args.k)

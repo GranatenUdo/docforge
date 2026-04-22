@@ -6,13 +6,19 @@ import pytest
 
 
 class FakeConn:
-    """Read-only asyncpg connection stand-in: `fetch` returns preset rows."""
+    """asyncpg connection stand-in: `fetch` returns preset rows; `execute` is a no-op.
+
+    Tests that need to assert on writes define their own capturing conn locally
+    (see `_CapturingConn` in `test_api.py`)."""
 
     def __init__(self, rows):
         self._rows = rows
 
     async def fetch(self, query, *args):
         return self._rows
+
+    async def execute(self, query, *args):
+        return None
 
 
 class _AcquireCtx:
