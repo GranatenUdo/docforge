@@ -73,8 +73,8 @@ async def test_purge_orphans_with_confirm_deletes(pg_url):
             # Give the orphan a chunk to verify cascade.
             await conn.execute(
                 """
-                INSERT INTO chunks (source_id, chunk_index, text, embedding, content_hash)
-                VALUES ($1, 0, 'body', array_fill(0.0::real, ARRAY[768])::vector(768), 'h')
+                INSERT INTO chunks (source_id, chunk_index, text, embedding)
+                VALUES ($1, 0, 'body', array_fill(0.0::real, ARRAY[768])::vector(768))
                 """,
                 orphan_id,
             )
