@@ -192,8 +192,18 @@ async def _ingest_git_source(
 
     Returns the list of source identifiers enumerated from the repo (one per
     file crawled, not only those actually re-embedded). The caller can feed
-    this into _purge_orphans without re-walking the filesystem."""
+    this into _purge_orphans without re-walking the filesystem.
+
+    Raises FileNotFoundError if the configured repo path does not exist —
+    important because crawl_repo otherwise silently returns [] for a missing
+    path. A silent empty walk would let --purge-orphans delete all of the
+    repo's historical sources as "orphans" on a transient mount failure."""
+    from pathlib import Path
+
     logger.info("Crawling git repo: %s (%s)", source.title, source.repo_path)
+
+    if not Path(source.repo_path).is_dir():
+        raise FileNotFoundError(f"Configured git repo path does not exist: {source.repo_path}")
 
     files = crawl_repo(source.repo_path, source.include_patterns)
     identifiers = [_git_source_identifier(source.repo_path, f.file_path) for f in files]

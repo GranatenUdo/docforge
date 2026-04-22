@@ -231,3 +231,50 @@ async def test_ingest_continues_on_per_source_failure(tmp_path, monkeypatch, fak
 
     await ingest_all(settings)
     assert len(conn.inserted_chunks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_all_skips_purge_when_any_source_failed(tmp_path, monkeypatch, fake_embedder):
+    """Guard: if any source fails to ingest, --purge-orphans must not run.
+    A failed source's identifiers are unknown and would be misclassified as
+    orphans, causing data loss on the next cleanup pass."""
+    repo_ok = tmp_path / "ok"
+    repo_ok.mkdir()
+    (repo_ok / "README.md").write_text("# OK\n\nContent.")
+
+    sources_file = tmp_path / "sources.yml"
+    sources_file.write_text(
+        "sources:\n"
+        "  - type: git_repo\n"
+        '    repo_path: "E:/definitely/missing/repo"\n'
+        '    include_patterns: ["README.md"]\n'
+        '    title: "Missing"\n'
+        "  - type: git_repo\n"
+        f'    repo_path: "{repo_ok.as_posix()}"\n'
+        '    include_patterns: ["README.md"]\n'
+        '    title: "OK"\n'
+    )
+
+    conn = _Conn()
+
+    async def fake_get_pool(url):
+        return _FakePool(conn)
+
+    monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
+
+    purge_calls = {"n": 0}
+
+    async def fake_purge(pool, current_identifiers, confirm):
+        purge_calls["n"] += 1
+        return (0, 0)
+
+    monkeypatch.setattr(ingest_mod, "_purge_orphans", fake_purge)
+
+    from docforge.config import Settings
+
+    settings = Settings(sources_file=str(sources_file))
+
+    # Request purge with confirm — but one source (the missing repo) will fail.
+    # The guard should skip _purge_orphans entirely.
+    await ingest_all(settings, purge_orphans=True, confirm=True)
+    assert purge_calls["n"] == 0, "purge must be skipped when any source failed"
