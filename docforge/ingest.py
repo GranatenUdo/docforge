@@ -30,8 +30,17 @@ from docforge.sources import (
 logger = logging.getLogger(__name__)
 
 
-async def ingest_all(settings: Settings) -> None:
-    """Run the full ingest pipeline for all configured sources."""
+async def ingest_all(
+    settings: Settings,
+    *,
+    purge_orphans: bool = False,
+    confirm: bool = False,
+) -> None:
+    """Run the full ingest pipeline for all configured sources.
+
+    When purge_orphans=True, after all sources have been ingested, any
+    `sources` rows whose identifier is not in the current sources.yml are
+    reported (and — if confirm=True — deleted). See _purge_orphans."""
     sources = load_sources(settings.sources_file)
     logger.info("Loaded %d sources from %s", len(sources), settings.sources_file)
 
@@ -65,6 +74,17 @@ async def ingest_all(settings: Settings) -> None:
     )
     if failed_names:
         logger.warning("Failed sources: %s", ", ".join(failed_names))
+
+    if purge_orphans:
+        current_identifiers: set[str] = set()
+        for source in sources:
+            if isinstance(source, ConfluenceSourceConfig):
+                current_identifiers.add(source.page_id)
+            elif isinstance(source, GitRepoSourceConfig):
+                files = crawl_repo(source.repo_path, source.include_patterns)
+                for f in files:
+                    current_identifiers.add(f"git:{source.repo_path}:{f.file_path}")
+        await _purge_orphans(pool, current_identifiers, confirm=confirm)
 
 
 async def _ingest_confluence_source(
