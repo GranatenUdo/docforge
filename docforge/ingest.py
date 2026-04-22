@@ -30,6 +30,12 @@ from docforge.sources import (
 logger = logging.getLogger(__name__)
 
 
+def _git_source_identifier(repo_path: str, file_path: str) -> str:
+    """Canonical identifier for a git-repo source row. Must stay in sync with
+    what _ingest_git_source INSERTs and what _purge_orphans matches against."""
+    return f"git:{repo_path}:{file_path}"
+
+
 async def ingest_all(
     settings: Settings,
     *,
@@ -53,13 +59,16 @@ async def ingest_all(
     succeeded = 0
     failed = 0
     failed_names: list[str] = []
+    current_identifiers: set[str] = set()
 
     for source in sources:
         try:
             if isinstance(source, ConfluenceSourceConfig):
                 await _ingest_confluence_source(source, settings, pool, embedder, tokenizer_fn)
+                current_identifiers.add(source.page_id)
             elif isinstance(source, GitRepoSourceConfig):
-                await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+                git_identifiers = await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+                current_identifiers.update(git_identifiers)
             succeeded += 1
         except Exception:
             failed += 1
@@ -76,15 +85,17 @@ async def ingest_all(
         logger.warning("Failed sources: %s", ", ".join(failed_names))
 
     if purge_orphans:
-        current_identifiers: set[str] = set()
-        for source in sources:
-            if isinstance(source, ConfluenceSourceConfig):
-                current_identifiers.add(source.page_id)
-            elif isinstance(source, GitRepoSourceConfig):
-                files = crawl_repo(source.repo_path, source.include_patterns)
-                for f in files:
-                    current_identifiers.add(f"git:{source.repo_path}:{f.file_path}")
-        await _purge_orphans(pool, current_identifiers, confirm=confirm)
+        # Only purge if ALL sources ingested cleanly. A failed source would
+        # leave its identifier out of current_identifiers and get purged as
+        # an orphan — data loss. Require zero failures before allowing purge.
+        if failed > 0:
+            logger.warning(
+                "Skipping --purge-orphans: %d source(s) failed to ingest; "
+                "their identifiers would be incorrectly classified as orphans.",
+                failed,
+            )
+        else:
+            await _purge_orphans(pool, current_identifiers, confirm=confirm)
 
 
 async def _ingest_confluence_source(
@@ -176,14 +187,19 @@ async def _ingest_git_source(
     pool: asyncpg.Pool,
     embedder: Embedder,
     tokenizer_fn: Callable[[str], int],
-) -> None:
-    """Ingest documentation files from a local git repository."""
+) -> list[str]:
+    """Ingest documentation files from a local git repository.
+
+    Returns the list of source identifiers enumerated from the repo (one per
+    file crawled, not only those actually re-embedded). The caller can feed
+    this into _purge_orphans without re-walking the filesystem."""
     logger.info("Crawling git repo: %s (%s)", source.title, source.repo_path)
 
     files = crawl_repo(source.repo_path, source.include_patterns)
+    identifiers = [_git_source_identifier(source.repo_path, f.file_path) for f in files]
 
     for file in files:
-        identifier = f"git:{source.repo_path}:{file.file_path}"
+        identifier = _git_source_identifier(source.repo_path, file.file_path)
 
         existing_hash = await _get_hash_by_identifier(pool, identifier)
         if existing_hash == file.content_hash:
@@ -245,6 +261,8 @@ async def _ingest_git_source(
 
         logger.info("Stored %d chunks for: %s/%s", len(chunks), source.title, file.title)
 
+    return identifiers
+
 
 def _parse_markdown(content: str) -> list[Section]:
     """Parse markdown content into sections by headings."""
@@ -293,7 +311,6 @@ async def _get_hash_by_identifier(pool: asyncpg.Pool, identifier: str) -> str | 
         )
 
 
-# Called from ingest_all() when the user passes `docforge ingest --purge-orphans`.
 async def _purge_orphans(
     pool: asyncpg.Pool,
     current_identifiers: set[str],

@@ -109,7 +109,11 @@ def main() -> int:
         print("Error: DATABASE_URL not set (and --database-url not provided)", file=sys.stderr)
         return 1
 
-    summary = asyncio.run(compute_summary(db_url, args.since))
+    try:
+        summary = asyncio.run(compute_summary(db_url, args.since))
+    except (OSError, asyncpg.PostgresError) as e:
+        print(f"Error connecting to the database: {e}", file=sys.stderr)
+        return 1
     print(format_summary(summary, args.since))
     return 0
 
