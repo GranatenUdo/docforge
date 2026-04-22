@@ -52,7 +52,7 @@ async def test_log_query_inserts_row():
     assert len(conn.executed) == 1
     query, args = conn.executed[0]
     assert "INSERT INTO query_log" in query
-    assert args == ("tobias.ens", "ccl", "cloud", "retry policy", 3, None)
+    assert args == ("tobias.ens", "ccl", "cloud", "retry policy", 3, None, None)
 
 
 @pytest.mark.asyncio
@@ -100,11 +100,47 @@ async def test_log_query_accepts_user_oid():
         user_oid="abc-oid-123",
     )
     _, args = conn.executed[0]
-    assert args[-1] == "abc-oid-123"
+    assert args[5] == "abc-oid-123"
 
 
 @pytest.mark.asyncio
 async def test_log_query_user_oid_defaults_to_none():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    await log_query(
+        pool=pool,
+        user_name="a",
+        team_name="b",
+        area_name=None,
+        query="q",
+        result_count=0,
+    )
+    _, args = conn.executed[0]
+    assert args[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_log_query_accepts_request_ms():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    await log_query(
+        pool=pool,
+        user_name="tobias.ens",
+        team_name="ccl",
+        area_name="cloud",
+        query="q",
+        result_count=3,
+        user_oid="oid-1",
+        request_ms=42,
+    )
+    _, args = conn.executed[0]
+    # args: (user_name, team_name, area_name, query, result_count, user_oid, request_ms)
+    # request_ms is the last positional.
+    assert args[-1] == 42
+
+
+@pytest.mark.asyncio
+async def test_log_query_request_ms_defaults_to_none():
     conn = _ConnCapture()
     pool = _FakePool(conn)
     await log_query(
