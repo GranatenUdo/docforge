@@ -44,3 +44,17 @@ def test_format_summary_module_importable():
     from docforge.scripts import latency_report
 
     assert latency_report.main is not None
+
+
+def test_since_pattern_accepts_valid_forms():
+    from docforge.scripts.latency_report import _SINCE_PATTERN
+
+    for s in ("7 days", "1 hour", "24 hours", "30 seconds", "2 weeks", "3 months", "  5 days  "):
+        assert _SINCE_PATTERN.match(s), f"should accept {s!r}"
+
+
+def test_since_pattern_rejects_invalid_forms():
+    from docforge.scripts.latency_report import _SINCE_PATTERN
+
+    for s in ("", "7", "days", "7 fortnights", "7 days; DROP TABLE", "-1 days", "1.5 days"):
+        assert not _SINCE_PATTERN.match(s), f"should reject {s!r}"

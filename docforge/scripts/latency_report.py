@@ -12,10 +12,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 from dataclasses import dataclass
 
 import asyncpg
+
+# Only these interval shapes are accepted. The value is embedded as a SQL
+# literal (asyncpg can't bind str to $1::interval), so the regex is the
+# injection safety boundary — keep it strict.
+_SINCE_PATTERN = re.compile(
+    r"^\s*\d+\s+(seconds?|minutes?|hours?|days?|weeks?|months?)\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -30,11 +39,20 @@ class LatencySummary:
 async def compute_summary(database_url: str, since: str) -> LatencySummary:
     """Query query_log.request_ms within the given interval. Returns
     percentiles + row count + the earliest-seen request_ms timestamp (the
-    effective C4.3 cutover date for this DB)."""
+    effective C4.3 cutover date for this DB).
+
+    `since` must match _SINCE_PATTERN (N + unit). It is embedded as a SQL
+    literal because asyncpg rejects str for $1::interval; the regex
+    validation is the injection boundary."""
+    if not _SINCE_PATTERN.match(since):
+        raise ValueError(
+            f"Invalid --since {since!r}. Expected 'N unit' where unit is "
+            "seconds/minutes/hours/days/weeks/months (e.g. '7 days')."
+        )
     conn = await asyncpg.connect(database_url)
     try:
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT
                 percentile_cont(0.50) WITHIN GROUP (ORDER BY request_ms) AS p50,
                 percentile_cont(0.95) WITHIN GROUP (ORDER BY request_ms) AS p95,
@@ -42,9 +60,8 @@ async def compute_summary(database_url: str, since: str) -> LatencySummary:
                 count(*)                                                 AS n
               FROM query_log
              WHERE request_ms IS NOT NULL
-               AND created_at > now() - $1::interval
-            """,
-            since,
+               AND created_at > now() - interval '{since.strip()}'
+            """
         )
         earliest = await conn.fetchval(
             "SELECT min(created_at) FROM query_log WHERE request_ms IS NOT NULL"
@@ -111,6 +128,9 @@ def main() -> int:
 
     try:
         summary = asyncio.run(compute_summary(db_url, args.since))
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
     except (OSError, asyncpg.PostgresError) as e:
         print(f"Error connecting to the database: {e}", file=sys.stderr)
         return 1
