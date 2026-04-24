@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a change or addition
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other tools or workarounds you have tried. Why do they not fit?
+  - type: textarea
+    id: why-docforge
+    attributes:
+      label: Why docforge
+      description: |
+        Why is this the right project to solve this? See
+        https://github.com/GranatenUdo/docforge/blob/master/ROADMAP.md
+        for what's explicitly out of scope.

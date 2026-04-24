@@ -1,0 +1,31 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: docforge version
+      description: Output of `docforge --version`
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any relevant log output. Redact secrets.
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, Postgres version
+      placeholder: "Ubuntu 24.04, Python 3.12.3, Postgres 16 with pgvector 0.7"
