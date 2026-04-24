@@ -1,49 +1,28 @@
-# Starlight Starter Kit: Basics
+# docforge microsite
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+The public-facing documentation site for [docforge](https://github.com/GranatenUdo/docforge), deployed to GitHub Pages at <https://GranatenUdo.github.io/docforge/>.
 
-```
-npm create astro@latest -- --template starlight
-```
+Built with [Astro](https://astro.build) + [Starlight](https://starlight.astro.build).
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Develop locally
 
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```bash
+pnpm install
+pnpm run dev        # http://localhost:4321/docforge/
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+## Build
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+```bash
+pnpm run build
+```
 
-Static assets, like favicons, can be placed in the `public/` directory.
+Output lands in `dist/`.
 
-## 🧞 Commands
+## Deploy
 
-All commands are run from the root of the project, from a terminal:
+Automatic via [`.github/workflows/microsite.yml`](../.github/workflows/microsite.yml) on every `master` push that touches `microsite/**`.
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+## Notes for Windows developers
 
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+npm on Windows has a [known bug](https://github.com/npm/cli/issues/4828) where native optional dependencies (`@rollup/rollup-win32-x64-msvc`) fail to install. **Use `pnpm` instead** — it handles native binaries reliably. Linux CI is unaffected either way.

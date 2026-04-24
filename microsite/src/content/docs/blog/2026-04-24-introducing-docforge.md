@@ -6,7 +6,7 @@ date: 2026-04-24
 
 AI coding assistants are extraordinary at general code, and somewhere between helpful and dangerous at *your* code — the code shaped by the Confluence decisions nobody remembers, the CLAUDE.md files scattered across repos, the internal architecture docs that encode five years of scar tissue. The model does not know any of it. The model cannot know any of it. That is a **retrieval problem, not a model problem**.
 
-docforge is a small tool that closes that gap. It points at your Confluence spaces and local git repositories, indexes them, and serves them over [MCP](https://modelcontextprotocol.io/) so Claude Code, Cursor, Copilot, and any assistant with an MCP client can search your team's knowledge. Self-hosted, ~5,000 lines of Python you can read in an afternoon, MIT-licensed.
+docforge is a small tool that closes that gap. It points at your Confluence spaces and local git repositories, indexes them, and serves them over [MCP](https://modelcontextprotocol.io/) so Claude Code, Cursor, Copilot, and any assistant with an MCP client can search your team's knowledge. Self-hosted, small enough to read in an afternoon, MIT-licensed.
 
 ## What docforge is, in 90 seconds
 
@@ -20,7 +20,7 @@ docforge ingest
 docforge serve
 ```
 
-That's the whole thing. `ingest` crawls Confluence via the REST v2 API, crawls local git repos for `README.md` / `CLAUDE.md` / `docs/**/*.md`, chunks the content to ~500 tokens, embeds with [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Apache 2.0, 768-dim, small enough to run on CPU), and stores vectors in Postgres with pgvector. `serve` exposes a single MCP tool — `search_documentation` — that any MCP-capable assistant can call.
+That's the whole thing. `ingest` crawls Confluence via the REST v2 API, crawls local git repos for `README.md` / `CLAUDE.md` / `docs/**/*.md`, chunks the content to ~500 tokens, embeds with [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Gemma license, 768-dim, small enough to run on CPU), and stores vectors in Postgres with pgvector. `serve` exposes a single MCP tool — `search_documentation` — that any MCP-capable assistant can call.
 
 When the assistant needs team context, the tool fires, the top chunks come back with source attribution, and the assistant cites real documents instead of inventing plausible ones.
 
@@ -31,8 +31,8 @@ When the assistant needs team context, the tool fires, the top chunks come back 
 | **docforge** | ✓ | MCP server | ✓ | Minimal (PG + 1 container) |
 | [Atlassian Rovo MCP](https://www.atlassian.com/blog/announcements/atlassian-rovo-mcp-ga) | ✗ (Cloud-only) | MCP server | Confluence only | SaaS |
 | [zilliztech/claude-context](https://github.com/zilliztech/claude-context) | ✓ | MCP server | Code only | Minimal |
-| [Onyx](https://github.com/onyx-dot-app/onyx) | ✓ | MCP + chat UI | ✓ (50+ connectors) | Heavy / Minimal |
-| Cursor codebase + @Docs | ✗ | Proprietary | Code + public web | SaaS |
+| [Onyx](https://github.com/onyx-dot-app/onyx) | ✓ | MCP + chat UI | ✓ (50+ connectors) | Heavy (Standard) / Minimal (Lite) |
+| Cursor codebase index + @Docs | ✗ | Proprietary | Code + public web | SaaS |
 | [Copilot Spaces](https://github.com/orgs/community/discussions/180894) | ✗ | Proprietary | Code + attachments | SaaS |
 | [Sourcegraph Cody](https://sourcegraph.com/docs/cody/enterprise/features) | ✓ (Enterprise) | OpenCtx / MCP | ✓ | Heavy |
 
@@ -42,11 +42,11 @@ If you need fifty connectors, chat UI for non-developers, or per-document ACLs e
 
 ## The design choices
 
-**Postgres + pgvector, not a dedicated vector DB.** Teams already know how to back up, monitor, and restore Postgres. Adding a new database is operational tax that buys little at this scale. pgvector's HNSW index handles tens of thousands of chunks comfortably; the whole docforge corpus for a typical team fits on a Standard_B1ms Flexible Server at ~$20/month.
+**Postgres + pgvector, not a dedicated vector DB.** Teams already know how to back up, monitor, and restore Postgres. Adding a new database is operational tax that buys little at this scale. pgvector's HNSW index handles tens of thousands of chunks comfortably; a full team deployment on Azure (six resources, default SKUs) runs ~$35/month in West Europe — see [deployment](/docforge/deployment/).
 
-**EmbeddingGemma-300M.** Open weights, Apache 2.0, 768-dim, strong on the MTEB Code benchmark relative to its size. Runs on CPU. No API dependency, no per-query cost, no data leaving your infrastructure. The Hugging Face gate is the one supply-chain dependency; we cache the weights into a Docker volume so ingest is not network-dependent after first load.
+**EmbeddingGemma-300M.** Open weights under the Gemma license, 768-dim, strong on the MTEB Code benchmark relative to its size. Runs on CPU. No API dependency, no per-query cost, no data leaving your infrastructure. The Hugging Face gate is the one supply-chain dependency; we cache the weights into a Docker volume so ingest is not network-dependent after first load.
 
-**MCP-first, not vendor-specific.** MCP is the protocol where the assistant ecosystem is consolidating. Continue.dev deprecated its built-in `@Docs` in favor of MCP servers. Claude Code speaks MCP. Cursor speaks MCP. Copilot is adding MCP support for actions. Building to the protocol once gets you every current and future assistant rather than chasing each vendor's feature API.
+**MCP-first, not vendor-specific.** MCP is the protocol where the assistant ecosystem is consolidating. Claude Code speaks MCP natively. Cursor speaks MCP. Copilot is adding MCP support for actions. Continue.dev leans on MCP servers for `@Docs`-style workflows. Building to the protocol once gets you every current and future assistant rather than chasing each vendor's feature API.
 
 **No ACLs at query time (today).** docforge assumes a single-company trust boundary — every authenticated user can query every indexed source. This is appropriate for internal team tools and explicitly out of scope for multi-tenant SaaS. Per-source ACLs (honoring Confluence space permissions) are on the roadmap.
 
@@ -81,7 +81,7 @@ docforge search "how do we handle retries"
 docforge serve                # MCP on stdio — point your assistant at it
 ```
 
-For team use, host `docforge serve --api` on Azure Container Apps or equivalent with Entra auth; ballpark cost at team-of-10 scale is ~$24/month. See the [Deploy to Azure](/docforge/deployment/) guide.
+For team use, host `docforge serve --api` on Azure Container Apps or equivalent with Entra auth; ballpark cost for a full six-resource deployment is ~$35/month at default SKUs. See the [Deploy to Azure](/docforge/deployment/) guide.
 
 ## Credits and what's next
 

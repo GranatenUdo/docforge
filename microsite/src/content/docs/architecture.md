@@ -21,7 +21,7 @@ Each source gets a stable identifier (`confluence_page_id` or file path) and a S
 1. **Deduplicate.** Compare `content_hash` against what's stored. Matching hashes skip re-processing.
 2. **Parse.** BeautifulSoup splits HTML into semantic sections (`<h1>`, `<h2>`, paragraphs, code blocks). Confluence macros are handled where meaningful.
 3. **Chunk.** Token-aware splitter (default 500 tokens). Respects section boundaries; splits paragraphs only when a section exceeds the limit. Section titles are prepended to each chunk for context.
-4. **Embed.** Sentence-transformers loads [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Apache 2.0, 768-dim). Falls back to `all-MiniLM-L6-v2` (384-dim) if the primary load fails.
+4. **Embed.** Sentence-transformers loads [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Gemma license, 768-dim). Falls back to `all-MiniLM-L6-v2` (384-dim) if the primary load fails.
 5. **Store.** `sources` (metadata + hash) and `chunks` (text + embedding + HNSW index) tables in Postgres. `ON DELETE CASCADE` keeps `chunks` consistent with `sources`.
 
 Per-source errors are isolated: one bad Confluence page does not abort the run; a summary lists failures at the end.

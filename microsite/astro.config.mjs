@@ -1,11 +1,16 @@
 // @ts-check
-import { defineConfig } from 'astro/config';
+import { defineConfig, passthroughImageService } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://GranatenUdo.github.io',
 	base: '/docforge',
+	image: {
+		// All assets are SVG or pre-sized PNG; skip raster processing so we
+		// don't need the `sharp` native binary.
+		service: passthroughImageService(),
+	},
 	integrations: [
 		starlight({
 			title: 'docforge',

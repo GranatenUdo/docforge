@@ -2,8 +2,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-label="docforge architecture: data flow from Confluence and local git repos through ingest, Postgres plus pgvector, and MCP server to AI coding assistants">
   <style>
     .bg { fill: #fafaf7; }
-    .box { fill: #ffffff; stroke: #1a1a1a; stroke-width: 2; }
-    .box-strong { fill: #ffffff; stroke: #1a1a1a; stroke-width: 3; }
+    .box { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; }
+    .box-strong { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 3; }
     .label { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 18px; fill: #1a1a1a; }
     .label-small { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 13px; fill: #737373; }
     .arrow { stroke: #d97706; stroke-width: 3; fill: none; }

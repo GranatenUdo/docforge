@@ -7,21 +7,25 @@ For a single developer, `docforge serve` on stdio is enough — Claude Code or C
 
 ## Target architecture
 
-- **Azure Postgres Flexible Server** (Standard_B1ms is enough for most teams) with the `pgvector` extension.
-- **Azure Container App** running `docforge serve --api` with Entra ID authentication enabled.
-- **Azure Key Vault** holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
-- Teammates use a lightweight MCP client that shells out to the hosted API.
+Six Azure resources in one resource group (~$35/month at default SKUs in West Europe):
 
-Ballpark running cost at team-of-10 scale: **~$24/month** (Container App + Postgres B1ms + storage).
+- **Postgres Flexible Server** (Burstable B1ms, 32 GB) with `pgvector` enabled at provisioning time.
+- **Container App** running `docforge serve --api` with Entra ID authentication enabled.
+- **Container Registry** (Basic) hosting the docforge Docker image.
+- **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
+- **Log Analytics workspace** (30-day retention) for Container App logs.
+- **Container Apps managed environment** (Consumption plan).
+
+Teammates use a lightweight MCP client that shells out to the hosted API.
 
 ## Steps
 
 ### 1. Provision
 
-Bicep templates under [`infrastructure/`](https://github.com/GranatenUdo/docforge/tree/master/infrastructure) in the repo cover:
+Bicep templates under [`deploy/azure/`](https://github.com/GranatenUdo/docforge/tree/master/deploy/azure) in the repo cover:
 
 - Postgres Flexible Server with `pgvector` installed at provisioning time.
-- Container App environment with an initially-zero-replica minimum (scales to one on first request; warm-up is ~15–30 s for model load).
+- Container App environment with 1 always-on replica (warm-up is ~15–30 s for model load on cold starts).
 - Managed identity for pulling from Key Vault.
 
 ### 2. Configure authentication

@@ -88,13 +88,14 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ## Deploy to your infrastructure
 
-For team-wide use, deploy the search API to Azure Container Apps (~$24/month):
+For team-wide use, deploy the search API to Azure (~$35/month at default SKUs):
 
-- PostgreSQL Flexible Server with pgvector.
+- PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
+- Container Registry, Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
-See `infrastructure/` for Bicep templates and `docs/deploy-azure.md` for instructions.
+See [`deploy/azure/`](deploy/azure/) for Bicep templates and a full cost breakdown.
 
 ## Configuration
 
@@ -138,7 +139,7 @@ MIT. See [LICENSE](LICENSE).
 
 docforge stands on open shoulders:
 
-- [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) — Apache 2.0 embedding model.
+- [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) — open-weights embedding model under the Gemma license.
 - [pgvector](https://github.com/pgvector/pgvector) — vector similarity for Postgres.
 - [FastMCP](https://github.com/PrefectHQ/fastmcp) — MCP server framework.
 - [FastAPI](https://fastapi.tiangolo.com/), [Typer](https://typer.tiangolo.com/), [asyncpg](https://magicstack.github.io/asyncpg/), [sentence-transformers](https://www.sbert.net/) — core infrastructure.
