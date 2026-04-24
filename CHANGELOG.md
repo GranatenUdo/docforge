@@ -14,10 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub issue templates (bug report, feature request) and pull-request template under `.github/`.
 - Tag-triggered release workflow at `.github/workflows/release.yml` using PyPI trusted publishing.
 - GitHub Discussions enabled with categories *Announcements*, *Q&A*, *Ideas*, *Show and tell*.
+- Visual identity under `docs/assets/`: monogram logo (two variants), favicon set (16×16, 32×32, 180×180 PNG + multi-res ICO), architecture data-flow SVG, 1280×640 social preview card. Graphite (`#1a1a1a`) + amber (`#d97706`) palette.
 
 ### Changed
 
 - Repository description and topics updated to reflect the new positioning.
+- README "How it works → Architecture" replaces the ASCII diagram with the new SVG.
 
 ## [0.1.0] - 2026-04-24
 
