@@ -27,6 +27,36 @@ One-time setup before starting. All tasks below assume these exist.
 
 ---
 
+## Execution model: single PR
+
+All four phases commit to **one feature branch** and merge as **one PR**. The phase structure below is a review-checkpoint rhythm, not a PR boundary.
+
+**Branch:** `feat/v0.2-documentation-polish` (created in Task 1 Step 4, replacing the original per-phase branch tasks). The spec and plan themselves stay on the existing `docs/branding-spec` branch — they can either be merged first as a standalone PR or folded into the same feature branch; at Phase 0 decide which.
+
+**What this overrides:**
+
+- **Tasks 2, 9, 19, 28** (per-phase branch creation): *skip.* One branch is used throughout.
+- **Tasks 8, 18, 27** (per-phase PR open + merge): *skip.* Replaced by a **checkpoint pause**: stop, present the state of the branch to the maintainer, wait for go-ahead before starting the next phase. No PR is opened until Phase 4 is complete.
+- **Task 33** (v0.2.0 release): *adjusted.* The version bump and CHANGELOG move become the **final commits on the feature branch**, not a separate `release-0.2.0` branch. After the feature branch merges to master, tag v0.2.0 at the resulting master HEAD and push; the release workflow fires.
+
+**What this does not change:**
+
+- **Task 16 Step 4** (disposable rc tag for release-workflow verification) still fires from the feature branch — the release workflow triggers on tag push, which is ref-independent. Catch trusted-publishing misconfiguration before the real v0.2.0 tag either way.
+- **Every commit on the feature branch must keep CI green** (lint + test + coverage ≥60%). Logical commits remain the reviewer's navigation tool once the PR opens; don't let commits pile up in "wip" states.
+- **Checkpoint pauses are substantive.** At each one, the maintainer sees `git log --oneline feat/v0.2-documentation-polish ^master` and a rendered preview of any documentation/visual changes, and explicitly says go or stop-and-fix.
+
+**Phase-merge-adjacent tasks adapt:**
+
+- Phase 1 end: PyPI publish of v0.1.1 happens from the feature branch (the build artifacts exist once `pyproject.toml` is bumped — no merge required to publish to PyPI). v0.1.0 tag push happens too; both are safe to do early because they don't depend on the branch merging.
+- Phase 2 end: Discussions-enable + rc-tag verification fire against master-independent state and are safe to run.
+- Phase 3 end: pure in-branch commits; checkpoint is a visual review.
+- Phase 4 end: first open the PR, get CI green, merge. Then tag v0.2.0 on the resulting master commit and push. The microsite deploy workflow runs automatically from master after merge.
+
+**PR title at Phase 4 end:**
+`v0.2.0: documentation polish, branding, and microsite`
+
+---
+
 ## File Structure
 
 ### New files
@@ -104,7 +134,30 @@ curl -s -o /dev/null -w '%{http_code}' https://pypi.org/pypi/docforge-cli/json
 ```
 Expected: `404` (name is available). If `200`, the name is taken — stop and choose a fallback (`docforge`, `docforge-server`) before proceeding; all subsequent README and spec references will need to be updated to the chosen name.
 
-No commit.
+- [ ] **Step 4: Decide how the spec+plan land, then create the feature branch**
+
+The spec and plan currently live on `docs/branding-spec`. Two options:
+
+**Option A (recommended):** merge `docs/branding-spec` into master first as a small stand-alone PR, then branch the feature work off master.
+
+```bash
+gh pr create --base master --head docs/branding-spec --title "docs: spec + plan for v0.2 documentation polish and branding" --body "Design spec and implementation plan for v0.2.0. No code changes."
+# After CI + approval:
+gh pr merge docs/branding-spec --squash
+git checkout master && git pull
+git checkout -b feat/v0.2-documentation-polish
+```
+
+**Option B:** fold the spec+plan commits into the same feature branch.
+
+```bash
+git checkout docs/branding-spec
+git checkout -b feat/v0.2-documentation-polish
+```
+
+Option A leaves the design traceable as a discrete PR in history. Option B produces one giant PR containing everything. Pick A unless you have a reason not to.
+
+No implementation commit yet — the feature branch just exists, ready for Task 3.
 
 ---
 
@@ -1557,12 +1610,14 @@ No final commit needed.
 
 ## Execution handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-04-24-documentation-polish-and-branding.md`.
+**Chosen model (locked):** Inline execution with phase checkpoints, all four phases on **one feature branch**, merged as a **single PR** at the end of Phase 4.
 
-Two execution options:
+See the *Execution model: single PR* section near the top for what this overrides (no per-phase PRs; checkpoint pauses between phases; single `feat/v0.2-documentation-polish` branch).
 
-**1. Inline Execution (recommended for this plan)** — Tasks executed in the current session using `superpowers:executing-plans`, with a mandatory checkpoint at the end of each phase (review the merged PR before opening the next phase's branch). Recommended because ~12 of the 33 tasks involve maintainer credentials (PyPI, GitHub admin), subjective judgment (logo, blog-post voice), or interactive work (demo recording) — subagents can prep mechanical sub-tasks but the plan's rhythm is human-led.
+At each phase boundary I will:
 
-**2. Subagent-Driven** — Fresh subagent per task with two-stage review via `superpowers:subagent-driven-development`. Fastest mechanical throughput, but the maintainer still holds the design and credential tasks, so the gain over inline execution is small for this plan.
+1. Stop.
+2. Show the state of the branch since the last checkpoint (`git log --oneline`, key file diffs, a rendered preview of any README / microsite / visual changes).
+3. Wait for explicit go-ahead before starting the next phase.
 
-Which approach?
+No subagents used by default — the maintainer remains in the loop throughout because ~12 of 33 tasks involve credentials, subjective judgment, or interactive work. Subagents may still be dispatched opportunistically for narrow mechanical sub-tasks (e.g., generating favicon sizes, writing template YAML) when useful.
