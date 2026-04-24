@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Option 3: terminal chevron">
-  <rect width="128" height="128" rx="20" fill="#1a1a1a"/>
-  <!-- chevron > -->
-  <path d="M 30 32 L 46 32 L 88 64 L 46 96 L 30 96 L 72 64 Z" fill="#fafaf7"/>
-  <!-- amber blinking cursor -->
-  <rect x="84" y="92" width="16" height="6" fill="#d97706"/>
-</svg>
