@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>docforge logo options</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --graphite: #1a1a1a;
+    --offwhite: #fafaf7;
+    --amber: #d97706;
+    --muted: #737373;
+  }
+  body {
+    background: var(--offwhite);
+    color: var(--graphite);
+    font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+    padding: 40px;
+    margin: 0;
+  }
+  h1 { font-weight: 500; margin: 0 0 8px; font-size: 20px; }
+  p.sub { color: var(--muted); margin: 0 0 40px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .card { border: 1px solid #e5e5e3; border-radius: 8px; padding: 24px; background: white; }
+  .card h2 { font-weight: 500; font-size: 16px; margin: 0 0 4px; color: var(--graphite); }
+  .card p { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .sizes { display: flex; align-items: flex-end; gap: 20px; }
+  .sizes .size { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .sizes .size small { color: var(--muted); font-size: 11px; }
+  img { display: block; }
+  .big { width: 128px; height: 128px; }
+  .mid { width: 64px; height: 64px; }
+  .tiny { width: 32px; height: 32px; }
+  .favicon { width: 16px; height: 16px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: var(--graphite); color: var(--offwhite); }
+    .card { background: #232323; border-color: #333; }
+    .card h2 { color: var(--offwhite); }
+  }
+</style>
+</head>
+<body>
+  <h1>docforge — logo direction candidates</h1>
+  <p class="sub">Each option shown at favicon (16), tiny (32), mid (64), and big (128). Palette locked: graphite <code>#1a1a1a</code>, off-white <code>#fafaf7</code>, amber <code>#d97706</code>.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Option 1 — <code>df</code> monogram</h2>
+      <p>Geometric block letters. Neutral, developer-tool feel. Matches current placeholder.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="1-df-monogram.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="1-df-monogram.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="1-df-monogram.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="1-df-monogram.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Option 2 — Anvil + spark</h2>
+      <p>Literal forge metaphor. Strong silhouette; reads instantly. Risk: kitschy/cliché in dev-tool space.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="2-anvil-spark.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="2-anvil-spark.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="2-anvil-spark.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="2-anvil-spark.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Option 3 — Chevron prompt <code>&gt;_</code></h2>
+      <p>Terminal/developer aesthetic. Amber underscore as blinking cursor. Reads as CLI tool.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="3-chevron-prompt.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="3-chevron-prompt.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="3-chevron-prompt.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="3-chevron-prompt.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Option 4 — Node graph</h2>
+      <p>Abstract data structure / retrieval graph. Amber center node = docforge; satellite nodes = sources + assistants.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="4-node-graph.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="4-node-graph.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="4-node-graph.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="4-node-graph.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Option 5 — Bold <code>D</code></h2>
+      <p>Single letter at max scale. Amber crossbar through the stem. Vercel / Notion / Raycast lineage.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="5-bold-d.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="5-bold-d.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="5-bold-d.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="5-bold-d.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Option 6 — Document + spark</h2>
+      <p>Direct "docs + forge" metaphor. Page with folded corner + amber flame. Risk: too literal / busy at small sizes.</p>
+      <div class="sizes">
+        <div class="size"><img class="favicon" src="6-doc-spark.svg" alt=""><small>16</small></div>
+        <div class="size"><img class="tiny" src="6-doc-spark.svg" alt=""><small>32</small></div>
+        <div class="size"><img class="mid" src="6-doc-spark.svg" alt=""><small>64</small></div>
+        <div class="size"><img class="big" src="6-doc-spark.svg" alt=""><small>128</small></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
