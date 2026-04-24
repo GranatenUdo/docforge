@@ -4,22 +4,23 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
+	site: 'https://GranatenUdo.github.io',
+	base: '/docforge',
 	integrations: [
 		starlight({
-			title: 'My Docs',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
+			title: 'docforge',
+			description: 'Self-hosted context engine for AI coding assistants.',
+			logo: { src: './src/assets/logo.svg', replacesTitle: false },
+			favicon: '/favicon.ico',
+			social: [
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/GranatenUdo/docforge' },
+			],
 			sidebar: [
-				{
-					label: 'Guides',
-					items: [
-						// Each item here is one entry in the navigation menu.
-						{ label: 'Example Guide', slug: 'guides/example' },
-					],
-				},
-				{
-					label: 'Reference',
-					autogenerate: { directory: 'reference' },
-				},
+				{ label: 'Install', slug: 'install' },
+				{ label: 'Architecture', slug: 'architecture' },
+				{ label: 'Deployment', slug: 'deployment' },
+				{ label: 'FAQ', slug: 'faq' },
+				{ label: 'Blog', autogenerate: { directory: 'blog' } },
 			],
 		}),
 	],
