@@ -12,6 +12,21 @@
 
 ---
 
+## Prerequisites
+
+One-time setup before starting. All tasks below assume these exist.
+
+- **Python 3.12+** with `pip`, `build`, `twine` (install `build` and `twine` via pip).
+- **Node.js 20+** with `npm` (for Phase 4's Astro microsite).
+- **`gh` CLI** authenticated against the `GranatenUdo` account with admin on the `docforge` repo.
+- **git** with push access to `GranatenUdo/docforge`.
+- **PyPI account** with an API token, and (for Phase 2) rights to configure trusted publishing on the `docforge-cli` project.
+- **Image tooling** for Phase 3: `rsvg-convert` (from `librsvg`) or the online fallback at https://realfavicongenerator.net/; `magick` (ImageMagick) for `.ico` assembly.
+- **Video tooling** for Phase 3's demo: `ffmpeg`, `gifski`, and a screen recorder (OBS, Loom, or QuickTime).
+- **A reachable docforge deployment with a populated index** for recording the demo — either the DocuWare CCL deployment (per spec) or a local instance populated via `docforge ingest`.
+
+---
+
 ## File Structure
 
 ### New files
@@ -225,7 +240,7 @@ The source of truth for the new README content is the committed spec at `docs/su
 | Deploy to your infrastructure | N/A — keep existing |
 | Configuration (brief, pointer-only) | N/A — compress existing |
 | Contributing (pointer to `CONTRIBUTING.md`) | N/A — one line |
-| Evaluation & retrieval quality (one paragraph, drift-detection framing) | §6 |
+| Evaluation & retrieval quality (one paragraph, drift-detection framing) | spec §2 item 12 — authored inline; see Task 6 Step 2 for content guidance |
 | FAQ (migrated from current README troubleshooting, trimmed) | N/A |
 | License + Credits | N/A |
 
@@ -287,7 +302,19 @@ git commit -m "docs: rewrite README with positioning, comparison table, and when
 gh repo edit GranatenUdo/docforge --description "Self-hosted context engine for AI coding assistants. Index Confluence + git, serve over MCP, own your data."
 ```
 
-- [ ] **Step 2: Set topics (replace existing)**
+- [ ] **Step 2: Inspect existing topics, then clear any you do not want**
+
+```bash
+gh repo view GranatenUdo/docforge --json repositoryTopics
+```
+
+`gh repo edit --add-topic` *appends* — it does not replace. For any topic in the output that is NOT in the target list, remove it individually:
+
+```bash
+gh repo edit GranatenUdo/docforge --remove-topic <old-topic>
+```
+
+Then add the target set:
 
 ```bash
 gh repo edit GranatenUdo/docforge --add-topic mcp,rag,confluence,ai-coding-assistant,llm,embeddings,pgvector,self-hosted,claude-code,cursor,copilot
@@ -693,13 +720,47 @@ git add .github/workflows/release.yml
 git commit -m "ci: add tag-triggered release workflow"
 ```
 
-### Task 17: Enable Discussions (UI, manual)
+- [ ] **Step 4: Verify the workflow end-to-end with a disposable tag**
+
+After the Phase 2 PR merges, push a disposable pre-release tag to confirm the workflow actually works. Catching misconfigured trusted publishing *now* is far cheaper than debugging during the Phase 4 v0.2.0 release.
+
+```bash
+git checkout master && git pull
+git tag -a v0.1.2-rc1 -m "Release workflow verification tag."
+git push origin v0.1.2-rc1
+gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')
+```
+
+Expected: the workflow runs, builds the distribution, and the PyPI publish step succeeds.
+
+If it succeeds: the v0.1.2-rc1 release is now on PyPI. Yank it immediately so nobody installs it by accident:
+
+```bash
+python -m twine upload --skip-existing dist/*  # (already uploaded by CI; just in case)
+# Yank the release:
+# Navigate to https://pypi.org/project/docforge-cli/0.1.2rc1/ and click "Yank release".
+# Or via the PyPI API — see https://warehouse.pypa.io/api-reference/integration-guide.html
+```
+
+And delete the git tag:
+
+```bash
+git push origin :refs/tags/v0.1.2-rc1
+git tag -d v0.1.2-rc1
+```
+
+If it fails: read the Action logs. The most common failure is "OIDC token not permitted" — fix by completing trusted-publishing config in Step 2, then retry with a fresh tag (v0.1.2-rc2, etc.) until it passes.
+
+### Task 17: Enable Discussions and configure categories
 
 **Files:** None (GitHub settings).
 
-- [ ] **Step 1: Enable Discussions**
+- [ ] **Step 1: Enable Discussions via `gh`**
 
-Navigate to `https://github.com/GranatenUdo/docforge/settings` → *Features* → check *Discussions*.
+```bash
+gh repo edit GranatenUdo/docforge --enable-discussions
+```
+Expected: no error. Verify with `gh repo view GranatenUdo/docforge --json hasDiscussionsEnabled`.
 
 - [ ] **Step 2: Configure categories**
 
@@ -939,6 +1000,8 @@ git commit -m "design: add social preview card"
 
 This task requires interactive screen recording and cannot be fully automated. The agent can produce the script and verify the output; the recording itself is done by the maintainer.
 
+**Deferral option:** If no working docforge + MCP + assistant setup is available when Phase 3 opens, skip this task and merge Phase 3 without the demo. Add a follow-up PR (Phase 3.5) that ships only the demo GIF + the README embed change (see Task 25 Step 2). Do NOT block Phase 3 waiting on the recording — the other Phase 3 artifacts (logo, diagram, social card, favicon) are independently shippable.
+
 - [ ] **Step 1: Prepare the recording environment**
 
 - A running docforge instance (local or Azure) with the indexed CCL corpus.
@@ -1097,10 +1160,18 @@ git checkout master && git pull && git checkout -b phase-4-microsite
 
 ```bash
 cd /e/docforge
-npm create astro@latest microsite -- --template starlight --typescript strict --install --git --yes
+npm create astro@latest microsite -- --template starlight --typescript strict --install --no-git --yes
 ```
 
-Expected: `microsite/` created with Astro + Starlight boilerplate. The scaffolder may prompt; the `--yes` flag should accept defaults. If any prompt remains, choose: Starlight template, Strict TypeScript, Install dependencies yes, Initialize git no.
+Expected: `microsite/` created with Astro + Starlight boilerplate.
+
+**Important:** `--no-git` is mandatory — without it the scaffolder initializes a fresh git repository inside `microsite/`, which would nest a repo inside docforge's existing repo. The `--yes` flag accepts remaining defaults; `--no-git` overrides the git default specifically.
+
+Verify no nested `.git` directory was created:
+
+```bash
+ls microsite/.git 2>/dev/null && echo "BROKEN: nested git repo — delete microsite/.git" || echo "OK: no nested repo"
+```
 
 - [ ] **Step 3: Configure the site**
 
@@ -1117,8 +1188,8 @@ export default defineConfig({
     starlight({
       title: 'docforge',
       description: 'Self-hosted context engine for AI coding assistants.',
-      logo: { src: '../docs/assets/logo.svg', replacesTitle: false },
-      favicon: '/docs/assets/favicon/favicon.ico',
+      logo: { src: './src/assets/logo.svg', replacesTitle: false },
+      favicon: '/favicon.ico',
       social: {
         github: 'https://github.com/GranatenUdo/docforge',
       },
@@ -1133,6 +1204,11 @@ export default defineConfig({
   ],
 });
 ```
+
+**Path notes:**
+- `logo.src` is resolved from the project root; Starlight requires the logo to live under `src/` (copied in Task 29 Step 6, below).
+- `favicon: '/favicon.ico'` is resolved from `microsite/public/` at runtime, with Astro's `base` automatically prefixed — the browser requests `/docforge/favicon.ico`.
+- Assets referenced from Markdown content files (architecture diagram, demo GIF) live in `microsite/public/assets/` and are linked as `/assets/...` in the Markdown — Astro handles the base prefix.
 
 - [ ] **Step 4: Commit the scaffold**
 
@@ -1185,19 +1261,33 @@ Delete the scaffolded `microsite/src/content/docs/index.mdx` (if present) and wr
 
 - [ ] **Step 6: Copy required static assets into microsite**
 
-Starlight serves static files from `microsite/public/`. Copy the visuals:
+Starlight and Astro have two asset locations that serve different purposes:
+- **`microsite/src/assets/`** for the Starlight logo (referenced in `astro.config.mjs`).
+- **`microsite/public/`** for static files served at URL paths (architecture diagram, demo, favicon, social preview).
+
+Copy accordingly:
 
 ```bash
-mkdir -p microsite/public/assets/favicon
+# Starlight logo lives under src/assets/ (referenced from astro.config.mjs)
+mkdir -p microsite/src/assets
+cp docs/assets/logo.svg microsite/src/assets/
+
+# Static public assets
+mkdir -p microsite/public/assets
 cp docs/assets/logo.svg microsite/public/assets/
 cp docs/assets/logo-mono.svg microsite/public/assets/
 cp docs/assets/architecture.svg microsite/public/assets/
-cp docs/assets/demo.gif microsite/public/assets/  # or demo.mp4
+cp docs/assets/demo.gif microsite/public/assets/ 2>/dev/null || cp docs/assets/demo.mp4 microsite/public/assets/
 cp docs/assets/social-preview.png microsite/public/assets/
-cp -r docs/assets/favicon/* microsite/public/assets/favicon/
+
+# Favicon at the microsite root (referenced as /favicon.ico from astro.config.mjs)
+cp docs/assets/favicon/favicon.ico microsite/public/favicon.ico
+cp docs/assets/favicon/apple-touch-icon.png microsite/public/apple-touch-icon.png
+cp docs/assets/favicon/favicon-16x16.png microsite/public/favicon-16x16.png
+cp docs/assets/favicon/favicon-32x32.png microsite/public/favicon-32x32.png
 ```
 
-Update any `![...](docs/assets/...)` references in the content files to `/assets/...`.
+Update any `![...](docs/assets/...)` references in microsite content files to `/assets/...` (Astro prefixes the `base` automatically).
 
 - [ ] **Step 7: Build and preview locally**
 
@@ -1471,8 +1561,8 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-24-documentation-poli
 
 Two execution options:
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration. Suited to this plan because most tasks are independent within a phase and have clear deliverables.
+**1. Inline Execution (recommended for this plan)** — Tasks executed in the current session using `superpowers:executing-plans`, with a mandatory checkpoint at the end of each phase (review the merged PR before opening the next phase's branch). Recommended because ~12 of the 33 tasks involve maintainer credentials (PyPI, GitHub admin), subjective judgment (logo, blog-post voice), or interactive work (demo recording) — subagents can prep mechanical sub-tasks but the plan's rhythm is human-led.
 
-**2. Inline Execution** — Execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.
+**2. Subagent-Driven** — Fresh subagent per task with two-stage review via `superpowers:subagent-driven-development`. Fastest mechanical throughput, but the maintainer still holds the design and credential tasks, so the gain over inline execution is small for this plan.
 
 Which approach?
