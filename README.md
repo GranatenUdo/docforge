@@ -72,14 +72,7 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ### Architecture
 
-```
-Confluence pages ──┐
-                   ├──→ docforge ingest ──→ PostgreSQL + pgvector
-Git repo docs ─────┘                              │
-                                    docforge serve ←┘
-                                          │
-                                    MCP Server ──→ AI coding assistants
-```
+![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
 
 ## Commands
 
