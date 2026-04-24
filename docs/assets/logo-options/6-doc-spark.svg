@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Option 6: document with spark">
+  <rect width="128" height="128" rx="20" fill="#1a1a1a"/>
+  <!-- document body with folded corner -->
+  <path d="M 36 32 L 80 32 L 96 48 L 96 104 L 36 104 Z" fill="#fafaf7"/>
+  <!-- folded corner triangle (darker) -->
+  <path d="M 80 32 L 80 48 L 96 48 Z" fill="#737373"/>
+  <!-- text stripes on document -->
+  <g fill="#1a1a1a">
+    <rect x="46" y="60" width="40" height="4"/>
+    <rect x="46" y="72" width="40" height="4"/>
+    <rect x="46" y="84" width="28" height="4"/>
+  </g>
+  <!-- amber flame/spark at top -->
+  <path d="M 24 54 Q 30 40 26 28 Q 36 36 32 52 Q 28 50 24 54 Z" fill="#d97706"/>
+</svg>
