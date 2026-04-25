@@ -19,10 +19,10 @@ dependencies = [
     "sentence-transformers>=5.0,<6.0",
     "pgvector>=0.3,<1.0",
     "pyyaml>=6.0,<7.0",
-    "fastmcp>=2.0,<3.0",
+    "fastmcp>=3.0,<4.0",
     "fastapi>=0.115,<1.0",
     "uvicorn>=0.34,<1.0",
-    "numpy>=1.26,<3.0",
+    "numpy>=1.26,<3.0",   # covers 1.x and 2.x; both tested
 ]
 
 [project.urls]
@@ -37,8 +37,8 @@ docforge = "docforge.cli:app"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0,<9.0",
-    "pytest-asyncio>=0.24,<1.0",
+    "pytest>=9.0,<10.0",
+    "pytest-asyncio>=1.0,<2.0",
     "pytest-cov>=7.0,<8.0",
     "ruff>=0.8,<1.0",
     "testcontainers[postgres]>=4.0,<5.0",
