@@ -57,26 +57,65 @@ For the full trust model, accepted risks, and assumptions docforge makes about i
 ## Quick Start
 ```
 
-- [ ] **Step 2: Verify the link target exists**
+- [ ] **Step 2: Apply the microsite edit**
+
+`microsite/src/content/docs/index.mdx` has its own copy of the "When docforge
+is the wrong choice" section (lines 46–54). External adopters who reach the
+microsite first would see inconsistent docs without this update. The
+microsite has no local copy of the threat model, so the link target is the
+GitHub URL.
+
+In `microsite/src/content/docs/index.mdx`, locate the last bullet of the
+section:
+
+```markdown
+- Near-real-time updates → ingest is batch; no webhook sync.
+```
+
+Replace it with:
+
+```markdown
+- Near-real-time updates → ingest is batch; no webhook sync.
+
+For the full trust model, accepted risks, and assumptions docforge makes about its operating environment, see [the threat model](https://github.com/GranatenUdo/docforge/blob/master/docs/threat-model.md).
+```
+
+- [ ] **Step 3: Verify both link targets resolve**
 
 Run: `ls docs/threat-model.md`
 Expected: file is listed (no "No such file" error).
 
-- [ ] **Step 3: Verify the README still renders**
+The microsite uses the GitHub blob URL pointing at the same file you just
+verified locally — no separate check needed unless you renamed the path.
 
-Run: `python -c "import pathlib; t = pathlib.Path('README.md').read_text(encoding='utf-8'); assert 'docs/threat-model.md' in t; print('OK')"`
-Expected: prints `OK`.
+- [ ] **Step 4: Verify both files still render**
 
-- [ ] **Step 4: Commit**
+Run:
 
 ```bash
-git add README.md
+python -c "
+import pathlib
+readme = pathlib.Path('README.md').read_text(encoding='utf-8')
+mdx = pathlib.Path('microsite/src/content/docs/index.mdx').read_text(encoding='utf-8')
+assert 'docs/threat-model.md' in readme, 'README missing threat-model link'
+assert 'docs/threat-model.md' in mdx, 'microsite missing threat-model link'
+print('OK')
+"
+```
+
+Expected: prints `OK`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add README.md microsite/src/content/docs/index.mdx
 git commit -m "$(cat <<'EOF'
-docs: link threat model from README "wrong choice" section
+docs: link threat model from "wrong choice" sections in README and microsite
 
 External adopters comparing docforge against alternatives benefit from
 the threat model's explicit trust assumptions. Surface it from the
-competitive section, not just docs/.
+competitive section in both the README (local link) and the microsite
+homepage (GitHub link, since the microsite has no local copy).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -283,13 +322,14 @@ class):
 
 Run: `python -m pytest tests/unit/test_embedder.py::TestEmbedderInit -v --tb=short 2>&1 | tail -30`
 
-Expected: the four new tests fail because `Embedder` does not yet accept
-`expected_dimensions`. The pre-existing five tests still pass.
+Expected: three of the four new tests fail because `Embedder` does not yet
+accept `expected_dimensions`. The pre-existing nine tests in
+`tests/unit/test_embedder.py` still pass.
 
-The failure message should look like
-`TypeError: __init__() got an unexpected keyword argument 'expected_dimensions'`
-or — for `test_no_check_when_expected_dim_omitted` — pass already (since it
-doesn't pass the new arg). That single test passing on red is fine.
+The failure message looks like
+`TypeError: __init__() got an unexpected keyword argument 'expected_dimensions'`.
+The fourth new test (`test_no_check_when_expected_dim_omitted`) passes
+already since it doesn't pass the new arg — that's expected and fine.
 
 - [ ] **Step 3: Implement the guard in `embedder.py`**
 
@@ -357,8 +397,8 @@ Replace the current `Embedder.__init__` body
 
 Run: `python -m pytest tests/unit/test_embedder.py -v --tb=short 2>&1 | tail -30`
 
-Expected: every test in `tests/unit/test_embedder.py` passes (existing 9-ish
-+ the 4 new ones).
+Expected: 13 tests in `tests/unit/test_embedder.py` pass (9 pre-existing + 4
+new ones).
 
 - [ ] **Step 5: Update each caller to pass `expected_dimensions`**
 

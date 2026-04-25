@@ -58,10 +58,14 @@ Land first so the rest of the work has the right foundation.
 - **Embedder dimension guard** (Finding 8 partial). Assert that the loaded
   model's `get_sentence_embedding_dimension()` matches `self.dimensions` in
   `Embedder.__init__`. Raise `RuntimeError` with a clear message on mismatch.
-- **Capture pre-refactor eval baseline** (Finding 2 free pre-step). Run
-  `eval_search.py` against current production with the current ground-truth
-  set; commit the report alongside the ground-truth file. This becomes the
-  reference point Phase 5's regression gate compares against.
+- **Capture pre-refactor eval baseline** (Finding 2 free pre-step,
+  deployer-side). Run `eval_search.py` against current production with the
+  deployer-specific ground-truth set; save the report alongside the
+  ground-truth file in the deployer's own state (not the public repo). This
+  is a deployer-side reference for the maintainer's own use across the v0.3
+  refactor — it answers "did this change degrade retrieval against my
+  actual corpus." Phase 5's CI gate is a different artefact (a synthetic
+  in-repo fixture); see Phase 5.
 
 Risk: trivial. All four items can land in one PR.
 
@@ -139,10 +143,18 @@ flipping defaults.
 
 Builds on the cleaner architecture and the captured baseline.
 
-- **Eval-harness baseline gate** (Finding 2B). Snapshot the eval report into
+- **Eval-harness baseline gate** (Finding 2B). Ship a *synthetic*
+  ground-truth set (`eval/synthetic-ground-truth.yml`) with docforge — a
+  small fixture of fictional documents and paired natural-language queries
+  that exercises the chunker, embedder, and ranking SQL end-to-end. Run the
+  eval against this fixture in CI and snapshot the result into
   `eval/baseline.json` in the repo. `eval_search.py --check-baseline` exits
-  non-zero if recall@5 drops more than X% (X configurable, default 5%).
-  Wired as a scheduled GitHub Action — nightly, or post-deploy.
+  non-zero if recall@5 against the fixture drops more than X% (X
+  configurable, default 5%). Wired as a scheduled GitHub Action — nightly.
+  Distinct from Phase 1's deployer-side baseline: this gate catches *code*
+  regressions (algorithm, chunker, or ranking changes) against a known-good
+  fixture, while the Phase 1 reference catches *deployer-side* retrieval
+  drift against real content.
 - **`query_log` redaction implementation** (Finding 5 part 2). Pre-INSERT
   scrubbing in `log_query` using compiled regex patterns from the Phase-3
   policy doc. Retention default shortened to 60 days. Migration to update
