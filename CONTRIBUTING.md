@@ -21,7 +21,7 @@ For deeper architectural context, read `CLAUDE.md` at the repo root.
 
 Branch protection on `master` requires the two CI checks to pass before merge:
 
-- **`lint`** — `ruff check docforge tests` + `ruff format --check docforge tests`
+- **`lint`** — `ruff check src/docforge tests` + `ruff format --check src/docforge tests`
 - **`test`** — `pytest -m "not integration"` with a ≥60% coverage gate
 
 If you add a new Python file, running `pytest --cov` locally first avoids surprise CI failures.
