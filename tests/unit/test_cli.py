@@ -64,7 +64,18 @@ class TestSearchCommand:
         monkeypatch.setattr("docforge.cli._search", fake)
         result = runner.invoke(
             app,
-            ["search", "q", "--user", "tobias", "--team", "platform", "--area", "cloud", "--limit", "3"],
+            [
+                "search",
+                "q",
+                "--user",
+                "tobias",
+                "--team",
+                "platform",
+                "--area",
+                "cloud",
+                "--limit",
+                "3",
+            ],
         )
         assert result.exit_code == 0
         assert captured == {
