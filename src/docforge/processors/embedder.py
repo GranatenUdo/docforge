@@ -13,6 +13,10 @@ class Embedder:
     Loads the model once at initialization and reuses it for all calls.
     Default model is EmbeddingGemma-300M (768 dimensions).
     Falls back to all-MiniLM-L6-v2 (384 dimensions) if the primary model fails to load.
+
+    Raises RuntimeError at init time if expected_dimensions is provided and
+    the loaded model (primary or fallback) reports a different dimension.
+    Pass expected_dimensions=settings.embedding_dimensions to enable the guard.
     """
 
     def __init__(

@@ -126,6 +126,10 @@ class TestEmbedderInit:
             with pytest.raises(RuntimeError, match="dimension mismatch"):
                 Embedder("primary/broken", expected_dimensions=768)
 
+            # Confirm both primary and fallback were attempted (and the
+            # guard fired only after the fallback loaded successfully).
+            assert call_count["n"] == 2
+
 
 class TestEmbedderMethods:
     @pytest.fixture
