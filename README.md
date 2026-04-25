@@ -45,6 +45,8 @@ docforge is the narrow, focused option in this landscape: minimal footprint, MCP
 - You need near-real-time updates → ingest is batch; no webhook-driven continuous sync yet.
 - You need multilingual search evaluated → EmbeddingGemma is multilingual, but docforge has no eval coverage on non-English corpora yet.
 
+For the full trust model, accepted risks, and assumptions docforge makes about its operating environment, see [`docs/threat-model.md`](docs/threat-model.md).
+
 ## Quick Start
 
 ```bash
