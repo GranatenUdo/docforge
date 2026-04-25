@@ -51,6 +51,7 @@ entra = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["docforge*"]
 
 [tool.setuptools.package-data]
@@ -69,7 +70,7 @@ testpaths = ["tests"]
 markers = [
     "integration: requires Docker (pgvector container)",
 ]
-addopts = "--cov=docforge"
+addopts = "--cov=src/docforge"
 
 [tool.coverage.report]
 fail_under = 60
