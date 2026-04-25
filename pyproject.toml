@@ -51,6 +51,7 @@ entra = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["docforge*"]
 
 [tool.setuptools.package-data]
