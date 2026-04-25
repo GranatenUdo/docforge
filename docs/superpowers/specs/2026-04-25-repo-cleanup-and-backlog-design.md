@@ -70,8 +70,9 @@ can track them as work-in-progress, not just future items.
    - **Area** (single-select): `maintenance`, `feature`, `launch`, `infra`
 3. Add 12 draft items via `gh project item-create` — see *Initial board
    contents* below.
-4. Set Size + Area on each item via `gh api graphql` (the CLI's
-   `field-set` works for built-in fields; custom fields need GraphQL).
+4. Set Size + Area on each item via `gh project item-edit
+   --field-id <id> --single-select-option-id <id>`. (Confirmed in
+   review — custom field assignment does NOT require GraphQL.)
 5. Move the three cleanup items to **In Progress**; everything else
    stays in **Backlog** (default Status column).
 
@@ -134,8 +135,12 @@ The single non-historical reference to update:
   pointing at `docs/superpowers/specs/2026-04-22-operational-readiness-design.md`.
   Change to `.superpowers/specs/...`.
 
-Verify with `git grep 'docs/superpowers'` — the only remaining matches
-should be inside files within the moved directory itself.
+Verify with `git grep 'docs/superpowers'`. Expected:
+- **No matches outside `.superpowers/`.** If any exist, they're current
+  references that need updating.
+- **Matches inside `.superpowers/`** are historical (plan/spec files
+  cross-referencing each other from when the directory was at
+  `docs/superpowers/`) and are intentionally left as-is.
 
 **Note:** `.foo/` directories (other than `.github/`) are NOT hidden by
 GitHub's web UI; the dot prefix is a convention signaling "internal,"
@@ -144,14 +149,28 @@ ignore them.
 
 **1.5 — Trim README FAQ to a pointer**
 
-Replace the existing `## FAQ` section in `README.md` with three high-frequency
-items inline + a "see microsite FAQ for more" pointer at the bottom. The
-microsite's `faq.md` remains canonical for the full list.
+Replace the existing `## FAQ` section in `README.md` with these three
+install-time items kept inline (highest hit-rate for new users):
+
+1. `HF_TOKEN required` / model download fails
+2. First ingest / first container start is very slow
+3. Cannot connect to PostgreSQL
+
+Add a "see [microsite FAQ](https://GranatenUdo.github.io/docforge/faq/)
+for more" pointer at the bottom. The two items moved to microsite-only:
+
+- `No results found` after ingest
+- `Ingest skipped everything`
+
+The microsite's `faq.md` remains canonical for the full list (currently
+8 items including the additions made during v0.2.0).
 
 **1.6 — CHANGELOG `[Unreleased]` entry**
 
-Single entry summarising 1.1–1.5 + planned PR B + PR C content
-(forward-referencing).
+Append entries for the changes shipped in PR A (1.1 through 1.5). PR B
+and PR C will append their own entries when they merge. v0.2.1 release
+(Phase 4) gathers everything in `[Unreleased]` and promotes it to
+`## [0.2.1] - <date>`. No forward-referencing across PRs.
 
 ### Phase 2 — PR B: asset deduplication (`chore/asset-dedup`)
 
@@ -226,7 +245,12 @@ configuration and references.
 
 **3.1 — `git mv docforge/ src/docforge/`**
 
-History preserved via Git's rename detection.
+History preserved via Git's rename detection. **Cosmetic note:**
+GitHub's web UI does not use `git log --follow` by default, so the
+"History" view of a moved file on github.com may appear to start at
+the rename commit. Locally, `git log --follow src/docforge/cli.py`
+shows the full history. This is a known GitHub UI limitation, not a
+loss of information.
 
 **3.2 — `pyproject.toml`**
 
@@ -284,14 +308,20 @@ Before pushing the branch:
 
 ```bash
 pip install -e ".[dev,entra]"
-pytest -m "not integration"
+pytest -m "not integration"             # confirms test discovery + imports work after move
 ruff check src/docforge tests
 ruff format --check src/docforge tests
-python -m build && python -m zipfile -l dist/*.whl | head -20
-docker build -t docforge:test .
+python -m build && python -m zipfile -l dist/*.whl | head -20  # wheel layout includes docforge/
+docker build -t docforge:test .         # confirms Dockerfile COPY path is right
 ```
 
-All five must succeed.
+All five must succeed. Specifically verify:
+
+- `pytest` reports the same test count as before the migration (no tests
+  silently un-discovered).
+- The built wheel's `RECORD` lists `docforge/cli.py`, `docforge/templates/...`,
+  `docforge/sql/...` (NOT `src/docforge/...` — installed-package layout
+  is unchanged from the user's perspective).
 
 ### Phase 4 — v0.2.1 release
 
