@@ -32,7 +32,7 @@ async def test_end_to_end_ingest_and_search(tmp_path, pg_url, fake_embedder):
         f'    repo_path: "{repo.as_posix()}"\n'
         '    include_patterns: ["README.md", "CLAUDE.md"]\n'
         '    title: "TestRepo"\n'
-        "    tags: [ccl, cloud]\n"
+        "    tags: [platform, cloud]\n"
     )
 
     settings = Settings(sources_file=str(sources_file), database_url=pg_url)
@@ -50,7 +50,7 @@ async def test_end_to_end_ingest_and_search(tmp_path, pg_url, fake_embedder):
 
         tags_rows = await conn.fetch("SELECT tags FROM sources")
         for row in tags_rows:
-            assert row["tags"] == ["ccl", "cloud"]
+            assert row["tags"] == ["platform", "cloud"]
 
         query_vec = np.zeros(768, dtype=np.float32)
         query_vec[767] = 0.001

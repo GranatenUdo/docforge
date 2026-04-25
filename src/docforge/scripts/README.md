@@ -11,7 +11,7 @@ ground-truth set. Reports recall@1, recall@k, and mean reciprocal rank.
 
 ```bash
 python -m docforge.scripts.eval_search \
-  --api-url https://docforge-search-api.ashyhill-c79f3b95.westeurope.azurecontainerapps.io \
+  --api-url https://your-docforge-deployment.example.azurecontainerapps.io \
   --ground-truth path/to/ground_truth.yml \
   --user your.name --team your-team --area your-area \
   --k 5
@@ -22,7 +22,7 @@ python -m docforge.scripts.eval_search \
 If the target API has `auth.mode: entra` enabled, pass `--audience`:
 
 ```bash
-az login --tenant <DocuWare-tenant-id>
+az login --tenant <your-tenant-id>
 python -m docforge.scripts.eval_search \
   --api-url https://... \
   --ground-truth .../ground_truth.yml \
@@ -44,7 +44,7 @@ queries:
     expected_title_contains: "HTTP error handling guidelines"
 ```
 
-See `knowledge-hub/rag/eval/ground_truth.yml` for the DocuWare-specific set.
+See your team's own ground-truth YAML for the deployment-specific set.
 
 ### Interpreting results
 

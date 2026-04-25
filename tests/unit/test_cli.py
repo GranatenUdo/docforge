@@ -64,13 +64,13 @@ class TestSearchCommand:
         monkeypatch.setattr("docforge.cli._search", fake)
         result = runner.invoke(
             app,
-            ["search", "q", "--user", "tobias", "--team", "ccl", "--area", "cloud", "--limit", "3"],
+            ["search", "q", "--user", "tobias", "--team", "platform", "--area", "cloud", "--limit", "3"],
         )
         assert result.exit_code == 0
         assert captured == {
             "query": "q",
             "user": "tobias",
-            "team": "ccl",
+            "team": "platform",
             "area": "cloud",
             "limit": 3,
         }
@@ -111,11 +111,11 @@ class TestSearchCommand:
         monkeypatch.setattr("docforge.cli._search", fake)
         monkeypatch.chdir(tmp_path)
         (tmp_path / "docforge.yml").write_text(
-            "default_user_name: tobias.default\ndefault_team_name: ccl.default\n"
+            "default_user_name: tobias.default\ndefault_team_name: platform.default\n"
         )
         result = runner.invoke(app, ["search", "q"])
         assert result.exit_code == 0
-        assert captured == {"user": "tobias.default", "team": "ccl.default"}
+        assert captured == {"user": "tobias.default", "team": "platform.default"}
 
 
 class TestStatusCommand:

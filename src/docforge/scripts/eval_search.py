@@ -4,7 +4,7 @@ Usage:
     python -m docforge.scripts.eval_search \\
       --api-url https://<fqdn> \\
       --ground-truth rag/eval/ground_truth.yml \\
-      --user tobias.ens --team ccl --area cloud \\
+      --user tobias.ens --team platform --area cloud \\
       --k 5
 
 Prints per-query detail + summary (recall@1, recall@k, MRR) to stdout. Exits 0

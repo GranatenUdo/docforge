@@ -60,7 +60,7 @@ Honesty up front:
 - **No chunk overlap.** Chunks split cleanly at section / paragraph boundaries. An answer that spans a boundary can be missed. Section titles are prepended as context to partially compensate.
 - **No per-source ACLs.** Acknowledged above; real gap for any use case where authenticated users shouldn't all see everything.
 - **Retrieval quality eval is drift-detection, not a threshold.** `docforge/scripts/eval_search.py` measures recall@k and MRR against a ground-truth set you maintain. Run it after `sources.yml` changes or embedding updates and compare to baseline; there's no "good enough" number.
-- **v0.2.0 has one production deployment** (DocuWare CCL). It's been stable for weeks of daily use, but one site is one site.
+- **v0.2.0 has one production deployment** at one large internal site. It's been stable for weeks of daily use, but one site is one site.
 
 ## Try it in five minutes
 

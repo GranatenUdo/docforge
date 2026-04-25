@@ -78,7 +78,7 @@ async def test_search_documentation_formats_results(patch_mcp_deps):
             "section_title": "Platform",
             "source_title": "Team Responsibilities",
             "source_url": "https://wiki/page/1",
-            "source_tags": ["ccl", "cloud"],
+            "source_tags": ["platform", "cloud"],
             "similarity": 0.92,
         },
     ]
@@ -89,14 +89,14 @@ async def test_search_documentation_formats_results(patch_mcp_deps):
     result = await search_documentation(
         "who owns orgs",
         user_name="tobias.ens",
-        team_name="ccl",
+        team_name="platform",
         area_name="cloud",
         limit=5,
     )
 
     assert "Platform team owns orgs." in result
     assert "0.92" in result
-    assert "Tags: ccl, cloud" in result
+    assert "Tags: platform, cloud" in result
     fake_embedder.embed_query.assert_called_once_with("who owns orgs")
     # query_log insert fired
     assert any("INSERT INTO query_log" in q for q, _ in pool.executes)

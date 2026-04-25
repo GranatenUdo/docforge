@@ -44,7 +44,7 @@ async def test_log_query_inserts_row():
     await log_query(
         pool=pool,
         user_name="tobias.ens",
-        team_name="ccl",
+        team_name="platform",
         area_name="cloud",
         query="retry policy",
         result_count=3,
@@ -52,7 +52,7 @@ async def test_log_query_inserts_row():
     assert len(conn.executed) == 1
     query, args = conn.executed[0]
     assert "INSERT INTO query_log" in query
-    assert args == ("tobias.ens", "ccl", "cloud", "retry policy", 3, None, None)
+    assert args == ("tobias.ens", "platform", "cloud", "retry policy", 3, None, None)
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_log_query_accepts_user_oid():
     await log_query(
         pool=pool,
         user_name="tobias.ens",
-        team_name="ccl",
+        team_name="platform",
         area_name="cloud",
         query="q",
         result_count=3,
@@ -127,7 +127,7 @@ async def test_log_query_accepts_request_ms():
     await log_query(
         pool=pool,
         user_name="tobias.ens",
-        team_name="ccl",
+        team_name="platform",
         area_name="cloud",
         query="q",
         result_count=3,

@@ -1,6 +1,6 @@
 # Authoring docs for a docforge-indexed repo
 
-This guideline describes how to write `README.md`, `CLAUDE.md`, and `docs/` in a repository that is indexed by docforge. It targets generic docforge adopters; DocuWare-specific conventions live in `knowledge-hub/rag/docs/authoring-conventions.md`.
+This guideline describes how to write `README.md`, `CLAUDE.md`, and `docs/` in a repository that is indexed by docforge. It targets generic docforge adopters; deployment-specific conventions belong in your team's own authoring docs.
 
 ## Why this matters
 
@@ -28,7 +28,7 @@ The README is ~25 lines: title, one-paragraph intro, a pointer to `docs/00-index
 
 Onboarding-friendly: a new engineer reads the numbered sequence in order. The README is deliberately short because it's not the content — it's the pointer.
 
-Example in CCL: `cloudstatus`.
+Example: `regionwatch`.
 
 ### Pattern B — medium README + specialized `docs/`
 
@@ -36,7 +36,7 @@ The README is ~80-120 lines: title, "System at a glance" with a component bullet
 
 The README itself is enough to understand the system; `docs/` is for going deeper on one concern at a time.
 
-Example in CCL: `Global.FeatureManagement` (on `fix/cohort-removal-propagation` branch at time of writing).
+Example: a multi-component product repo with specialized `docs/` per concern.
 
 ### When to pick which
 
@@ -110,7 +110,7 @@ Good:
 
 ### 3. Name the domain
 
-Use the business-specific terms colleagues actually search with. In DocuWare context: *organization*, *shard*, *data center*, *SmartUpdate*, *CCL*, *trial*. Don't write around them in generic .NET language.
+Use the business-specific terms colleagues actually search with — your tenant model, region naming, deployment events, internal feature names, the words that actually appear in your team's PR titles and Slack threads. Don't write around them in generic .NET language.
 
 ### 4. No boilerplate
 
@@ -122,19 +122,18 @@ Don't link to dead VPN instructions, deleted Confluence pages, or retired auth s
 
 ## Annotated exemplar
 
-Excerpts from `cloudstatus` (merged to main, 2026-04-20). Each excerpt is paired with notes explaining why the pattern works for retrieval.
+Excerpts from `regionwatch` (merged to main, 2026-04-20). Each excerpt is paired with notes explaining why the pattern works for retrieval.
 
 ### README excerpt (Pattern A — short)
 
-Full file: `cloudstatusrepos/cloudstatus/readme.md` (22 lines total).
+Full file: `regionwatchrepos/regionwatch/readme.md` (22 lines total).
 
 ````markdown
 [![Build status](…)](…)
 
-Cloud Status
+Region Watch
 =======================
-"Cloud Status" is a collection of Services around the DW-Cloud.
-Hosted on: https://dwcr.visualstudio.com/CloudStatus
+"Region Watch" is a collection of Services around the internal cloud.
 
 Documentation
 --------------------
@@ -144,7 +143,7 @@ For comprehensive system documentation, architecture diagrams, and operational g
 Included Solutions
 --------------------
 
-**CloudStatusWeb.sln** — Web services (CloudStatusCore dashboard + CloudAnalyticsDataServiceCore OData API)
+**RegionWatchWeb.sln** — Web services (RegionWatchCore dashboard + RegionAnalyticsDataServiceCore OData API)
 
 **DataCollectors.sln** — 6 background data collection tasks deployed as Docker containers per shard
 
@@ -154,28 +153,28 @@ See [docs/](docs/00-index.md) for architecture, data flows, and detailed documen
 Notes:
 
 - The README is 22 lines. All depth is delegated to `docs/`. This is Pattern A.
-- **"Included Solutions"** uses bolded solution names + a one-line description. This chunks well — a query for "CloudStatusWeb" retrieves that line plus adjacent context.
+- **"Included Solutions"** uses bolded solution names + a one-line description. This chunks well — a query for "RegionWatchWeb" retrieves that line plus adjacent context.
 - No TODO placeholders, no `create-a-readme` Microsoft inspirational links. The stub has been fully replaced.
 - **Missing from this excerpt** (and arguably should appear somewhere): explicit scope statement, operations summary. Both exist in `docs/` — so the repo-as-whole covers them.
 
-### CLAUDE.md excerpt (cloudstatus/CLAUDE.md, 187 lines)
+### CLAUDE.md excerpt (regionwatch/CLAUDE.md, 187 lines)
 
 Key sections:
 
 ````markdown
 ## Project Overview
 
-Cloud Status is a collection of services for monitoring and managing DocuWare Cloud infrastructure. The system tracks shard status, organization metrics, performance data, and quota information across multiple data centers.
+Region Watch is a collection of services for monitoring and managing internal cloud infrastructure. The system tracks shard status, organization metrics, performance data, and quota information across multiple data centers.
 
 **Production URLs:**
-- Main Status Page: https://status.docuware.cloud/
-- Preview/Testing: https://previewstatus.docuware.cloud/
+- Main Status Page: https://status.example.internal/
+- Preview/Testing: https://previewstatus.example.internal/
 
 ## Repository Structure
 
-### CloudStatusWeb.sln
+### RegionWatchWeb.sln
 …
-- **CloudStatusCore**: ASP.NET Core web application providing status dashboards and APIs
+- **RegionWatchCore**: ASP.NET Core web application providing status dashboards and APIs
 …
 
 ## Build and Development Commands
@@ -187,14 +186,14 @@ dotnet restore Core/**/*.csproj --configfile nuget.config
 
 ### Build
 ```bash
-dotnet build Core/CloudStatusWeb.sln --configuration Release
+dotnet build Core/RegionWatchWeb.sln --configuration Release
 ```
 
 ## Architecture Notes
 
 ### Authentication & Authorization
-CloudStatusCore uses a multi-scheme authentication approach:
-- **OpenID Connect** for DocuWare employee authentication via Azure AD
+RegionWatchCore uses a multi-scheme authentication approach:
+- **OpenID Connect** for employee authentication via Azure AD
 - **JWT Bearer** tokens for API access
 …
 
@@ -206,22 +205,22 @@ The ScheduledMaintenance container orchestrates multiple data collectors:
 
 Notes:
 
-- **Exact command invocations** in "Build and Development Commands" — not "use dotnet to build" prose. A colleague asking "how to build cloudstatus" retrieves the exact command.
-- **Architecture Notes as H3 bullet-lists** — "Authentication & Authorization", "Data Collection Architecture", "Shared Model Library", etc. Each H3 is a self-contained chunk. Queries for "cloudstatus auth" hit the auth chunk without dragging in the whole Architecture section.
+- **Exact command invocations** in "Build and Development Commands" — not "use dotnet to build" prose. A colleague asking "how to build regionwatch" retrieves the exact command.
+- **Architecture Notes as H3 bullet-lists** — "Authentication & Authorization", "Data Collection Architecture", "Shared Model Library", etc. Each H3 is a self-contained chunk. Queries for "regionwatch auth" hit the auth chunk without dragging in the whole Architecture section.
 - **Cross-repo integration** (`StorageStatisticsCollector writes to the SubscriptionPlan database`) is inline in the data collector description — indexable at query time when someone searches "SubscriptionPlan database writer".
 
-### docs/ structure excerpt (cloudstatus/docs/)
+### docs/ structure excerpt (regionwatch/docs/)
 
 File tree:
 
 ```
-cloudstatus/docs/
+regionwatch/docs/
 ├── 00-index.md             # landing page with document table
 ├── 01-overview.md          # business purpose, consumers, high-level diagram
 ├── 02-getting-started.md   # prerequisites, setup, build, run, test
 ├── 03-architecture.md      # project reference graph, DI, dependencies
 ├── 04-data-flow.md         # end-to-end ASCII diagrams for each pipeline
-├── 05-cloudstatuscore.md   # the web app
+├── 05-regionwatchcore.md   # the web app
 ├── 06-analytics-service.md # the OData API
 ├── 07-data-collectors.md   # ScheduledMaintenance + 6 collectors
 ├── 08-data-model.md        # database tables, stored procedures, views
@@ -229,7 +228,7 @@ cloudstatus/docs/
 ├── A1-security-and-debt.md # appendix: security findings
 ├── A2-authentication.md    # appendix: auth deep-dive
 └── diagrams/
-    └── cloudstatus-technical.drawio   # editable source, not a rendered image
+    └── regionwatch-technical.drawio   # editable source, not a rendered image
 ```
 
 From `00-index.md`:
@@ -245,7 +244,7 @@ From `00-index.md`:
 
 ## Maintenance
 
-When making significant changes to CloudStatus, update the relevant documentation:
+When making significant changes to RegionWatch, update the relevant documentation:
 
 1. **Relevant numbered doc** — new data flows, changed architecture…
 2. **Architecture diagrams** (`diagrams/`) — new external dependencies…
@@ -258,7 +257,7 @@ Notes:
 - **Numbered sequence** (`00`, `01`, …, `09`) signals reading order. New engineers go top-to-bottom.
 - **Appendices** (`A1`, `A2`) separate reference material that isn't part of the main onboarding flow.
 - The **"Maintenance" section is itself indexable** — colleagues querying "which doc to update when I add a new data collector" hit this section.
-- `diagrams/cloudstatus-technical.drawio` keeps the **editable source** rather than exported images. Future edits don't require re-creating the diagram.
+- `diagrams/regionwatch-technical.drawio` keeps the **editable source** rather than exported images. Future edits don't require re-creating the diagram.
 
 ### Pattern B exemplar (planned)
 

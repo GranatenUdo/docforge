@@ -32,7 +32,7 @@ SQL migrations live under `src/docforge/sql/migrations/` and are numbered sequen
 
 ### Schema changes to `query_log`
 
-The `query_log` table is governed by `knowledge-hub/rag/docs/log-privacy.md`. Any change to its schema (new column, retention semantics, identity-handling) requires updating that doc in the same PR (or a follow-up PR merged before the schema change reaches production).
+The `query_log` table is governed by your deployment's log-privacy policy. Any change to its schema (new column, retention semantics, identity-handling) requires updating that policy in the same PR (or a follow-up PR merged before the schema change reaches production).
 
 ## Branch flow
 
