@@ -25,6 +25,13 @@ dependencies = [
     "numpy>=1.26",
 ]
 
+[project.urls]
+Homepage = "https://GranatenUdo.github.io/docforge/"
+Source = "https://github.com/GranatenUdo/docforge"
+Issues = "https://github.com/GranatenUdo/docforge/issues"
+Changelog = "https://github.com/GranatenUdo/docforge/blob/master/CHANGELOG.md"
+Documentation = "https://GranatenUdo.github.io/docforge/"
+
 [project.scripts]
 docforge = "docforge.cli:app"
 
