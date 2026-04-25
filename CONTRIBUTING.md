@@ -28,7 +28,7 @@ If you add a new Python file, running `pytest --cov` locally first avoids surpri
 
 ### Migration files
 
-SQL migrations live under `docforge/sql/migrations/` and are numbered sequentially: `NNN_description.sql`. The next free number is easy to see with `ls docforge/sql/migrations/ | tail -1`. Migrations are applied automatically by `docforge init-db` on fresh installs; existing deployments need the migration applied manually (see runbook).
+SQL migrations live under `src/docforge/sql/migrations/` and are numbered sequentially: `NNN_description.sql`. The next free number is easy to see with `ls src/docforge/sql/migrations/ | tail -1`. Migrations are applied automatically by `docforge init-db` on fresh installs; existing deployments need the migration applied manually (see runbook).
 
 ### Schema changes to `query_log`
 
