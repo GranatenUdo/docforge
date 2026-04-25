@@ -6,6 +6,7 @@ on:
     paths:
       - 'microsite/**'
       - '.github/workflows/microsite.yml'
+      - 'docs/assets/**'
   workflow_dispatch:
 
 permissions:
