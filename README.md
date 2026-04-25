@@ -107,7 +107,7 @@ Contributions welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development 
 
 ## Evaluation & retrieval quality
 
-docforge ships with a retrieval-quality eval harness at [`docforge/scripts/eval_search.py`](docforge/scripts/eval_search.py). It measures recall@1, recall@k, and MRR against a ground-truth query set you maintain. The harness is designed for **drift detection** — run it after `sources.yml` changes, embedding-model updates, or ranking tweaks, and compare against your baseline. There is no absolute quality threshold; the metric magnitude depends on how closely your ground-truth queries match source titles. See [`docforge/scripts/README.md`](docforge/scripts/README.md) for details.
+docforge ships with a retrieval-quality eval harness at [`src/docforge/scripts/eval_search.py`](src/docforge/scripts/eval_search.py). It measures recall@1, recall@k, and MRR against a ground-truth query set you maintain. The harness is designed for **drift detection** — run it after `sources.yml` changes, embedding-model updates, or ranking tweaks, and compare against your baseline. There is no absolute quality threshold; the metric magnitude depends on how closely your ground-truth queries match source titles. See [`src/docforge/scripts/README.md`](src/docforge/scripts/README.md) for details.
 
 ## FAQ
 
