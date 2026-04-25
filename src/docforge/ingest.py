@@ -51,7 +51,11 @@ async def ingest_all(
     logger.info("Loaded %d sources from %s", len(sources), settings.sources_file)
 
     logger.info("Loading embedding model...")
-    embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
+    embedder = Embedder(
+        settings.embedding_model,
+        hf_token=settings.hf_token.get_secret_value(),
+        expected_dimensions=settings.embedding_dimensions,
+    )
 
     pool = await get_pool(settings.database_url)
     tokenizer_fn = embedder.get_tokenizer_fn()

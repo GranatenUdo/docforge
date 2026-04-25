@@ -15,7 +15,12 @@ class Embedder:
     Falls back to all-MiniLM-L6-v2 (384 dimensions) if the primary model fails to load.
     """
 
-    def __init__(self, model_name: str = "google/embeddinggemma-300m", hf_token: str = "") -> None:
+    def __init__(
+        self,
+        model_name: str = "google/embeddinggemma-300m",
+        hf_token: str = "",
+        expected_dimensions: int | None = None,
+    ) -> None:
         from sentence_transformers import SentenceTransformer
 
         # Use provided token, fall back to environment variable
@@ -51,6 +56,19 @@ class Embedder:
                     f"No embedding model available. "
                     f"Primary ({model_name}) and fallback ({fallback}) both failed."
                 )
+
+        # Dimension guard. When the caller supplies expected_dimensions (e.g.
+        # from settings.embedding_dimensions), verify the loaded model agrees.
+        # Catches the silent-mismatch case where the fallback model loads with a
+        # different dimensionality than the schema expects.
+        if expected_dimensions is not None and self.dimensions != expected_dimensions:
+            raise RuntimeError(
+                f"Embedding dimension mismatch: model {self.model_name!r} reports "
+                f"{self.dimensions}-d, but config requires {expected_dimensions}-d. "
+                f"Either change embedding_model in docforge.yml to a "
+                f"{expected_dimensions}-d model, or update embedding_dimensions "
+                f"and run a schema migration to vector({self.dimensions})."
+            )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts.

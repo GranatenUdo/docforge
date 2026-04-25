@@ -80,6 +80,52 @@ class TestEmbedderInit:
 
         mock_st.assert_called_once_with("open/model", token=None)
 
+    def test_raises_when_loaded_dim_does_not_match_expected(self):
+        """Guard fires when configured embedding_dimensions disagrees with model."""
+        fake = _fake_st_model(dim=384)
+        with patch("sentence_transformers.SentenceTransformer", return_value=fake):
+            from docforge.processors.embedder import Embedder
+
+            with pytest.raises(RuntimeError, match="dimension mismatch"):
+                Embedder("primary/model", hf_token="tok", expected_dimensions=768)
+
+    def test_loads_when_loaded_dim_matches_expected(self):
+        """No guard fire when expected dim matches model."""
+        fake = _fake_st_model(dim=768)
+        with patch("sentence_transformers.SentenceTransformer", return_value=fake):
+            from docforge.processors.embedder import Embedder
+
+            emb = Embedder("primary/model", hf_token="tok", expected_dimensions=768)
+            assert emb.dimensions == 768
+
+    def test_no_check_when_expected_dim_omitted(self):
+        """expected_dimensions defaults to None — guard skipped, backwards compat."""
+        fake = _fake_st_model(dim=384)
+        with patch("sentence_transformers.SentenceTransformer", return_value=fake):
+            from docforge.processors.embedder import Embedder
+
+            emb = Embedder("primary/model", hf_token="tok")
+            # Loads even though dim differs from EmbeddingGemma's 768 — no
+            # expected_dim passed, so the guard is dormant.
+            assert emb.dimensions == 384
+
+    def test_guard_fires_after_fallback_with_wrong_dim(self):
+        """Fallback model has dim 384; if config expects 768, guard fires."""
+        fake_fallback = _fake_st_model(dim=384)
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("primary exploded")
+            return fake_fallback
+
+        with patch("sentence_transformers.SentenceTransformer", side_effect=side_effect):
+            from docforge.processors.embedder import Embedder
+
+            with pytest.raises(RuntimeError, match="dimension mismatch"):
+                Embedder("primary/broken", expected_dimensions=768)
+
 
 class TestEmbedderMethods:
     @pytest.fixture
