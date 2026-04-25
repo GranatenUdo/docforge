@@ -55,4 +55,4 @@ The `query_log` table is governed by `knowledge-hub/rag/docs/log-privacy.md`. An
 
 ## Where to ask
 
-Open an issue at https://github.com/GranatenUdo/docforge/issues or email the maintainer (tobias.ens@docuware.com).
+Open an issue at https://github.com/GranatenUdo/docforge/issues or email the maintainer (tobias.ens@proton.me).

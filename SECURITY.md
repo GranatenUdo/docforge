@@ -2,7 +2,7 @@
 
 Please do **not** open a public GitHub issue for security concerns.
 
-Instead, email the maintainer: **tobias.ens@docuware.com**. Include:
+Instead, email the maintainer: **tobias.ens@proton.me**. Include:
 
 - A description of the issue and its impact.
 - Reproduction steps (minimal, please).
