@@ -15,6 +15,7 @@ public, items here can migrate to GitHub Issues.
 - **Upload social preview card** (maintenance) — GitHub UI: *Settings → Social preview*; upload `docs/assets/social-preview.png`.
 - **Spot-check Discussions categories** (maintenance) — `/discussions → ⋯ → Manage`. Confirm *Announcements / Q&A / Ideas / Show and tell* exist.
 - **Flip repo public** (launch) — When ready: `gh repo edit GranatenUdo/docforge --visibility public --accept-visibility-change-consequences`.
+- **Add wheel-RECORD invariant guard to `release.yml`** (maintenance) — Catch a future misconfigured src layout before it ships a broken wheel. One-liner shell step: assert `grep -c '^docforge/' >= 1` AND `grep -c '^src/docforge' == 0`.
 
 ## Medium
 
