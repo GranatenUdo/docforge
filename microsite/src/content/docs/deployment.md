@@ -48,4 +48,4 @@ Run `docforge ingest` from anywhere that can reach the database (a jump box, Git
 
 - **Cold-start window.** Container App with minReplicas=1 avoids cold starts in steady state, but post-deployment the first request pays a 15–30 s model-load cost. That's included in P95 as honest signal.
 - **Orphan pruning.** When you remove a source from `sources.yml`, run `docforge ingest --purge-orphans` (dry-run) and then `--confirm` to delete. No auto-purge.
-- **Backups.** Postgres Flexible Server Standard_B1ms gets 7-day PITR by default. Test the restore procedure annually — the [runbook](https://github.com/GranatenUdo/docforge/blob/master/docs/superpowers/specs/2026-04-22-operational-readiness-design.md) has the exact `az postgres flexible-server restore` incantation.
+- **Backups.** Postgres Flexible Server Standard_B1ms gets 7-day PITR by default. Test the restore procedure annually — the [runbook](https://github.com/GranatenUdo/docforge/blob/master/.superpowers/specs/2026-04-22-operational-readiness-design.md) has the exact `az postgres flexible-server restore` incantation.
