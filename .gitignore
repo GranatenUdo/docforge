@@ -36,3 +36,6 @@ htmlcov/
 
 # Model cache
 models/
+
+# Internal planning artefacts (phase plans, design specs, scratch)
+.superpowers/
