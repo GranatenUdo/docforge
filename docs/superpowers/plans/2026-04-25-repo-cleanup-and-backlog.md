@@ -209,7 +209,9 @@ No commit.
 
 **Files:** None.
 
-This task is verbose — 12 items × up to 3 field updates each. Group by Size+Area combination to minimise repetition.
+This task is verbose — 12 items × up to 3 field updates each. Mechanical work: copy-paste-edit 24+ `gh project item-edit` invocations using the IDs from Task 4.
+
+If you'd rather script it, a short bash loop reading from a hand-written `items.tsv` (cols: `item_id`, `size_option_id`, `area_option_id`, `status_option_id`) is straightforward — but for a one-time setup the inline copy-paste is fine.
 
 - [ ] **Step 1: Set Size and Area on the four cleanup items**
 
@@ -1054,21 +1056,33 @@ git commit -m "chore: pyproject packages.find where=['src']"
 **Files:**
 - Modify: `E:/docforge/Dockerfile`
 
-- [ ] **Step 1: Update COPY paths**
+**Why this is more than a path swap:** the current Dockerfile copies `pyproject.toml` first, runs `pip install ".[entra]"`, *then* copies `docforge/` source. This works today because (a) `pip install .` with no source present builds an empty package + installs the entra deps, and (b) at runtime, `WORKDIR=/app` happens to be on `sys.path`, so `import docforge` finds the source copied in the next step.
 
-Open `Dockerfile`. Find the line:
+With the src/ layout, the runtime import would be looking for `/app/docforge/` but the source lives at `/app/src/docforge/`. **The accidental sys.path trick stops working.** Fix: copy the source *before* the install so pip actually builds and installs the package into site-packages.
+
+- [ ] **Step 1: Replace the install + copy block**
+
+Open `Dockerfile`. Find this block (currently around lines 9–13):
 
 ```dockerfile
+COPY pyproject.toml .
+RUN pip install --no-cache-dir ".[entra]"
+
 COPY docforge/ docforge/
 ```
 
-Change to:
+Replace with:
 
 ```dockerfile
+COPY pyproject.toml README.md ./
 COPY src/ src/
+
+RUN pip install --no-cache-dir ".[entra]"
 ```
 
-The earlier `RUN pip install --no-cache-dir ".[entra]"` line is unchanged — pip reads pyproject.toml which now points at `src/`.
+`README.md` is added to the COPY because `pyproject.toml`'s `readme = "README.md"` declaration causes setuptools to read the file at build time. The current setup tolerates its absence (long-description warning, not an error); copying it keeps the build clean.
+
+The order change means a source edit invalidates the dependency-install layer cache — acceptable trade-off for correctness in a small project.
 
 - [ ] **Step 2: Verify image builds**
 
@@ -1229,19 +1243,15 @@ pip install -e ".[dev,entra]"
 
 Expected: succeeds. The egg-info directory is regenerated under the new layout.
 
-- [ ] **Step 2: Test count parity check**
+- [ ] **Step 2: Tests run cleanly**
 
 ```bash
-pytest -m "not integration" --collect-only 2>&1 | tail -5
+pytest -m "not integration" 2>&1 | tail -5
 ```
 
-Note the test count printed. Compare to the count from before the migration (run on master to baseline). They must match.
+Expected: exit code 0; the summary line shows N passed (N > 0). If pytest reports `collected 0 items`, imports are broken — investigate (most likely culprit: `pyproject.toml` `where=["src"]` not set correctly, or stale `egg-info` from a pre-migration install).
 
-```bash
-pytest -m "not integration"
-```
-
-Expected: same number of tests pass as before the migration.
+If you want a count baseline to compare against, run the same command on master before checkout: `git stash && git checkout master && pytest -m "not integration" --collect-only -q | tail -1` (capture the number), then return: `git checkout refactor/src-layout && git stash pop`.
 
 - [ ] **Step 3: Lint and format check**
 
@@ -1252,21 +1262,27 @@ make format-check
 
 Expected: both pass. (`make lint` is `ruff check src/docforge tests` per the Makefile written in PR A.)
 
-- [ ] **Step 4: Build wheel and inspect RECORD**
+- [ ] **Step 4: Build wheel and assert RECORD layout**
 
 ```bash
 make build
-python -m zipfile -l dist/*.whl | head -25
+python -m zipfile -l dist/*.whl | grep -E '^(docforge|src/docforge)'
 ```
 
-Expected (key lines):
+Expected:
 
-- `docforge/cli.py`
-- `docforge/api.py`
-- `docforge/templates/...`
-- `docforge/sql/...`
+- Lines starting with `docforge/...` (e.g. `docforge/cli.py`, `docforge/templates/docforge.yml`, `docforge/sql/schema.sql`).
+- **Zero lines** starting with `src/docforge/`.
 
-The wheel must contain `docforge/...` paths, **not** `src/docforge/...` — the src layout is build-time only. If the wheel has `src/docforge/`, the install would put `src/` on `sys.path` instead of the package; users would need `import src.docforge` which is wrong.
+If you see `src/docforge/...` in the wheel, the src layout is misconfigured — pyproject's `[tool.setuptools.packages.find]` is missing `where = ["src"]` (or `package-dir` is interfering). Users installing the wheel would get `import src.docforge` instead of `import docforge`, breaking everything.
+
+Quick assertion via shell:
+
+```bash
+python -m zipfile -l dist/*.whl | grep -c '^src/docforge'
+```
+
+Expected: `0`.
 
 - [ ] **Step 5: Docker build**
 
