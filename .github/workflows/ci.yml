@@ -24,8 +24,8 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
       - run: pip install -e ".[dev]"
-      - run: ruff check docforge tests
-      - run: ruff format --check docforge tests
+      - run: ruff check src/docforge tests
+      - run: ruff format --check src/docforge tests
 
   test:
     runs-on: ubuntu-latest
