@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_BATCH_SIZE = 256
+MAX_BATCH_SIZE = 256  # typical sentence-transformers per-call ceiling; chunk above this
 
 
 class Embedder:
