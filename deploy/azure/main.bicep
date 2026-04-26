@@ -96,6 +96,23 @@ param authAudience string = ''
 @description('Tags applied to every created resource. Useful for cost allocation or org policies that require specific tags.')
 param tags object = {}
 
+@description('Full image reference for the embedder Container App. Empty string defers to "hello-world" placeholder, update post-deploy.')
+param embedderImage string = ''
+
+@description('Min replicas for the embedder Container App. 0 = scale-to-zero (cheapest, eats cold start); 1 = always warm.')
+@minValue(0)
+@maxValue(10)
+param embedderMinReplicas int = 0
+
+@description('Max replicas for the embedder Container App.')
+@minValue(1)
+@maxValue(30)
+param embedderMaxReplicas int = 5
+
+@description('Bearer token shared between the search API and the embedder service. Generate via `openssl rand -hex 32` or similar; rotate by re-deploying with a new value.')
+@secure()
+param embedderToken string
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
@@ -136,6 +153,14 @@ resource secretConfluenceToken 'Microsoft.KeyVault/vaults/secrets@2024-04-01-pre
   name: 'confluence-api-token'
   properties: {
     value: confluenceApiToken
+  }
+}
+
+resource secretEmbedderToken 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
+  parent: keyVault
+  name: 'embedder-token'
+  properties: {
+    value: embedderToken
   }
 }
 
@@ -328,6 +353,11 @@ var realContainerSecrets = [
     keyVaultUrl: '${keyVault.properties.vaultUri}secrets/database-url'
     identity: 'system'
   }
+  {
+    name: 'embedder-token'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/embedder-token'
+    identity: 'system'
+  }
 ]
 
 var realContainerEnv = [
@@ -354,6 +384,14 @@ var realContainerEnv = [
   {
     name: 'AUTH__AUDIENCE'
     value: authAudience
+  }
+  {
+    name: 'EMBEDDER_URL'
+    value: 'https://${embedderApp.properties.configuration.ingress.fqdn}'
+  }
+  {
+    name: 'EMBEDDER_TOKEN'
+    secretRef: 'embedder-token'
   }
 ]
 
@@ -412,6 +450,102 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// ─── Embedder Container App ─────────────────────────────────────────────
+
+var embedderAppName = '${namePrefix}-embedder'
+var hasRealEmbedderImage = !empty(embedderImage)
+var defaultEmbedderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var effectiveEmbedderImage = hasRealEmbedderImage ? embedderImage : defaultEmbedderImage
+
+var embedderProbes = hasRealEmbedderImage ? [
+  {
+    type: 'Startup'
+    httpGet: { path: '/health', port: 8001 }
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  }
+  {
+    type: 'Liveness'
+    httpGet: { path: '/health', port: 8001 }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  }
+] : []
+
+var embedderRealSecrets = [
+  {
+    name: 'embedder-token'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/embedder-token'
+    identity: 'system'
+  }
+]
+
+var embedderRealEnv = [
+  {
+    name: 'EMBEDDER_TOKEN'
+    secretRef: 'embedder-token'
+  }
+]
+
+resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: embedderAppName
+  location: location
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerAppsEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: hasRealEmbedderImage ? 8001 : 80
+        allowInsecure: false
+        transport: 'http'
+      }
+      registries: hasRealEmbedderImage ? [
+        {
+          server: acr.properties.loginServer
+          identity: 'system'
+        }
+      ] : []
+      secrets: hasRealEmbedderImage ? embedderRealSecrets : []
+    }
+    template: {
+      containers: [
+        {
+          name: 'docforge-embedder'
+          image: effectiveEmbedderImage
+          resources: {
+            cpu: json('2.0')
+            memory: '4Gi'
+          }
+          env: hasRealEmbedderImage ? embedderRealEnv : []
+          probes: embedderProbes
+        }
+      ]
+      scale: {
+        minReplicas: embedderMinReplicas
+        maxReplicas: embedderMaxReplicas
+        rules: [
+          {
+            name: 'http-rule'
+            http: {
+              metadata: {
+                concurrentRequests: '5'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ─── Role assignments ───────────────────────────────────────────────────
 
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
@@ -437,6 +571,26 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+resource embedderKvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, embedderApp.id, keyVaultSecretsUserRoleId)
+  properties: {
+    principalId: embedderApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource embedderAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: acr
+  name: guid(acr.id, embedderApp.id, acrPullRoleId)
+  properties: {
+    principalId: embedderApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ─── Outputs ────────────────────────────────────────────────────────────
 
 output apiFqdn string = containerApp.properties.configuration.ingress.fqdn
@@ -446,3 +600,5 @@ output keyVaultName string = keyVault.name
 output databaseHost string = postgres.properties.fullyQualifiedDomainName
 output databaseName string = databaseName
 output containerAppName string = containerApp.name
+output embedderFqdn string = embedderApp.properties.configuration.ingress.fqdn
+output embedderAppName string = embedderApp.name
