@@ -54,4 +54,4 @@ Ship a ground-truth query set and run `python -m docforge.scripts.eval_search`. 
 
 - Bug reports and feature requests: [GitHub Issues](https://github.com/GranatenUdo/docforge/issues) (use the structured templates).
 - Open-ended questions, ideas, "show and tell": [GitHub Discussions](https://github.com/GranatenUdo/docforge/discussions).
-- Security: email `tobias.ens@docuware.com` per [`SECURITY.md`](https://github.com/GranatenUdo/docforge/blob/master/SECURITY.md).
+- Security: email `tobias.ens@proton.me` per [`SECURITY.md`](https://github.com/GranatenUdo/docforge/blob/master/SECURITY.md).

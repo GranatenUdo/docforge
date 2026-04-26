@@ -45,6 +45,8 @@ docforge is the narrow, focused option in this landscape: minimal footprint, MCP
 - You need near-real-time updates → ingest is batch; no webhook-driven continuous sync yet.
 - You need multilingual search evaluated → EmbeddingGemma is multilingual, but docforge has no eval coverage on non-English corpora yet.
 
+For the full trust model, accepted risks, and assumptions docforge makes about its operating environment, see [`docs/threat-model.md`](docs/threat-model.md).
+
 ## Quick Start
 
 ```bash
@@ -131,6 +133,16 @@ Check that the database is running: `docker compose up -d db`. Verify `DATABASE_
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## License compatibility
+
+docforge is MIT-licensed; the default embedding model,
+[EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m), is
+distributed under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms),
+which restrict harmful use and building products that compete with Gemma. Swap
+to a permissively-licensed alternative via `embedding_model` in `docforge.yml`
+if those constraints don't fit your use case (see
+[microsite FAQ — Can I use a different embedding model?](https://GranatenUdo.github.io/docforge/faq/#can-i-use-a-different-embedding-model)).
 
 ## Credits
 

@@ -130,7 +130,7 @@ async def test_ingest_git_source_inserts_chunks(tmp_path, monkeypatch, fake_embe
         f'    repo_path: "{repo.as_posix()}"\n'
         '    include_patterns: ["README.md"]\n'
         '    title: "RepoX"\n'
-        "    tags: [ccl]\n"
+        "    tags: [platform]\n"
     )
 
     conn = _Conn(existing_hash=None)
@@ -149,7 +149,7 @@ async def test_ingest_git_source_inserts_chunks(tmp_path, monkeypatch, fake_embe
     assert len(conn.inserted_sources) == 1
     assert len(conn.inserted_chunks) >= 1
     # Tags are the last positional arg to fetchval in the INSERT call
-    assert conn.inserted_sources[0][-1] == ["ccl"]
+    assert conn.inserted_sources[0][-1] == ["platform"]
 
 
 @pytest.mark.asyncio

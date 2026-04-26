@@ -217,7 +217,7 @@ async def _search(query: str, user_name: str, team_name: str, area_name: str | N
 
     settings = Settings()
     try:
-        embedder = Embedder(settings.embedding_model, hf_token=settings.hf_token.get_secret_value())
+        embedder = Embedder.from_settings(settings)
     except RuntimeError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

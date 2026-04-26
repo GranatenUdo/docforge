@@ -46,7 +46,7 @@ async def test_team_tagged_source_ranks_above_untagged_on_similar_similarity(pg_
     try:
         await register_vector(conn)
 
-        sid_tagged = await _insert_source(conn, "TaggedDoc", ["ccl"])
+        sid_tagged = await _insert_source(conn, "TaggedDoc", ["platform"])
         sid_untagged = await _insert_source(conn, "UntaggedDoc", [])
         same_vec = _vec(0.001)
         await _insert_chunk(conn, sid_tagged, "tagged chunk", same_vec)
@@ -68,7 +68,7 @@ async def test_team_tagged_source_ranks_above_untagged_on_similar_similarity(pg_
             """,
             query_vec,
             0.1,
-            ["ccl"],
+            ["platform"],
             0.05,
         )
         titles = [r["title"] for r in rows]
@@ -82,8 +82,8 @@ async def test_two_tag_overlap_outranks_one_tag_overlap(pg_url):
     conn = await asyncpg.connect(pg_url)
     try:
         await register_vector(conn)
-        sid_one = await _insert_source(conn, "OneTag", ["ccl"])
-        sid_two = await _insert_source(conn, "TwoTag", ["ccl", "cloud"])
+        sid_one = await _insert_source(conn, "OneTag", ["platform"])
+        sid_two = await _insert_source(conn, "TwoTag", ["platform", "cloud"])
         vec = _vec(0.001)
         await _insert_chunk(conn, sid_one, "one", vec)
         await _insert_chunk(conn, sid_two, "two", vec)
@@ -100,7 +100,7 @@ async def test_two_tag_overlap_outranks_one_tag_overlap(pg_url):
             """,
             vec,
             0.1,
-            ["ccl", "cloud"],
+            ["platform", "cloud"],
         )
         assert [r["title"] for r in rows] == ["TwoTag", "OneTag"]
     finally:

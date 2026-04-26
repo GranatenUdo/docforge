@@ -70,7 +70,7 @@ class TestTags:
             '    page_id: "1"\n'
             "    space_key: HEL\n"
             '    title: "Page"\n'
-            "    tags: [ccl, cloud]\n"
+            "    tags: [platform, cloud]\n"
             "  - type: git_repo\n"
             '    repo_path: "E:/repo"\n'
             "    include_patterns: [README.md]\n"
@@ -78,5 +78,5 @@ class TestTags:
             "    tags: [org]\n"
         )
         sources = load_sources(yml)
-        assert sources[0].tags == ["ccl", "cloud"]
+        assert sources[0].tags == ["platform", "cloud"]
         assert sources[1].tags == ["org"]

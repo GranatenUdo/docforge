@@ -100,7 +100,7 @@ class TestSearchEndpoint:
                 "section_title": "Platform",
                 "source_title": "Doc A",
                 "source_url": "https://wiki/a",
-                "source_tags": ["ccl", "cloud"],
+                "source_tags": ["platform", "cloud"],
                 "similarity": 0.95,
             }
         ]
@@ -125,7 +125,7 @@ class TestSearchEndpoint:
                     json={
                         "query": "q",
                         "user_name": "tobias.ens",
-                        "team_name": "ccl",
+                        "team_name": "platform",
                         "area_name": "cloud",
                         "limit": 5,
                     },
@@ -137,7 +137,7 @@ class TestSearchEndpoint:
         body = resp.json()
         assert body["count"] == 1
         assert body["results"][0]["text"] == "Platform owns orgs."
-        assert body["results"][0]["source_tags"] == ["ccl", "cloud"]
+        assert body["results"][0]["source_tags"] == ["platform", "cloud"]
         # query_log insert happened
         assert any("INSERT INTO query_log" in q for q, _ in pool.executes)
 
@@ -270,7 +270,7 @@ class TestRequestTimingInstrumentation:
                 json={
                     "query": "test",
                     "user_name": "tobias",
-                    "team_name": "ccl",
+                    "team_name": "platform",
                     "area_name": None,
                     "limit": 3,
                 },

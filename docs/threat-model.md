@@ -1,14 +1,14 @@
 # docforge threat model
 
-**Scope:** This document threat-models the docforge engine code and the reference Azure deployment described in `docforge/deploy/azure/main.bicep`. It does NOT cover consumer-specific Azure subscription governance or tenant-level policies — those are consumer concerns. For the DocuWare CCL deployment specifically, see the "DocuWare deployment context for threat modelling" section of `knowledge-hub/rag/docs/deployment.md`.
+**Scope:** This document threat-models the docforge engine code and the reference Azure deployment described in `docforge/deploy/azure/main.bicep`. It does NOT cover consumer-specific Azure subscription governance or tenant-level policies — those are consumer concerns.
 
-**Reader:** Someone evaluating docforge for adoption, or an engineer reviewing a live DocuWare deployment of docforge.
+**Reader:** Someone evaluating docforge for adoption, or an engineer reviewing a live deployment of docforge.
 
 ## Trust model
 
 - **Single-company, single-tenant.** No cross-tenant isolation; no customer data segregation. docforge is intended to index and serve a single operator organisation's internal engineering documentation.
 - **Indexed content is non-sensitive corporate documentation.** The `sources` and `chunks` tables hold Confluence pages and git-repo markdown that the operator's organisation has already classified as appropriate for internal engineering sharing. No PII, no customer data, no secrets.
-- **`query_log` is the only semi-sensitive datum.** Per-user query history. Governed by the consumer's log-privacy policy (for DocuWare CCL: `knowledge-hub/rag/docs/log-privacy.md`).
+- **`query_log` is the only semi-sensitive datum.** Per-user query history. Governed by the consumer's log-privacy policy.
 - **Authenticated users are trusted.** An engineer with a valid Entra token is trusted to query any indexed source. Auth is access control; there is no authorisation layer beyond it — no per-source ACLs.
 - **The operator is trusted.** Whoever has Azure subscription admin rights is trusted not to tamper with the deployment.
 
@@ -30,7 +30,7 @@
 | Public HTTPS `/search` + `/sources` | Unauthenticated query; credential stuffing against self-declared `user_name`; enumeration of indexed content | When `auth.mode == entra`: Entra ID delegated auth required on both endpoints (`docforge/api.py`, `_auth_dependency`). `user_oid` from the JWT replaces the self-declared `user_name` in `query_log` (migration `005_add_query_log_user_oid.sql`). Only `/health` is unauthenticated and returns no index content |
 | `/health` open endpoint | Endpoint fingerprinting; DoS amplification | Returns static JSON (`{"status": "ok", ...}`); no DB access; Container Apps default ingress rate limits apply |
 | FastAPI app code | JWT validation bypass; injection in query text | `fastapi-azure-auth` validates JWTs against Entra OpenID configuration loaded at startup; query text is parameterised via asyncpg bind params; no SQL string concatenation anywhere in the query path |
-| MCP client (`knowledge-hub/rag/mcp_client.py`) | Token exfiltration; stale token reuse | `DefaultAzureCredential` holds tokens in-memory only; token refresh is library-handled; no token logging anywhere in client code |
+| MCP client (operator-deployed) | Token exfiltration; stale token reuse | `DefaultAzureCredential` holds tokens in-memory only; token refresh is library-handled; no token logging anywhere in client code |
 | Ingest pipeline | Poisoned Confluence or git content injecting prompt-injection payloads that manipulate downstream LLM consumers | Out of scope for this iteration — documented as residual risk below |
 | Azure Key Vault | Secret exfiltration via misconfigured RBAC | System-assigned managed identity granted `get-secret` only; no human accounts granted secret access by the Bicep template; secret references resolved at container boot only |
 | Azure Postgres Flexible Server | DB compromise via connection-string leak | Connection string held in Key Vault, retrieved only at container boot; container runs as UID 1000 with no write access to files containing the connection string |
@@ -49,7 +49,7 @@
 ## Out of scope
 
 - Multi-tenant isolation. docforge is single-tenant by design; multi-tenant support would require a separate threat model.
-- Consumer-specific Entra tenant policies (MFA enforcement, conditional-access rules). These are tenant-admin configuration, not docforge code. Consumers document their tenant posture separately (for DocuWare CCL: see `knowledge-hub/rag/docs/deployment.md`).
+- Consumer-specific Entra tenant policies (MFA enforcement, conditional-access rules). These are tenant-admin configuration, not docforge code. Consumers document their tenant posture separately.
 - Azure subscription governance (who has owner/contributor rights, break-glass accounts). Consumer-specific.
 - Physical security of the Azure Postgres data.
 

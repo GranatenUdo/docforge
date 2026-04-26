@@ -86,7 +86,7 @@ class TestAuthModeNone:
                 json={
                     "query": "test",
                     "user_name": "tobias",
-                    "team_name": "ccl",
+                    "team_name": "platform",
                     "area_name": None,
                     "limit": 3,
                 },
@@ -115,7 +115,7 @@ class TestAuthModeEntra:
                 json={
                     "query": "test",
                     "user_name": "tobias",
-                    "team_name": "ccl",
+                    "team_name": "platform",
                     "area_name": None,
                     "limit": 3,
                 },
@@ -168,7 +168,7 @@ class TestAuthModeEntra:
                     json={
                         "query": "test",
                         "user_name": "ignored-in-entra-mode",
-                        "team_name": "ccl",
+                        "team_name": "platform",
                         "area_name": None,
                         "limit": 3,
                     },
