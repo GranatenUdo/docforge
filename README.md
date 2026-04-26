@@ -99,6 +99,24 @@ For team-wide use, deploy the search API to Azure (~$35/month at default SKUs):
 
 See [`deploy/azure/`](deploy/azure/) for Bicep templates and a full cost breakdown.
 
+## Self-hosting / forking
+
+The embedder image bakes the EmbeddingGemma-300M model at build time,
+which requires a HuggingFace access token. Forks and adopters need to:
+
+1. Get an HF token at https://huggingface.co/settings/tokens.
+2. Accept the EmbeddingGemma license at
+   https://huggingface.co/google/embeddinggemma-300m.
+3. Add a repo secret `HF_TOKEN` under
+   `Settings → Secrets and variables → Actions`.
+
+The CI workflow forwards the secret to BuildKit via
+`--mount=type=secret,id=hf_token`; the token never enters any image
+layer. If you fork this repo and run the CI workflow, it will build the
+embedder image automatically on commits to `master` and PRs (without
+pushing unless on `master`). To enable pushes to a registry, also add
+secrets `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD`.
+
 ## Configuration
 
 See `docs/` for the full configuration reference, including `docforge.yml` and `sources.yml` schemas.
