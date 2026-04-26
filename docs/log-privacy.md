@@ -10,9 +10,9 @@ The table is *not* used for:
 
 - per-user activity surveillance
 - billing or quota enforcement
-- audit trail for regulatory compliance
+- audit trail for regulatory compliance — `query_log` records search queries, not data-access decisions; it is not a complete or authoritative record of who accessed what content and should not be submitted as one
 
-If your deployment has any of those needs, they are out of scope for docforge and should be served by a separate system.
+If your deployment has any of those needs, they require a separate system with appropriate controls. You *may* derive aggregate metrics from `query_log` (e.g. query volume per team for capacity planning) provided this policy's retention and access controls are in place.
 
 ## Retention
 
@@ -32,6 +32,8 @@ The application redacts these patterns from `query` text before insert:
 | JWTs | `\beyJ[A-Za-z0-9_=-]{40,}\.[A-Za-z0-9_=-]{40,}\.[A-Za-z0-9_=-]{20,}\b` | `[REDACTED:JWT]` |
 | Email addresses | `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b` | `[REDACTED:EMAIL]` |
 | Long opaque tokens (heuristic) | `\b[A-Za-z0-9_-]{40,}\b` (when not matching any other category) | `[REDACTED:KEY?]` |
+
+These are the intended patterns; the exact regexes in Phase 5 may differ after testing against real query traffic. Before Phase 5, no redaction runs — see "Implementation status" below.
 
 The redactor is fail-open at the search-handler level: if a regex throws, the redaction step is skipped, the query goes into the table verbatim, and a `WARN` log line is emitted naming the failed pattern. Logging a query is best-effort and must never gate the user's search.
 
@@ -64,11 +66,13 @@ Operational runbook:
 
 1. Verify the requester's identity and authority to make the request.
 2. Look up their Entra `oid` (`az ad user show --id <upn> --query id`).
-3. Connect to the database with the `docforge_app` role (or higher).
+3. Connect to the database using the `docforge_app` role (do not use a superuser connection; see "Access" above for the rationale).
 4. `BEGIN; DELETE FROM query_log WHERE user_oid = $1; COMMIT;` — confirm rowcount.
 5. If a pre-migration `user_name` deletion is also needed, run the second query.
 6. Log the operation in the deletion register (operator-side ticket / change log).
 7. Notify the requester with the rowcount deleted.
+
+**Note:** if `auth.mode = none`, `user_oid` is always `NULL`. In that configuration, skip steps 2–4 and use the `user_name` query (step 5) for all rows; the `user_oid` query would return zero rows and silently miss every record for the requested user.
 
 ## Implementation status (as of v0.3)
 
@@ -91,5 +95,6 @@ Reviewed annually or on changes to:
 - the redaction pattern set
 - the role grants in `deploy/azure/main.bicep` (or equivalent)
 - the right-to-erasure runbook above
+- changes to `auth.mode` (affects how `user_oid` is populated and which erasure query path is primary)
 
 **Last reviewed:** 2026-04-26 (initial authoring alongside v0.3 Phase 3).
