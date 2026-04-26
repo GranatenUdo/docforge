@@ -64,10 +64,8 @@ class Embedder:
                     f"Primary ({model_name}) and fallback ({fallback}) both failed."
                 )
 
-        # Dimension guard. When the caller supplies expected_dimensions (e.g.
-        # from settings.embedding_dimensions), verify the loaded model agrees.
-        # Catches the silent-mismatch case where the fallback model loads with a
-        # different dimensionality than the schema expects.
+        # Catches the silent-mismatch case where the fallback model loads
+        # with a different dimensionality than the schema expects.
         if expected_dimensions is not None and self.dimensions != expected_dimensions:
             raise RuntimeError(
                 f"Embedding dimension mismatch: model {self.model_name!r} reports "

@@ -105,8 +105,6 @@ class TestEmbedderInit:
             from docforge.processors.embedder import Embedder
 
             emb = Embedder("primary/model", hf_token="tok")
-            # Loads even though dim differs from EmbeddingGemma's 768 — no
-            # expected_dim passed, so the guard is dormant.
             assert emb.dimensions == 384
 
     def test_guard_fires_after_fallback_with_wrong_dim(self):
