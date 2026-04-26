@@ -75,24 +75,28 @@ async def lifespan(app: FastAPI):
         max_size=settings.pool_max_size,
         init=_init_connection,
     )
-    embedder = Embedder.from_settings(settings)
-    azure_scheme = _build_auth_scheme(settings)
-    cleanup_task = asyncio.create_task(
-        _query_log_cleanup_loop(pool, settings.query_log_retention_days)
-    )
     try:
-        yield {
-            "settings": settings,
-            "pool": pool,
-            "embedder": embedder,
-            "azure_scheme": azure_scheme,
-        }
-    finally:
-        cleanup_task.cancel()
+        # Embedder construction can raise (Phase 1 dimension guard); the
+        # outer finally still closes the pool in that case.
+        embedder = Embedder.from_settings(settings)
+        azure_scheme = _build_auth_scheme(settings)
+        cleanup_task = asyncio.create_task(
+            _query_log_cleanup_loop(pool, settings.query_log_retention_days)
+        )
         try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
+            yield {
+                "settings": settings,
+                "pool": pool,
+                "embedder": embedder,
+                "azure_scheme": azure_scheme,
+            }
+        finally:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+    finally:
         await pool.close()
 
 
@@ -130,9 +134,13 @@ Notes on the lifespan:
   see it.
 - `_auth_dependency` continues to exist; it now reads `azure_scheme` via
   `Depends(get_azure_scheme)` rather than a module global.
-- The pool is closed in the `finally` block so a startup error in
-  `Embedder.from_settings` (e.g. dimension mismatch from Phase 1's guard)
-  still releases the pool cleanly.
+- The nested `try/finally` structure ensures `pool.close()` runs even if
+  `Embedder.from_settings(settings)` raises (Phase 1's dimension guard
+  fires). The outer `finally` covers from pool creation onward; the inner
+  `finally` covers from cleanup-task creation onward.
+- Verified behaviour: FastAPI 0.136.1 + Starlette 1.0.0 do auto-populate
+  `request.state.<key>` from the lifespan-yielded dict (probed during spec
+  authoring).
 
 ### 2. `to_thread` wrapping for embed calls
 
@@ -154,35 +162,32 @@ calls adds threading overhead for no benefit.
 ### 3. Cleanup loop on advisory lock
 
 Move from "every replica runs the cleanup loop hourly" to "the replica that
-holds the advisory lock runs it; everyone else skips this iteration."
+wins a transaction-scoped advisory lock runs DELETE; the rest skip."
 
 ```python
 CLEANUP_LOCK_ID = 0xD0CF0001  # arbitrary stable 32-bit; identifies the cleanup-loop lock
 
 
 async def _query_log_cleanup_loop(pool: asyncpg.Pool, retention_days: int) -> None:
-    """Idempotent: at most one replica's iteration runs DELETE per interval.
-    Other replicas check the lock, skip, and try again next interval."""
+    """Each iteration takes a transaction-scoped advisory lock. A replica
+    that can't acquire it skips this iteration. The lock auto-releases at
+    COMMIT/ROLLBACK (no manual unlock needed) and on connection drop."""
     days = int(retention_days)
     while True:
         try:
             async with pool.acquire() as conn:
-                got_lock = await conn.fetchval(
-                    "SELECT pg_try_advisory_lock($1)", CLEANUP_LOCK_ID
-                )
-                if got_lock:
-                    try:
+                async with conn.transaction():
+                    got_lock = await conn.fetchval(
+                        "SELECT pg_try_advisory_xact_lock($1)", CLEANUP_LOCK_ID
+                    )
+                    if got_lock:
                         result = await conn.execute(
                             f"DELETE FROM query_log "
                             f"WHERE created_at < now() - interval '{days} days'"
                         )
                         logger.info("query_log cleanup: %s", result)
-                    finally:
-                        await conn.execute(
-                            "SELECT pg_advisory_unlock($1)", CLEANUP_LOCK_ID
-                        )
-                else:
-                    logger.debug("query_log cleanup: another replica holds the lock")
+                    else:
+                        logger.debug("query_log cleanup: another replica holds the lock")
         except Exception as e:
             logger.exception("query_log cleanup failed: %s", e)
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
@@ -190,19 +195,33 @@ async def _query_log_cleanup_loop(pool: asyncpg.Pool, retention_days: int) -> No
 
 Properties:
 
-- **Non-blocking lock:** `pg_try_advisory_lock` returns immediately. Replicas
-  that don't get the lock log a debug line and move on; they don't queue.
-- **Session-level lock:** held until explicit unlock OR the connection
-  terminates. The `async with pool.acquire()` block guarantees release: if
-  the DELETE raises, `finally` runs the unlock; if the connection drops
-  entirely, Postgres releases the lock automatically.
-- **Lock ID stable across replicas:** a hardcoded constant `0xD0CF0001`
-  (decimal 3,500,628,481). Specific to this cleanup; no collision risk
-  unless another part of docforge claims the same number (it doesn't).
+- **Non-blocking lock:** `pg_try_advisory_xact_lock` returns immediately.
+  Replicas that don't get the lock log at debug level and move on; they
+  don't queue.
+- **Transaction-scoped lock:** held for the duration of the surrounding
+  asyncpg transaction. `async with conn.transaction()` commits on
+  successful exit (releasing the lock) and rolls back on exception (also
+  releasing the lock). No manual `pg_advisory_unlock` needed; no leak risk
+  from a failed unlock call.
+- **Lock ID stable across replicas:** hardcoded constant `0xD0CF0001`
+  (decimal 3,503,226,881). Specific to this cleanup loop; no collision
+  risk unless another part of docforge claims the same number (it doesn't).
+- **Mutual-exclusion guarantee:** at any moment, at most one replica is
+  running the DELETE — the lock prevents simultaneous concurrent runs.
+  Replicas whose loops are out of phase may each acquire the lock briefly
+  during their own iteration, run a DELETE that finds no rows (because an
+  earlier replica already cleaned), and release. The redundant DELETEs
+  are no-ops — wasteful but not incorrect.
 - **Loop frequency:** unchanged at `_CLEANUP_INTERVAL_SECONDS = 3600`.
-  Worst case after 4a: cleanup misses one interval if the lock-holder dies
-  exactly at lock acquisition time; next interval (1h later) any replica
-  picks it up.
+  Worst case after 4a: cleanup misses one interval if the lock-holder
+  crashes mid-iteration; the transaction rolls back and the next replica's
+  hourly tick re-tries.
+
+The signature change matters: the loop now takes `pool: asyncpg.Pool`
+instead of `database_url: str`. Callers (just `lifespan` in api.py) pass
+the lifespan's pool directly. The two `TestQueryLogCleanup` tests in
+`tests/unit/test_auth.py` are updated to construct a fake pool and pass it
+in, instead of patching `get_pool`.
 
 ### 4. Pool config knobs
 
@@ -214,10 +233,18 @@ pool_min_size: int = 5    # was hardcoded 1
 pool_max_size: int = 25   # was hardcoded 5
 ```
 
-Update `db.py:get_pool` to read from a `Settings` instance instead of using
-hardcoded literals. The lifespan calls `asyncpg.create_pool` directly with
-the settings values (no need to keep the `get_pool` helper if the only
-caller is now lifespan; it stays for the per-test fakes).
+Two consumers of pool state, two paths:
+
+- **The FastAPI app's `lifespan`** calls `asyncpg.create_pool` directly,
+  reading `settings.pool_min_size` and `settings.pool_max_size`. The pool
+  is yielded into `request.state` and accessed via `Depends(get_pool_dep)`.
+  No call to `db.py:get_pool` from the API layer after the refactor.
+- **The non-FastAPI callers** (`mcp_server.py`, `cli.py`, `ingest.py`)
+  still need the lazy-init `get_pool` helper. Update its signature to
+  `async def get_pool(database_url: str, *, min_size: int = 5, max_size: int = 25)`;
+  callers pass `settings.pool_min_size, settings.pool_max_size` explicitly
+  on first call. The helper's existing module-level `_pool` cache is kept
+  (these processes are single-process; one pool per process is correct).
 
 Defaults raised to 5/25: at 30 teams / 500 engineers / AI-assistant burst
 traffic, the prior `max_size=5` was the next bottleneck after the embedder.
@@ -249,29 +276,35 @@ app.dependency_overrides[get_pool_dep] = lambda: fake_pool
 
 Affected tests, by file:
 
-- `tests/unit/test_api.py` — `TestSearchEndpoint` (5 tests), `TestSourcesEndpoint`
-  (2 tests), `TestRequestTimingInstrumentation` (1 test). Approximately 8
-  tests need their setup rewritten.
-- `tests/unit/test_auth.py` — `stub_downstream` fixture, `stub_entra` fixture,
-  and the 5 test methods that use them. The stub fixtures get rewritten to
-  install `app.dependency_overrides` instead of monkey-patching module
-  globals. Test bodies stay the same.
-- `tests/conftest.py` — `FakePool` and `FakeEmbedder` are unchanged; they're
-  consumed via the dependency-overrides pattern instead of monkey-patched
+- `tests/unit/test_api.py` — `TestSearchEndpoint` (8 tests, including the
+  3 boundary tests added in Phase 3 — though only 5 of those need
+  refactor; the 3 boundary tests trigger 422 from Pydantic before any
+  handler dependency runs and don't touch globals), `TestSourcesEndpoint`
+  (2 tests), `TestRequestTimingInstrumentation` (1 test). About 8 tests
+  with setup that needs rewriting.
+- `tests/unit/test_auth.py` — `stub_downstream` fixture, `stub_entra`
+  fixture, and the 5 test methods that use them; plus 2 tests in
+  `TestQueryLogCleanup` that exercise `_query_log_cleanup_loop` directly
+  and need to adapt to the new signature (passes `pool: asyncpg.Pool`,
+  not `database_url: str`).
+- `tests/conftest.py` — `FakePool` and `FakeEmbedder` unchanged; they're
+  consumed via `app.dependency_overrides` instead of being monkey-patched
   in.
 
-Test count preserved (no new tests added by the refactor itself; new tests
-in §6 below for the new behaviour).
+Total: ~15 tests touched + 2 fixture rewrites. The refactor itself adds
+zero tests (counts preserved for the affected tests); §6 below adds 5-7
+new tests for the new behaviour.
 
 ### 6. New tests added by 4a
 
 - `tests/unit/test_db.py` (new file or new tests in existing file): pool
   reads `Settings.pool_min_size` and `Settings.pool_max_size` correctly
   (~2 tests).
-- `tests/unit/test_api.py`: cleanup loop with advisory lock — verify that
-  when a second concurrent loop runs against the same database, only one
-  performs the DELETE per interval (`TestQueryLogCleanup`'s existing test
-  scenario expanded with an "other replica holds lock" case, ~1-2 tests).
+- `tests/unit/test_auth.py::TestQueryLogCleanup`: cleanup loop with
+  advisory lock — verify that when a second concurrent loop runs against
+  the same database, only one performs the DELETE per interval (existing
+  test scenario expanded with an "other replica holds lock" case via
+  pg_try_advisory_xact_lock returning false, ~1-2 tests).
 - `tests/unit/test_api.py` and `tests/unit/test_mcp_server.py`: `to_thread`
   wrapping — verify the API/MCP handlers run the embed call off the event
   loop (~2 tests, one per handler, asserting the embed call happens on a
@@ -287,14 +320,16 @@ Estimate: 5-7 new tests; total unit suite ~169-171 passing after 4a.
   `app.dependency_overrides`, or explicit teardown at fixture exit). Already
   the standard FastAPI testing pattern.
 
-- **Lifespan startup error blocks pool close.** Mitigation: `try/finally`
-  around the `yield` in lifespan ensures pool teardown runs whether the
-  yield raises or not.
+- **Lifespan startup error blocks pool close.** Mitigation: nested
+  `try/finally` in lifespan — outer `finally` covers `pool.close()` from
+  pool creation onward, inner covers cleanup-task cancellation around the
+  `yield`. A startup error in `Embedder.from_settings` (Phase 1 dimension
+  guard) still releases the pool.
 
-- **Advisory-lock leak.** If a replica acquires the lock and the connection
-  drops mid-DELETE before `pg_advisory_unlock` runs, Postgres releases the
-  session-level lock automatically when the connection goes away. Lock
-  leaks are bounded.
+- **Advisory-lock leak.** Mitigated by design: `pg_try_advisory_xact_lock`
+  is bound to the surrounding asyncpg transaction, so it auto-releases at
+  COMMIT/ROLLBACK whether the DELETE succeeded, raised, or the connection
+  dropped. No manual unlock to forget; no leak path.
 
 - **Pool default change (5→25 max) might exhaust Postgres connections on
   small deploys.** Mitigation: defaults match the operating profile (30
