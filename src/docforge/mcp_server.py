@@ -5,6 +5,7 @@ Run with: python -m docforge.mcp_server
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -73,7 +74,7 @@ async def search_documentation(
     settings = _get_settings()
     embedder = _get_embedder()
 
-    query_vector = embedder.embed_query(query)
+    query_vector = await asyncio.to_thread(embedder.embed_query, query)
     user_tags = [team_name] + ([area_name] if area_name else [])
 
     pool = await get_pool(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -252,6 +253,44 @@ class TestSearchEndpoint:
         assert resp.status_code == 422
         detail = resp.json()["detail"]
         assert any(err["loc"][-1] == "query" for err in detail)
+
+    @pytest.mark.asyncio
+    async def test_search_runs_embed_via_to_thread(self, monkeypatch):
+        """The synchronous embed_query call goes through asyncio.to_thread
+        so the event loop is not blocked during inference."""
+        captured: dict = {"args": None}
+
+        original_to_thread = asyncio.to_thread
+
+        async def spy_to_thread(func, *args, **kwargs):
+            captured["args"] = (func, args, kwargs)
+            return await original_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", spy_to_thread)
+
+        fake_embedder = MagicMock()
+        fake_embedder.embed_query.return_value = [0.0] * 768
+
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = _settings_stub
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "hello",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 1,
+                    },
+                )
+            assert resp.status_code == 200
+            assert captured["args"] is not None, "embed_query was not run via asyncio.to_thread"
+            assert captured["args"][0] == fake_embedder.embed_query
+            assert captured["args"][1] == ("hello",)
+        finally:
+            app.dependency_overrides.clear()
 
 
 class TestSourcesEndpoint:

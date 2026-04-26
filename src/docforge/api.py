@@ -192,7 +192,7 @@ async def search(
     start = time.perf_counter()
 
     try:
-        query_vector = embedder.embed_query(req.query)
+        query_vector = await asyncio.to_thread(embedder.embed_query, req.query)
     except Exception as e:
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to embed query")
