@@ -9,8 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from docforge import api as api_module
-from docforge.api import app
+from docforge.api import app, get_azure_scheme, get_embedder, get_pool_dep, get_settings
 from tests.conftest import FakePool
 
 
@@ -48,6 +47,32 @@ class _CapturingPool:
         return _CapturingCtx(_CapturingConn(self.rows, self.executes))
 
 
+@pytest.fixture(autouse=True)
+def _no_lifespan_defaults():
+    """Default lifespan-populated dependencies to safe stubs for all tests in
+    this module.
+
+    Tests bypass the FastAPI lifespan (ASGITransport doesn't run it), so
+    request.state is empty. These overrides prevent AttributeError when
+    dependency getters try to read request.state keys that lifespan would
+    normally populate.
+
+    Individual tests replace these defaults with their own overrides as needed.
+    The overrides dict is cleared fully by each test's own try/finally block;
+    this fixture only ensures the module-wide defaults are in place.
+    """
+    _fake_embedder = MagicMock()
+    _fake_embedder.embed_query.return_value = [0.0] * 768
+    _fake_embedder.model_name = "test"
+
+    app.dependency_overrides[get_azure_scheme] = lambda: None
+    app.dependency_overrides[get_settings] = _settings_stub
+    app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+    app.dependency_overrides[get_embedder] = lambda: _fake_embedder
+    yield
+    app.dependency_overrides.clear()
+
+
 def _client():
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
@@ -58,6 +83,9 @@ def _settings_stub():
         database_url="postgresql://fake",
         tag_match_weight=0.1,
         org_tag_weight=0.05,
+        pool_min_size=5,
+        pool_max_size=25,
+        query_log_retention_days=180,
     )
 
 
@@ -78,22 +106,7 @@ class TestSearchEndpoint:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_returns_503_when_model_not_loaded(self):
-        original = api_module._embedder
-        api_module._embedder = None
-        try:
-            async with _client() as client:
-                resp = await client.post(
-                    "/search",
-                    json={"query": "q", "user_name": "u", "team_name": "t", "limit": 1},
-                )
-            assert resp.status_code == 503
-            assert "not loaded" in resp.json()["detail"]
-        finally:
-            api_module._embedder = original
-
-    @pytest.mark.asyncio
-    async def test_returns_results_on_success(self, monkeypatch):
+    async def test_returns_results_on_success(self):
         rows = [
             {
                 "text": "Platform owns orgs.",
@@ -108,16 +121,12 @@ class TestSearchEndpoint:
         fake_embedder = MagicMock()
         fake_embedder.embed_query.return_value = [0.0] * 768
         fake_embedder.model_name = "fake"
-        api_module._embedder = fake_embedder
 
         pool = _CapturingPool(rows)
 
-        async def fake_get_pool(url):
-            return pool
-
-        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
-
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = _settings_stub
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -131,28 +140,27 @@ class TestSearchEndpoint:
                     },
                 )
         finally:
-            api_module._embedder = None
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["count"] == 1
         assert body["results"][0]["text"] == "Platform owns orgs."
         assert body["results"][0]["source_tags"] == ["platform", "cloud"]
-        # query_log insert happened
         assert any("INSERT INTO query_log" in q for q, _ in pool.executes)
 
     @pytest.mark.asyncio
-    async def test_returns_503_on_db_error(self, monkeypatch):
+    async def test_returns_503_on_db_error(self):
         fake_embedder = MagicMock()
         fake_embedder.embed_query.return_value = [0.0] * 768
-        api_module._embedder = fake_embedder
 
-        async def fake_get_pool(url):
-            raise OSError("db down")
+        class _BrokenPool:
+            def acquire(self):
+                raise OSError("db down")
 
-        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
-
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
+        app.dependency_overrides[get_settings] = _settings_stub
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -165,17 +173,19 @@ class TestSearchEndpoint:
                     },
                 )
         finally:
-            api_module._embedder = None
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 503
         assert "Database unavailable" in resp.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_returns_500_on_embed_error(self, monkeypatch):
+    async def test_returns_500_on_embed_error(self):
         fake_embedder = MagicMock()
         fake_embedder.embed_query.side_effect = RuntimeError("embed broken")
-        api_module._embedder = fake_embedder
 
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = _settings_stub
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -188,7 +198,7 @@ class TestSearchEndpoint:
                     },
                 )
         finally:
-            api_module._embedder = None
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 500
 
@@ -246,7 +256,7 @@ class TestSearchEndpoint:
 
 class TestSourcesEndpoint:
     @pytest.mark.asyncio
-    async def test_lists_sources(self, monkeypatch):
+    async def test_lists_sources(self):
         rows = [
             {
                 "title": "Doc A",
@@ -258,14 +268,13 @@ class TestSourcesEndpoint:
         ]
         fake_pool = FakePool(rows)
 
-        async def fake_get_pool(url):
-            return fake_pool
-
-        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
-
-        async with _client() as client:
-            resp = await client.get("/sources")
+        app.dependency_overrides[get_pool_dep] = lambda: fake_pool
+        app.dependency_overrides[get_settings] = _settings_stub
+        try:
+            async with _client() as client:
+                resp = await client.get("/sources")
+        finally:
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 200
         body = resp.json()
@@ -273,15 +282,18 @@ class TestSourcesEndpoint:
         assert body["sources"][0]["title"] == "Doc A"
 
     @pytest.mark.asyncio
-    async def test_returns_503_on_db_error(self, monkeypatch):
-        async def fake_get_pool(url):
-            raise OSError("boom")
+    async def test_returns_503_on_db_error(self):
+        class _BrokenPool:
+            def acquire(self):
+                raise OSError("boom")
 
-        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
-
-        async with _client() as client:
-            resp = await client.get("/sources")
+        app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
+        app.dependency_overrides[get_settings] = _settings_stub
+        try:
+            async with _client() as client:
+                resp = await client.get("/sources")
+        finally:
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 503
 
@@ -297,9 +309,7 @@ class TestRequestTimingInstrumentation:
         async def fake_log_query(*args, **kwargs):
             captured.update(kwargs)
 
-        monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
-        monkeypatch.setattr(api_module, "_get_settings", _settings_stub)
-        monkeypatch.setattr(api_module, "_azure_scheme", None)
+        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
 
         class _FakeEmbedder:
             model_name = "test"
@@ -308,24 +318,27 @@ class TestRequestTimingInstrumentation:
             def embed_query(self, q):
                 return [0.0] * 768
 
-        monkeypatch.setattr(api_module, "_embedder", _FakeEmbedder())
+        from docforge.api import get_azure_scheme
 
-        async def fake_get_pool(url):
-            return _CapturingPool(rows=[])
+        app.dependency_overrides[get_embedder] = lambda: _FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_azure_scheme] = lambda: None
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "test",
+                        "user_name": "tobias",
+                        "team_name": "platform",
+                        "area_name": None,
+                        "limit": 3,
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
 
-        monkeypatch.setattr(api_module, "get_pool", fake_get_pool)
-
-        async with _client() as client:
-            resp = await client.post(
-                "/search",
-                json={
-                    "query": "test",
-                    "user_name": "tobias",
-                    "team_name": "platform",
-                    "area_name": None,
-                    "limit": 3,
-                },
-            )
         assert resp.status_code == 200
         assert "request_ms" in captured
         assert isinstance(captured["request_ms"], int)
