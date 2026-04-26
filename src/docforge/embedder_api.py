@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from docforge.config import Settings
-from docforge.processors.embedder import MAX_BATCH_SIZE, Embedder
+from docforge.processors.embedder import MAX_BATCH_SIZE, Embedder, EmbedderProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="docforge-embedder", lifespan=lifespan)
 
 
-def get_embedder(request: Request) -> Embedder | None:
+def get_embedder(request: Request) -> EmbedderProtocol | None:
     return getattr(request.state, "embedder", None)
 
 
@@ -79,8 +79,8 @@ async def health(embedder: Embedder | None = Depends(get_embedder)) -> dict[str,
 @app.post("/embed", response_model=EmbedResponse)
 async def embed(
     req: EmbedRequest,
-    embedder: Embedder = Depends(get_embedder),
+    embedder: EmbedderProtocol = Depends(get_embedder),
     _: None = Depends(_require_token),
 ) -> EmbedResponse:
-    vectors = await asyncio.to_thread(embedder.embed, req.texts)
+    vectors = await embedder.aembed(req.texts)
     return EmbedResponse(vectors=vectors, dimensions=embedder.dimensions)

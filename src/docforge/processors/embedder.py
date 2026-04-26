@@ -201,7 +201,6 @@ class RemoteEmbedder:
 
     async def _post_embed(self, texts: list[str]) -> list[list[float]]:
         client = await self._ensure_client()
-        last_exc: Exception | None = None
         for attempt in (1, 2):
             try:
                 resp = await client.post(
@@ -222,22 +221,19 @@ class RemoteEmbedder:
                         f"the schema."
                     )
                 return payload["vectors"]
-            except (httpx.TimeoutException, httpx.TransportError) as e:
-                last_exc = e
+            except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == 1:
                     await asyncio.sleep(0.15)
                     continue
                 raise
             except httpx.HTTPStatusError as e:
                 # 4xx is config / auth — fail loud, do not retry.
-                if e.response.status_code < 500:
+                if e.response.status_code < 500 or attempt == 2:
                     raise
-                last_exc = e
-                if attempt == 1:
-                    await asyncio.sleep(0.15)
-                    continue
-                raise
-        raise last_exc  # type: ignore[misc]
+                await asyncio.sleep(0.15)
+        # The for-loop's two attempts always either return or raise; this
+        # line is unreachable but keeps mypy happy about implicit None.
+        raise RuntimeError("unreachable")
 
     async def aembed(self, texts: list[str]) -> list[list[float]]:
         return await self._post_embed(texts)

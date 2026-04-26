@@ -49,19 +49,20 @@ def embedder_service():
     thread = threading.Thread(target=lambda: asyncio.run(server.serve()))
     thread.start()
 
-    # Wait for /health to respond
+    # Wait for /health to respond. Reuse one client across all probe
+    # attempts instead of allocating a new connection pool per iteration.
     url = f"http://127.0.0.1:{port}"
-    for _ in range(60):  # up to 60s for cold start
-        try:
-            with httpx.Client(timeout=1.0) as c:
-                if c.get(f"{url}/health").status_code == 200:
+    with httpx.Client(timeout=1.0) as probe_client:
+        for _ in range(60):  # up to 60s for cold start
+            try:
+                if probe_client.get(f"{url}/health").status_code == 200:
                     break
-        except (httpx.ConnectError, httpx.TimeoutException):
-            time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=10)
-        raise RuntimeError("embedder service did not start")
+            except (httpx.ConnectError, httpx.TimeoutException):
+                time.sleep(1)
+        else:
+            server.should_exit = True
+            thread.join(timeout=10)
+            raise RuntimeError("embedder service did not start")
 
     yield (url, token)
 

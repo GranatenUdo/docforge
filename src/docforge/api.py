@@ -135,7 +135,7 @@ def get_pool_dep(request: Request) -> asyncpg.Pool:
     return request.state.pool
 
 
-def get_embedder(request: Request) -> Embedder:
+def get_embedder(request: Request) -> EmbedderProtocol:
     return request.state.embedder
 
 
@@ -191,7 +191,7 @@ async def search(
     req: SearchRequest,
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Depends(get_pool_dep),
-    embedder: Embedder = Depends(get_embedder),
+    embedder: EmbedderProtocol = Depends(get_embedder),
     user=Depends(_auth_dependency),
 ) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""

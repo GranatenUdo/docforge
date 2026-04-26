@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -26,7 +26,7 @@ def _stub_lifespan_resources(monkeypatch):
     from docforge.embedder_api import app, get_embedder, get_settings
 
     fake_embedder = MagicMock()
-    fake_embedder.embed.return_value = [[0.1] * 768]
+    fake_embedder.aembed = AsyncMock(return_value=[[0.1] * 768])
     fake_embedder.model_name = "test/model"
     fake_embedder.dimensions = 768
 
