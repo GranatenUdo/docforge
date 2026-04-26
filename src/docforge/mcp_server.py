@@ -6,9 +6,11 @@ Run with: python -m docforge.mcp_server
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 import numpy as np
 from fastmcp import FastMCP
+from pydantic import Field
 
 from docforge.config import Settings
 from docforge.db import get_pool
@@ -49,11 +51,11 @@ def _get_embedder() -> Embedder:
 
 @mcp.tool()
 async def search_documentation(
-    query: str,
+    query: Annotated[str, Field(max_length=8000)],
     user_name: str,
     team_name: str,
     area_name: str | None = None,
-    limit: int = 5,
+    limit: Annotated[int, Field(ge=1, le=50)] = 5,
 ) -> str:
     """Search across indexed documentation from Confluence pages and git repos.
 

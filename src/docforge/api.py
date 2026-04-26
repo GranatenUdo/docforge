@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from docforge.config import Settings
 from docforge.db import close_pool, get_pool
@@ -119,11 +119,11 @@ async def _auth_dependency(request: Request):
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=8000)
     user_name: str
     team_name: str
     area_name: str | None = None
-    limit: int = 5
+    limit: int = Field(5, ge=1, le=50)
 
 
 class SearchResult(BaseModel):

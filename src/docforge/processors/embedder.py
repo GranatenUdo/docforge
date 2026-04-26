@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MAX_BATCH_SIZE = 256
+
 
 class Embedder:
     """Generates text embeddings using a sentence-transformers model.
@@ -93,9 +95,18 @@ class Embedder:
         """Generate embeddings for a list of texts.
 
         Returns a list of float vectors, one per input text.
+
+        Raises:
+            ValueError: when len(texts) exceeds MAX_BATCH_SIZE. Callers that
+                need to embed more than that should chunk before calling.
         """
         if not texts:
             return []
+        if len(texts) > MAX_BATCH_SIZE:
+            raise ValueError(
+                f"Embedder batch size {len(texts)} exceeds max {MAX_BATCH_SIZE}; "
+                f"chunk into smaller batches before calling embed()"
+            )
 
         embeddings = self._model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
         return embeddings.tolist()
