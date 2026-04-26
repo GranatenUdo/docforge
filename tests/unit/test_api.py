@@ -192,6 +192,57 @@ class TestSearchEndpoint:
 
         assert resp.status_code == 500
 
+    @pytest.mark.asyncio
+    async def test_search_rejects_limit_over_max(self):
+        """limit > 50 returns 422 with the limit field in the error detail."""
+        async with _client() as client:
+            resp = await client.post(
+                "/search",
+                json={
+                    "query": "q",
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 51,
+                },
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert any(err["loc"][-1] == "limit" for err in detail)
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_limit_under_min(self):
+        """limit < 1 returns 422 with the limit field in the error detail."""
+        async with _client() as client:
+            resp = await client.post(
+                "/search",
+                json={
+                    "query": "q",
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 0,
+                },
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert any(err["loc"][-1] == "limit" for err in detail)
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_query_over_max_length(self):
+        """query > 8000 chars returns 422 with the query field in the error detail."""
+        async with _client() as client:
+            resp = await client.post(
+                "/search",
+                json={
+                    "query": "x" * 8001,
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 1,
+                },
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert any(err["loc"][-1] == "query" for err in detail)
+
 
 class TestSourcesEndpoint:
     @pytest.mark.asyncio

@@ -164,3 +164,45 @@ async def test_list_sources_empty_returns_hint(patch_mcp_deps):
 
     result = await list_sources()
     assert "No sources indexed" in result
+
+
+@pytest.mark.asyncio
+async def test_search_documentation_rejects_limit_over_max():
+    """FastMCP enforces the Annotated le=50 constraint at the protocol layer."""
+    from fastmcp.client import Client
+    from fastmcp.exceptions import ToolError
+
+    from docforge.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="less_than_equal"):
+            await client.call_tool(
+                "search_documentation",
+                {
+                    "query": "q",
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 51,
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_search_documentation_rejects_query_over_max_length():
+    """FastMCP enforces the Annotated max_length=8000 constraint."""
+    from fastmcp.client import Client
+    from fastmcp.exceptions import ToolError
+
+    from docforge.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="string_too_long"):
+            await client.call_tool(
+                "search_documentation",
+                {
+                    "query": "x" * 8001,
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 5,
+                },
+            )

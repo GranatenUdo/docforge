@@ -6,9 +6,11 @@ Run with: python -m docforge.mcp_server
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 import numpy as np
 from fastmcp import FastMCP
+from pydantic import Field
 
 from docforge.config import Settings
 from docforge.db import get_pool
@@ -49,11 +51,11 @@ def _get_embedder() -> Embedder:
 
 @mcp.tool()
 async def search_documentation(
-    query: str,
+    query: Annotated[str, Field(max_length=8000)],
     user_name: str,
     team_name: str,
     area_name: str | None = None,
-    limit: int = 5,
+    limit: Annotated[int, Field(ge=1, le=50)] = 5,
 ) -> str:
     """Search across indexed documentation from Confluence pages and git repos.
 
@@ -66,7 +68,7 @@ async def search_documentation(
         user_name: Your name (e.g., "tobias.ens"). Used for usage telemetry.
         team_name: Your team tag (e.g., "platform"). Boosts team-tagged docs.
         area_name: Your area tag (e.g., "cloud"). Optional; boosts area-tagged docs.
-        limit: Maximum number of results to return (default 5).
+        limit: Maximum number of results to return. Must be between 1 and 50, default 5.
     """
     settings = _get_settings()
     embedder = _get_embedder()
