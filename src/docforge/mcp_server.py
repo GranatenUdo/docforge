@@ -5,7 +5,6 @@ Run with: python -m docforge.mcp_server
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Annotated
 
@@ -15,7 +14,7 @@ from pydantic import Field
 
 from docforge.config import Settings
 from docforge.db import get_pool
-from docforge.processors.embedder import Embedder
+from docforge.processors.embedder import Embedder, EmbedderProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ mcp = FastMCP(
 )
 
 # Initialized lazily on first search
-_embedder: Embedder | None = None
+_embedder: EmbedderProtocol | None = None
 _settings: Settings | None = None
 
 
@@ -41,7 +40,7 @@ def _get_settings() -> Settings:
     return _settings
 
 
-def _get_embedder() -> Embedder:
+def _get_embedder() -> EmbedderProtocol:
     global _embedder
     if _embedder is None:
         settings = _get_settings()
@@ -74,7 +73,7 @@ async def search_documentation(
     settings = _get_settings()
     embedder = _get_embedder()
 
-    query_vector = await asyncio.to_thread(embedder.embed_query, query)
+    query_vector = await embedder.aembed_query(query)
     user_tags = [team_name] + ([area_name] if area_name else [])
 
     pool = await get_pool(

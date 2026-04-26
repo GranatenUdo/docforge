@@ -98,13 +98,26 @@ class Embedder:
             )
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> Embedder:
-        """Construct an Embedder from the application Settings.
+    def from_settings(cls, settings: Settings) -> EmbedderProtocol:
+        """Construct an embedder from Settings.
 
-        All four production callers (API, MCP, ingest, CLI) go through this so
-        that the settings-derived construction lives in one place; adding a
-        new settings-driven parameter doesn't require updating every site.
+        Returns RemoteEmbedder when settings.embedder_url is set;
+        otherwise returns an in-process Embedder. The CLI bypasses this
+        factory and constructs Embedder(...) directly so local CLI
+        runs always use the in-process model regardless of EMBEDDER_URL.
         """
+        if settings.embedder_url:
+            token = settings.embedder_token.get_secret_value()
+            if not token:
+                raise RuntimeError(
+                    "embedder_url is set but embedder_token is empty — "
+                    "refusing to construct a RemoteEmbedder without auth"
+                )
+            return RemoteEmbedder(
+                url=settings.embedder_url,
+                token=token,
+                expected_dimensions=settings.embedding_dimensions,
+            )
         return cls(
             settings.embedding_model,
             hf_token=settings.hf_token.get_secret_value(),

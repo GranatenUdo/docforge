@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from docforge.config import Settings
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
-from docforge.processors.embedder import Embedder
+from docforge.processors.embedder import Embedder, EmbedderProtocol
 from docforge.query_log import log_query
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
     Yields a dict whose entries flow into request.state for handler access
     via the Depends getters below."""
     settings = Settings()
+    embedder: EmbedderProtocol | None = None  # set inside try; outer finally reads it
     pool = await asyncpg.create_pool(
         settings.database_url,
         min_size=settings.pool_min_size,
@@ -118,6 +119,8 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
     finally:
+        if embedder is not None and hasattr(embedder, "aclose"):
+            await embedder.aclose()
         await pool.close()
 
 
@@ -195,7 +198,7 @@ async def search(
     start = time.perf_counter()
 
     try:
-        query_vector = await asyncio.to_thread(embedder.embed_query, req.query)
+        query_vector = await embedder.aembed_query(req.query)
     except Exception as e:
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to embed query")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -27,14 +26,12 @@ def _no_lifespan_defaults():
     The overrides dict is cleared fully by each test's own try/finally block;
     this fixture only ensures the module-wide defaults are in place.
     """
-    _fake_embedder = MagicMock()
-    _fake_embedder.embed_query.return_value = [0.0] * 768
-    _fake_embedder.model_name = "test"
+    from tests.conftest import FakeEmbedder
 
     app.dependency_overrides[get_azure_scheme] = lambda: None
     app.dependency_overrides[get_settings] = fake_settings
     app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
-    app.dependency_overrides[get_embedder] = lambda: _fake_embedder
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
     yield
     app.dependency_overrides.clear()
 
@@ -73,13 +70,11 @@ class TestSearchEndpoint:
             }
         ]
 
-        fake_embedder = MagicMock()
-        fake_embedder.embed_query.return_value = [0.0] * 768
-        fake_embedder.model_name = "fake"
+        from tests.conftest import FakeEmbedder
 
         pool = CapturingPool(rows)
 
-        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
         app.dependency_overrides[get_pool_dep] = lambda: pool
         app.dependency_overrides[get_settings] = fake_settings
         try:
@@ -106,14 +101,13 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_returns_503_on_db_error(self):
-        fake_embedder = MagicMock()
-        fake_embedder.embed_query.return_value = [0.0] * 768
+        from tests.conftest import FakeEmbedder
 
         class _BrokenPool:
             def acquire(self):
                 raise OSError("db down")
 
-        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
         app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
         app.dependency_overrides[get_settings] = fake_settings
         try:
@@ -135,8 +129,10 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_returns_500_on_embed_error(self):
+        from unittest.mock import AsyncMock
+
         fake_embedder = MagicMock()
-        fake_embedder.embed_query.side_effect = RuntimeError("embed broken")
+        fake_embedder.aembed_query = AsyncMock(side_effect=RuntimeError("embed broken"))
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
         app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
@@ -210,20 +206,13 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_runs_embed_via_to_thread(self, monkeypatch):
-        """The synchronous embed_query call goes through asyncio.to_thread
-        so the event loop is not blocked during inference."""
-        captured: dict = {"args": None}
-
-        original_to_thread = asyncio.to_thread
-
-        async def spy_to_thread(func, *args, **kwargs):
-            captured["args"] = (func, args, kwargs)
-            return await original_to_thread(func, *args, **kwargs)
-
-        monkeypatch.setattr(asyncio, "to_thread", spy_to_thread)
+        """The search handler calls aembed_query on the embedder, which
+        (for in-process Embedder) wraps the sync call in asyncio.to_thread.
+        This test verifies aembed_query is called with the correct query."""
+        from unittest.mock import AsyncMock
 
         fake_embedder = MagicMock()
-        fake_embedder.embed_query.return_value = [0.0] * 768
+        fake_embedder.aembed_query = AsyncMock(return_value=[0.0] * 768)
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
         app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
@@ -240,9 +229,7 @@ class TestSearchEndpoint:
                     },
                 )
             assert resp.status_code == 200
-            assert captured["args"] is not None, "embed_query was not run via asyncio.to_thread"
-            assert captured["args"][0] == fake_embedder.embed_query
-            assert captured["args"][1] == ("hello",)
+            fake_embedder.aembed_query.assert_called_once_with("hello")
         finally:
             app.dependency_overrides.clear()
 
