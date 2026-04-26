@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from docforge.processors.embedder import MAX_BATCH_SIZE
+
 
 def _fake_st_model(dim: int = 768, encode_return=None):
     model = MagicMock()
@@ -159,7 +161,5 @@ class TestEmbedderMethods:
 
     def test_embed_rejects_batch_over_max_size(self, embedder):
         """Batch larger than MAX_BATCH_SIZE raises ValueError before reaching the model."""
-        from docforge.processors.embedder import MAX_BATCH_SIZE
-
         with pytest.raises(ValueError, match="exceeds max"):
             embedder.embed(["x"] * (MAX_BATCH_SIZE + 1))

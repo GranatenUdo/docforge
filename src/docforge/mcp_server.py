@@ -68,7 +68,7 @@ async def search_documentation(
         user_name: Your name (e.g., "tobias.ens"). Used for usage telemetry.
         team_name: Your team tag (e.g., "platform"). Boosts team-tagged docs.
         area_name: Your area tag (e.g., "cloud"). Optional; boosts area-tagged docs.
-        limit: Maximum number of results to return (default 5).
+        limit: Maximum number of results to return. Must be between 1 and 50, default 5.
     """
     settings = _get_settings()
     embedder = _get_embedder()
