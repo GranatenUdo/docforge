@@ -67,11 +67,24 @@ Append a new `integration` job after it (keep the existing `test` job unchanged 
         with:
           python-version: '3.12'
           cache: 'pip'
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-all-minilm-l6-v2
       - run: pip install -e ".[dev,entra]"
       - run: pytest -m integration
 ```
 
-The deliberate split between `test` (`-m "not integration"`, ~30 s, fast feedback) and `integration` (`-m integration`, ~3 min, real Postgres + real model load from Task 2) keeps the unit job snappy while the heavier checks run alongside.
+The deliberate split between `test` (`-m "not integration"`, ~30 s, fast
+feedback) and `integration` (`-m integration`, ~3 min, real Postgres + real
+model load from Task 2) keeps the unit job snappy while the heavier checks
+run alongside.
+
+The HuggingFace cache step uses a static key (`hf-<os>-all-minilm-l6-v2`)
+because the model is immutable — only invalidate by changing the key when
+the smoke test references a different model. Saves ~10 s per run after the
+first.
 
 - [ ] **Step 3: Run lint locally to confirm no spillover**
 
@@ -109,16 +122,22 @@ EOF
 
 ---
 
-### Task 2: Real-model `Embedder` smoke test
+### Task 2: Real-model `Embedder` smoke test + marker description update
 
 **Files:**
 - Create: `tests/integration/test_embedder_real_model.py`
+- Modify: `pyproject.toml` — update the `integration` marker description, since the marker now covers both Docker-based and network-based tests.
 
-The test file is auto-marked `@pytest.mark.integration` by `tests/integration/conftest.py:18-22`, so it runs in the new integration CI job from Task 1 (and is gated out of the unit `test` job).
+The test file is auto-marked `@pytest.mark.integration` by
+`tests/integration/conftest.py:18-22`, so it runs in the new integration CI
+job from Task 1 (and is gated out of the unit `test` job).
 
 - [ ] **Step 1: Create the smoke test file**
 
-Write the new file at `tests/integration/test_embedder_real_model.py` with this exact content:
+Write the new file at `tests/integration/test_embedder_real_model.py` with
+this exact content. A module-scoped fixture loads the model once for the
+two tests that share it; the third test (mismatch case) constructs its own
+Embedder because it needs a different `expected_dimensions`.
 
 ```python
 """Real-model smoke test for the Embedder.
@@ -145,27 +164,60 @@ from docforge.processors.embedder import Embedder
 UNGATED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def test_real_model_loads_with_expected_dimension():
+@pytest.fixture(scope="module")
+def real_embedder() -> Embedder:
+    """Loaded once per module — model load is the expensive part (~5 s after HF cache).
+
+    Constructed with expected_dimensions=384 so the guard is exercised on the
+    happy path. The mismatch test below builds its own Embedder because it
+    needs a different expected_dimensions.
+    """
+    return Embedder(UNGATED_MODEL, expected_dimensions=384)
+
+
+def test_real_model_loads_with_expected_dimension(real_embedder: Embedder) -> None:
     """The 384-d ungated model loads and reports dim=384."""
-    embedder = Embedder(UNGATED_MODEL, expected_dimensions=384)
-    assert embedder.dimensions == 384
-    assert embedder.model_name == UNGATED_MODEL
+    assert real_embedder.dimensions == 384
+    assert real_embedder.model_name == UNGATED_MODEL
 
 
-def test_real_model_produces_different_embeddings_for_different_text():
-    """Non-degenerate: two distinct texts get two distinct vectors with the right shape."""
-    embedder = Embedder(UNGATED_MODEL)
-    a = embedder.embed_query("hello")
-    b = embedder.embed_query("world")
+def test_real_model_produces_different_embeddings_for_different_text(
+    real_embedder: Embedder,
+) -> None:
+    """Non-degenerate: two distinct texts get two distinct 384-d vectors."""
+    a = real_embedder.embed_query("hello")
+    b = real_embedder.embed_query("world")
     assert a != b
     assert len(a) == 384
     assert len(b) == 384
 
 
-def test_real_model_dimension_guard_fires_on_mismatch():
+def test_real_model_dimension_guard_fires_on_mismatch() -> None:
     """If config requires 768 but the loaded model is 384, the Phase-1 guard raises."""
     with pytest.raises(RuntimeError, match="dimension mismatch"):
         Embedder(UNGATED_MODEL, expected_dimensions=768)
+```
+
+- [ ] **Step 1b: Update the `integration` marker description in `pyproject.toml`**
+
+The current marker description claims "requires Docker (pgvector container)"
+— accurate before this task, inaccurate after (the new tests need network,
+not Docker). Update the line in `pyproject.toml`:
+
+Replace:
+
+```toml
+markers = [
+    "integration: requires Docker (pgvector container)",
+]
+```
+
+with:
+
+```toml
+markers = [
+    "integration: tests requiring real external resources (Docker for Postgres, network for embedding model)",
+]
 ```
 
 - [ ] **Step 2: Run the new tests locally — verify they pass**
@@ -174,7 +226,11 @@ def test_real_model_dimension_guard_fires_on_mismatch():
 python -m pytest tests/integration/test_embedder_real_model.py -v --tb=short 2>&1 | tail -15
 ```
 
-Expected: 3 tests pass. First run downloads ~80 MB from Hugging Face (~10 s on a fast connection); subsequent runs reuse `~/.cache/huggingface/`. Each test re-instantiates `Embedder`, which re-loads the model from cache (~1 s each), so total run time is ~5–15 s.
+Expected: 3 tests pass. First run downloads ~80 MB from Hugging Face (~10 s
+on a fast connection); subsequent runs reuse `~/.cache/huggingface/`. With
+the module-scoped fixture, the model is loaded twice in total per run
+(once for the fixture shared by tests 1 + 2, once more for test 3's
+own `Embedder`). After the HF cache is warm, total run time is ~5–10 s.
 
 If `test_real_model_loads_with_expected_dimension` fails with the loaded model reporting a different dimension, the model on Hugging Face has changed contract — investigate before relaxing the assertion.
 
@@ -199,7 +255,7 @@ Expected: clean. If `ruff format --check` complains about the new file, run `pyt
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/integration/test_embedder_real_model.py
+git add tests/integration/test_embedder_real_model.py pyproject.toml
 git commit -m "$(cat <<'EOF'
 test(embedder): add real-model smoke test using all-MiniLM-L6-v2
 
@@ -214,6 +270,10 @@ real-model smoke uses the ungated 384-d all-MiniLM-L6-v2 and asserts:
 No HF token needed. Auto-marked @pytest.mark.integration via the
 tests/integration/conftest.py auto-marker, so it runs in the
 integration CI job (Task 1) and is gated out of the fast unit job.
+
+Also updates the integration marker description in pyproject.toml —
+the marker now covers both Docker-based (testcontainers/pgvector) and
+network-based (HF model) tests.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
