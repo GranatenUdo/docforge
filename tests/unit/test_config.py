@@ -196,3 +196,25 @@ class TestQueryLogRetention:
 
         s = Settings()
         assert s.query_log_retention_days == 90
+
+
+class TestPoolSettings:
+    def test_default_pool_sizes(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.pool_min_size == 5
+        assert s.pool_max_size == 25
+
+    def test_pool_sizes_overridable_in_yml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "pool_min_size: 2\npool_max_size: 10\n",
+            encoding="utf-8",
+        )
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.pool_min_size == 2
+        assert s.pool_max_size == 10

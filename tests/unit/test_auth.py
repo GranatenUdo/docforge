@@ -3,81 +3,75 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.conftest import FakePool
+from tests.conftest import FakePool, fake_settings
+
+
+class _NoOpTransaction:
+    """Async-context-manager stand-in for asyncpg's `conn.transaction()`."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        pass
 
 
 @pytest.fixture
-def stub_downstream(monkeypatch, fake_embedder):
-    """Short-circuit `/search` past embedder + DB + log_query to keep tests
-    focused on auth behavior. Patches names where they are bound inside
-    `docforge.api` — matches the pattern used by `test_api.py`."""
-    import docforge.api as api_mod
+def stub_downstream(fake_embedder):
+    """Short-circuit /search past embedder + DB + log_query so auth tests
+    can focus on auth behaviour. Also stubs `get_azure_scheme` to None so
+    auth-mode-none tests don't need to override it themselves."""
+    from docforge.api import app, get_azure_scheme, get_embedder, get_pool_dep, get_settings
 
-    monkeypatch.setattr(api_mod, "_embedder", fake_embedder())
+    fake_pool = FakePool(rows=[])
 
-    async def fake_get_pool(url):
-        return FakePool(rows=[])
+    app.dependency_overrides[get_embedder] = lambda: fake_embedder()
+    app.dependency_overrides[get_pool_dep] = lambda: fake_pool
+    app.dependency_overrides[get_settings] = fake_settings
+    # setdefault so a sibling fixture (e.g. stub_entra) that ran first
+    # keeps its get_azure_scheme override.
+    app.dependency_overrides.setdefault(get_azure_scheme, lambda: None)
 
-    monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
+    yield
 
-    monkeypatch.setattr(
-        api_mod,
-        "_get_settings",
-        lambda: SimpleNamespace(
-            database_url="postgresql://fake",
-            tag_match_weight=0.1,
-            org_tag_weight=0.05,
-        ),
-    )
-
-    async def fake_log_query(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr("docforge.query_log.log_query", fake_log_query)
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def stub_entra(monkeypatch):
-    """Install a real `SingleTenantAzureAuthorizationCodeBearer` but stub the
-    openid-discovery HTTP call so lifespan doesn't hit Entra."""
+    """Install a real SingleTenantAzureAuthorizationCodeBearer but stub the
+    openid-discovery HTTP call. Override `get_azure_scheme` to return it."""
     from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
     from fastapi_azure_auth.openid_config import OpenIdConfig
+
+    from docforge.api import app, get_azure_scheme
 
     async def fake_load(self):
         return None
 
     monkeypatch.setattr(OpenIdConfig, "load_config", fake_load)
 
-    import docforge.api as api_mod
-
-    monkeypatch.setenv("AUTH__MODE", "entra")
-    monkeypatch.setenv("AUTH__TENANT_ID", "test-tenant")
-    monkeypatch.setenv("AUTH__AUDIENCE", "api://test-app")
-    monkeypatch.setattr(api_mod, "_settings", None)
-
     scheme = SingleTenantAzureAuthorizationCodeBearer(
         app_client_id="test-app",
         tenant_id="test-tenant",
         scopes={"api://test-app/search": "Search docforge"},
     )
-    monkeypatch.setattr(api_mod, "_azure_scheme", scheme)
-    return scheme
+    app.dependency_overrides[get_azure_scheme] = lambda: scheme
+
+    yield scheme
+
+    app.dependency_overrides.pop(get_azure_scheme, None)
 
 
 class TestAuthModeNone:
     """Default auth.mode=none keeps existing behavior."""
 
     @pytest.mark.asyncio
-    async def test_search_accepts_unauthenticated(self, monkeypatch, stub_downstream):
-        import docforge.api as api_mod
-
-        monkeypatch.setattr(api_mod, "_azure_scheme", None)
-
+    async def test_search_accepts_unauthenticated(self, stub_downstream):
         from docforge.api import app
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -188,9 +182,16 @@ class TestQueryLogCleanup:
         calls: list[tuple] = []
 
         class _Conn:
+            async def fetchval(self, query, *args):
+                # Lock acquired
+                return True
+
             async def execute(self, query, *args):
                 calls.append((query, args))
                 return "DELETE 0"
+
+            def transaction(self):
+                return _NoOpTransaction()
 
         class _Ctx:
             async def __aenter__(self):
@@ -203,15 +204,11 @@ class TestQueryLogCleanup:
             def acquire(self):
                 return _Ctx()
 
-        async def fake_get_pool(url):
-            return _Pool()
-
         import docforge.api as api_mod
 
-        monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
 
-        task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
+        task = asyncio.create_task(api_mod._query_log_cleanup_loop(_Pool(), 60))
         await asyncio.sleep(0.12)
         task.cancel()
         try:
@@ -219,49 +216,45 @@ class TestQueryLogCleanup:
         except asyncio.CancelledError:
             pass
 
-        assert len(calls) >= 2
-        assert "DELETE FROM query_log" in calls[0][0]
-        # retention is embedded into the SQL as a literal via f-string (safe —
-        # coerced to int in the production code); asyncpg's $1::interval
-        # parameter binding doesn't accept strings.
-        assert "interval '180 days'" in calls[0][0]
-        assert calls[0][1] == ()
+        # At least 2 iterations ran the DELETE (lock was always available)
+        delete_calls = [c for c in calls if "DELETE FROM query_log" in c[0]]
+        assert len(delete_calls) >= 2
+        assert "interval '60 days'" in delete_calls[0][0]
 
     @pytest.mark.asyncio
     async def test_cleanup_loop_continues_after_db_error(self, monkeypatch):
-        # Poll for >=2 iterations rather than sleeping a fixed duration —
-        # avoids flakes on slow CI where 0.15 s isn't enough for 2 iterations.
         iteration = {"n": 0}
 
-        async def fake_get_pool(url):
-            iteration["n"] += 1
-            if iteration["n"] == 1:
-                raise OSError("simulated DB hiccup")
+        class _Conn:
+            async def fetchval(self, q, *a):
+                return True
 
-            class _Conn:
-                async def execute(self, q, *a):
-                    return "DELETE 0"
+            async def execute(self, q, *a):
+                return "DELETE 0"
 
-            class _Ctx:
-                async def __aenter__(self):
-                    return _Conn()
+            def transaction(self):
+                return _NoOpTransaction()
 
-                async def __aexit__(self, *a):
-                    pass
+        class _Ctx:
+            async def __aenter__(self):
+                iteration["n"] += 1
+                if iteration["n"] == 1:
+                    raise OSError("simulated DB hiccup")
+                return _Conn()
 
-            class _Pool:
-                def acquire(self):
-                    return _Ctx()
+            async def __aexit__(self, *a):
+                pass
 
-            return _Pool()
+        class _Pool:
+            def acquire(self):
+                return _Ctx()
 
         import docforge.api as api_mod
 
-        monkeypatch.setattr(api_mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.02)
 
-        task = asyncio.create_task(api_mod._query_log_cleanup_loop("postgresql://fake", 180))
-        for _ in range(50):  # up to 1 s total
+        task = asyncio.create_task(api_mod._query_log_cleanup_loop(_Pool(), 60))
+        for _ in range(50):
             await asyncio.sleep(0.02)
             if iteration["n"] >= 2:
                 break
@@ -272,3 +265,52 @@ class TestQueryLogCleanup:
             pass
 
         assert iteration["n"] >= 2, f"loop died after first failure (reached n={iteration['n']})"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_skips_when_lock_held_by_another_replica(self, monkeypatch):
+        """When pg_try_advisory_xact_lock returns False (another replica holds
+        the lock), the loop logs a debug line and skips the DELETE."""
+        fetchval_calls: list[tuple] = []
+        delete_calls: list[tuple] = []
+
+        class _Conn:
+            async def fetchval(self, query, *args):
+                fetchval_calls.append((query, args))
+                # Simulate "lock unavailable" — another replica has it
+                return False
+
+            async def execute(self, query, *args):
+                delete_calls.append((query, args))
+                return "DELETE 0"
+
+            def transaction(self):
+                return _NoOpTransaction()
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Conn()
+
+            async def __aexit__(self, *a):
+                pass
+
+        class _Pool:
+            def acquire(self):
+                return _Ctx()
+
+        import docforge.api as api_mod
+
+        monkeypatch.setattr(api_mod, "_CLEANUP_INTERVAL_SECONDS", 0.05)
+
+        task = asyncio.create_task(api_mod._query_log_cleanup_loop(_Pool(), 60))
+        await asyncio.sleep(0.12)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # The loop ran ≥1 iteration: at least one fetchval (lock probe) happened
+        assert len(fetchval_calls) >= 1
+        assert "pg_try_advisory_xact_lock" in fetchval_calls[0][0]
+        # No DELETE should fire because the lock was unavailable
+        assert delete_calls == []

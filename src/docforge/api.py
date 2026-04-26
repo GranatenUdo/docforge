@@ -14,49 +14,48 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import asyncpg
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
 from pydantic import BaseModel, Field
 
 from docforge.config import Settings
-from docforge.db import close_pool, get_pool
+from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder
+from docforge.query_log import log_query
 
 logger = logging.getLogger(__name__)
 
-_embedder: Embedder | None = None
-_settings: Settings | None = None
-_azure_scheme = None  # Populated in lifespan when auth.mode == "entra"
-_cleanup_task: asyncio.Task | None = None
-
 _CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
+CLEANUP_LOCK_ID = 0xD0CF0001  # decimal 3,503,226,881 — stable across replicas
 
 
-async def _query_log_cleanup_loop(database_url: str, retention_days: int) -> None:
-    """Deletes query_log rows older than retention_days every
-    _CLEANUP_INTERVAL_SECONDS. Idempotent, so multi-replica is safe."""
-    # int() coercion makes the f-string SQL below injection-safe. asyncpg's
+async def _query_log_cleanup_loop(pool: asyncpg.Pool, retention_days: int) -> None:
+    """Each iteration takes a transaction-scoped advisory lock. A replica
+    that can't acquire it skips this iteration. The lock auto-releases at
+    COMMIT/ROLLBACK and on connection drop — no manual unlock to forget."""
+    # int() coercion makes the f-string SQL below injection-safe; asyncpg's
     # $1::interval parameter binding doesn't accept str, hence the literal.
     days = int(retention_days)
     while True:
         try:
-            pool = await get_pool(database_url)
             async with pool.acquire() as conn:
-                result = await conn.execute(
-                    f"DELETE FROM query_log WHERE created_at < now() - interval '{days} days'"
-                )
-            logger.info("query_log cleanup: %s", result)
+                async with conn.transaction():
+                    got_lock = await conn.fetchval(
+                        "SELECT pg_try_advisory_xact_lock($1)", CLEANUP_LOCK_ID
+                    )
+                    if got_lock:
+                        result = await conn.execute(
+                            f"DELETE FROM query_log "
+                            f"WHERE created_at < now() - interval '{days} days'"
+                        )
+                        logger.info("query_log cleanup: %s", result)
+                    else:
+                        logger.debug("query_log cleanup: another replica holds the lock")
         except Exception as e:
             logger.exception("query_log cleanup failed: %s", e)
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-
-
-def _get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
 
 
 def _build_auth_scheme(settings: Settings):
@@ -75,47 +74,80 @@ def _build_auth_scheme(settings: Settings):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the embedding model at startup; close the DB pool on shutdown."""
-    global _embedder, _azure_scheme, _cleanup_task
-    settings = _get_settings()
-    _azure_scheme = _build_auth_scheme(settings)
-    if _azure_scheme is not None:
-        await _azure_scheme.openid_config.load_config()
-        logger.info(
-            "Entra auth enabled (tenant=%s, audience=%s)",
-            settings.auth.tenant_id,
-            settings.auth.audience,
-        )
-    logger.info("Loading embedding model...")
-    _embedder = Embedder.from_settings(settings)
-    logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
+    """Build per-process resources at startup; tear them down on shutdown.
 
-    _cleanup_task = asyncio.create_task(
-        _query_log_cleanup_loop(settings.database_url, settings.query_log_retention_days)
+    Yields a dict whose entries flow into request.state for handler access
+    via the Depends getters below."""
+    settings = Settings()
+    pool = await asyncpg.create_pool(
+        settings.database_url,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+        init=_init_connection,
     )
+    try:
+        # Embedder construction can raise (Phase 1 dimension guard); the
+        # outer finally still closes the pool in that case. Offloaded to a
+        # thread so the model-load file I/O doesn't stall the event loop.
+        embedder = await asyncio.to_thread(Embedder.from_settings, settings)
+        logger.info("Model loaded: %s (%dd)", embedder.model_name, embedder.dimensions)
 
-    yield
+        azure_scheme = _build_auth_scheme(settings)
+        if azure_scheme is not None:
+            await azure_scheme.openid_config.load_config()
+            logger.info(
+                "Entra auth enabled (tenant=%s, audience=%s)",
+                settings.auth.tenant_id,
+                settings.auth.audience,
+            )
 
-    if _cleanup_task is not None:
-        _cleanup_task.cancel()
+        cleanup_task = asyncio.create_task(
+            _query_log_cleanup_loop(pool, settings.query_log_retention_days)
+        )
         try:
-            await _cleanup_task
-        except asyncio.CancelledError:
-            pass
-    await close_pool()
+            yield {
+                "settings": settings,
+                "pool": pool,
+                "embedder": embedder,
+                "azure_scheme": azure_scheme,
+            }
+        finally:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+    finally:
+        await pool.close()
 
 
 app = FastAPI(title="docforge", lifespan=lifespan)
 
 
-async def _auth_dependency(request: Request):
+def get_settings(request: Request) -> Settings:
+    return request.state.settings
+
+
+def get_pool_dep(request: Request) -> asyncpg.Pool:
+    return request.state.pool
+
+
+def get_embedder(request: Request) -> Embedder:
+    return request.state.embedder
+
+
+def get_azure_scheme(request: Request):
+    return request.state.azure_scheme
+
+
+async def _auth_dependency(
+    request: Request,
+    azure_scheme=Depends(get_azure_scheme),
+):
     """Return the authenticated User under auth.mode=entra, None otherwise."""
-    if _azure_scheme is None:
+    if azure_scheme is None:
         return None
-    # Empty SecurityScopes: we don't enforce scope-level authorization beyond
-    # the token validation the scheme itself does. Without this arg the call
-    # signature mismatches what fastapi-azure-auth expects.
-    return await _azure_scheme(request, SecurityScopes())
+    return await azure_scheme(request, SecurityScopes())
 
 
 class SearchRequest(BaseModel):
@@ -142,32 +174,35 @@ class SearchResponse(BaseModel):
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+async def health(request: Request) -> dict[str, Any]:
     """Health check endpoint."""
+    embedder = getattr(request.state, "embedder", None)
     return {
         "status": "ok",
-        "model": _embedder.model_name if _embedder else "not loaded",
+        "model": embedder.model_name if embedder else "not loaded",
     }
 
 
 @app.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchResponse:
+async def search(
+    req: SearchRequest,
+    settings: Settings = Depends(get_settings),
+    pool: asyncpg.Pool = Depends(get_pool_dep),
+    embedder: Embedder = Depends(get_embedder),
+    user=Depends(_auth_dependency),
+) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
     start = time.perf_counter()
-    if not _embedder:
-        raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
 
     try:
-        query_vector = _embedder.embed_query(req.query)
+        query_vector = await asyncio.to_thread(embedder.embed_query, req.query)
     except Exception as e:
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to embed query")
 
-    settings = _get_settings()
     user_tags = [req.team_name] + ([req.area_name] if req.area_name else [])
 
     try:
-        pool = await get_pool(settings.database_url)
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -201,12 +236,8 @@ async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchRe
         logger.error("Database error during search: %s", e)
         raise HTTPException(status_code=503, detail="Database unavailable")
 
-    from docforge.query_log import log_query
-
     request_ms = int((time.perf_counter() - start) * 1000)
 
-    # team_name and area_name remain self-declared (routing hints, not identity).
-    # user_name and user_oid come from the token when present.
     await log_query(
         pool,
         user.preferred_username if user else req.user_name,
@@ -234,11 +265,12 @@ async def search(req: SearchRequest, user=Depends(_auth_dependency)) -> SearchRe
 
 
 @app.get("/sources")
-async def list_sources(user=Depends(_auth_dependency)) -> dict[str, Any]:
+async def list_sources(
+    pool: asyncpg.Pool = Depends(get_pool_dep),
+    user=Depends(_auth_dependency),
+) -> dict[str, Any]:
     """List all indexed documentation sources."""
-    settings = _get_settings()
     try:
-        pool = await get_pool(settings.database_url)
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """

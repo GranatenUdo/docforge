@@ -53,7 +53,11 @@ async def ingest_all(
     logger.info("Loading embedding model...")
     embedder = Embedder.from_settings(settings)
 
-    pool = await get_pool(settings.database_url)
+    pool = await get_pool(
+        settings.database_url,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+    )
     tokenizer_fn = embedder.get_tokenizer_fn()
 
     succeeded = 0

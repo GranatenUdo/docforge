@@ -5,6 +5,7 @@ Run with: python -m docforge.mcp_server
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -73,10 +74,14 @@ async def search_documentation(
     settings = _get_settings()
     embedder = _get_embedder()
 
-    query_vector = embedder.embed_query(query)
+    query_vector = await asyncio.to_thread(embedder.embed_query, query)
     user_tags = [team_name] + ([area_name] if area_name else [])
 
-    pool = await get_pool(settings.database_url)
+    pool = await get_pool(
+        settings.database_url,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+    )
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -146,7 +151,11 @@ async def list_sources() -> str:
     Use this to see what documentation is available for searching.
     """
     settings = _get_settings()
-    pool = await get_pool(settings.database_url)
+    pool = await get_pool(
+        settings.database_url,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+    )
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(

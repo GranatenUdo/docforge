@@ -104,7 +104,7 @@ async def test_ingest_all_with_empty_sources_list(tmp_path, monkeypatch, fake_em
 
     conn = _Conn()
 
-    async def fake_get_pool(url):
+    async def fake_get_pool(url, **kwargs):
         return _FakePool(conn)
 
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
@@ -135,7 +135,7 @@ async def test_ingest_git_source_inserts_chunks(tmp_path, monkeypatch, fake_embe
 
     conn = _Conn(existing_hash=None)
 
-    async def fake_get_pool(url):
+    async def fake_get_pool(url, **kwargs):
         return _FakePool(conn)
 
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
@@ -174,7 +174,7 @@ async def test_ingest_skips_when_hash_unchanged(tmp_path, monkeypatch, fake_embe
 
     conn = _Conn(existing_hash=existing_hash)
 
-    async def fake_get_pool(url):
+    async def fake_get_pool(url, **kwargs):
         return _FakePool(conn)
 
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
@@ -220,7 +220,7 @@ async def test_ingest_continues_on_per_source_failure(tmp_path, monkeypatch, fak
 
     conn = _Conn()
 
-    async def fake_get_pool(url):
+    async def fake_get_pool(url, **kwargs):
         return _FakePool(conn)
 
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
@@ -257,7 +257,7 @@ async def test_ingest_all_skips_purge_when_any_source_failed(tmp_path, monkeypat
 
     conn = _Conn()
 
-    async def fake_get_pool(url):
+    async def fake_get_pool(url, **kwargs):
         return _FakePool(conn)
 
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)

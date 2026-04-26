@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 
 class FakeConn:
-    """asyncpg connection stand-in: `fetch` returns preset rows; `execute` is a no-op.
-
-    Tests that need to assert on writes define their own capturing conn locally
-    (see `_CapturingConn` in `test_api.py`)."""
+    """asyncpg connection stand-in: `fetch` returns preset rows; `execute` is a no-op."""
 
     def __init__(self, rows):
         self._rows = rows
@@ -33,18 +32,62 @@ class _AcquireCtx:
 
 
 class FakePool:
-    """asyncpg pool stand-in for tests that only issue read queries.
-
-    Tests that need transactions or fetchval routing (e.g. ingest tests)
-    define their own richer conn fake locally — this helper targets the
-    common "fetch returns these rows" case used by api and mcp_server tests.
-    """
+    """asyncpg pool stand-in for tests that only issue read queries."""
 
     def __init__(self, rows):
         self._rows = rows
 
     def acquire(self):
         return _AcquireCtx(self._rows)
+
+
+class CapturingConn:
+    """asyncpg connection stand-in that records executes (query_log INSERTs etc.)."""
+
+    def __init__(self, rows, executes):
+        self._rows = rows
+        self._executes = executes
+
+    async def fetch(self, query, *args):
+        return self._rows
+
+    async def execute(self, query, *args):
+        self._executes.append((query, args))
+
+
+class _CapturingAcquireCtx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *a):
+        return None
+
+
+class CapturingPool:
+    """asyncpg pool stand-in that exposes `executes` for write-side assertions."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.executes = []
+
+    def acquire(self):
+        return _CapturingAcquireCtx(CapturingConn(self.rows, self.executes))
+
+
+def fake_settings():
+    """Construct a SimpleNamespace mimicking docforge.config.Settings for tests
+    that bypass the lifespan and need to override `get_settings`."""
+    return SimpleNamespace(
+        database_url="postgresql://fake",
+        tag_match_weight=0.1,
+        org_tag_weight=0.05,
+        pool_min_size=5,
+        pool_max_size=25,
+        query_log_retention_days=180,
+    )
 
 
 class FakeEmbedder:

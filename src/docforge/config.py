@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     # query_log retention — app-level cleanup loop deletes rows older than this
     query_log_retention_days: int = 180
 
+    # asyncpg pool sizing — defaults match the operating profile (multi-replica,
+    # bursty AI-assistant traffic). Smaller deploys can lower these via
+    # POOL_MIN_SIZE / POOL_MAX_SIZE env vars.
+    pool_min_size: int = 5
+    pool_max_size: int = 25
+
     def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")

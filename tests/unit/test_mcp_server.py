@@ -8,37 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
-class _CapturingConn:
-    def __init__(self, rows, executes):
-        self._rows = rows
-        self._executes = executes
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-    async def execute(self, query, *args):
-        self._executes.append((query, args))
-
-
-class _CapturingCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    async def __aenter__(self):
-        return self._conn
-
-    async def __aexit__(self, *a):
-        return None
-
-
-class _CapturingPool:
-    def __init__(self, rows):
-        self.rows = rows
-        self.executes = []
-
-    def acquire(self):
-        return _CapturingCtx(_CapturingConn(self.rows, self.executes))
+from tests.conftest import CapturingPool
 
 
 @pytest.fixture
@@ -46,9 +16,9 @@ def patch_mcp_deps(monkeypatch):
     def _install(rows):
         from docforge import mcp_server as mod
 
-        pool = _CapturingPool(rows)
+        pool = CapturingPool(rows)
 
-        async def fake_get_pool(url):
+        async def fake_get_pool(url, **kwargs):
             return pool
 
         fake_embedder = MagicMock()
@@ -63,6 +33,8 @@ def patch_mcp_deps(monkeypatch):
                 database_url="postgresql://fake",
                 tag_match_weight=0.1,
                 org_tag_weight=0.05,
+                pool_min_size=5,
+                pool_max_size=25,
             ),
         )
         return pool, fake_embedder
@@ -206,3 +178,39 @@ async def test_search_documentation_rejects_query_over_max_length():
                     "limit": 5,
                 },
             )
+
+
+@pytest.mark.asyncio
+async def test_search_documentation_runs_embed_via_to_thread(monkeypatch, patch_mcp_deps):
+    """The synchronous embed_query call goes through asyncio.to_thread
+    so the event loop is not blocked during inference."""
+    import asyncio as _asyncio
+
+    captured: dict = {"args": None}
+    original_to_thread = _asyncio.to_thread
+
+    async def spy_to_thread(func, *args, **kwargs):
+        captured["args"] = (func, args, kwargs)
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(_asyncio, "to_thread", spy_to_thread)
+
+    rows = [
+        {
+            "text": "x",
+            "section_title": None,
+            "source_title": "S",
+            "source_url": "https://x",
+            "source_tags": [],
+            "similarity": 0.9,
+        },
+    ]
+    pool, fake_embedder = patch_mcp_deps(rows)
+
+    from docforge.mcp_server import search_documentation
+
+    await search_documentation("hello", user_name="u", team_name="t")
+
+    assert captured["args"] is not None, "embed_query was not run via asyncio.to_thread"
+    assert captured["args"][0] == fake_embedder.embed_query
+    assert captured["args"][1] == ("hello",)

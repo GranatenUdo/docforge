@@ -13,14 +13,25 @@ from pgvector.asyncpg import register_vector
 _pool: asyncpg.Pool | None = None
 
 
-async def get_pool(database_url: str) -> asyncpg.Pool:
-    """Return the module-level asyncpg pool, creating it on first call."""
+async def get_pool(
+    database_url: str,
+    *,
+    min_size: int = 5,  # keep in sync with Settings.pool_min_size
+    max_size: int = 25,  # keep in sync with Settings.pool_max_size
+) -> asyncpg.Pool:
+    """Return the module-level asyncpg pool, creating it on first call.
+
+    Note: the cache is first-call-wins. min_size/max_size on subsequent calls
+    are ignored — these helpers serve single-process callers (mcp_server,
+    cli, ingest). The FastAPI app creates its pool directly inside the
+    lifespan and does not go through this helper.
+    """
     global _pool
     if _pool is None:
         _pool = await asyncpg.create_pool(
             database_url,
-            min_size=1,
-            max_size=5,
+            min_size=min_size,
+            max_size=max_size,
             init=_init_connection,
         )
     return _pool
