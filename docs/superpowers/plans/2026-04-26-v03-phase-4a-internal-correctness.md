@@ -144,7 +144,7 @@ async def get_pool(
 Three call sites need the new arguments. Find them:
 
 ```bash
-python -m grep "get_pool(" src/docforge --include="*.py" -n
+git grep -n "get_pool(" -- 'src/docforge/*.py'
 ```
 
 Expected hits (from a clean Phase 3 master):
@@ -292,9 +292,15 @@ needs to be present at red phase.)
 python -m pytest tests/unit/test_auth.py::TestQueryLogCleanup::test_cleanup_loop_skips_when_lock_held_by_another_replica -v --tb=short 2>&1 | tail -10
 ```
 
-Expected: fails with `TypeError` because `_query_log_cleanup_loop`
-currently takes `(database_url: str, retention_days: int)`, not
-`(pool: asyncpg.Pool, retention_days: int)`.
+Expected: fails on `assert len(fetchval_calls) >= 1`. With the OLD
+loop body, no `pg_try_advisory_xact_lock` call happens — the loop
+goes straight from `pool = await get_pool(database_url)` to the
+DELETE. (Python doesn't enforce type hints at runtime, so passing
+the `_Pool` mock as the `database_url` arg doesn't TypeError; it
+errors deep inside `get_pool` → caught by the loop's `except`
+→ silent retry → never calls `fetchval`.) The assertion that
+`fetchval_calls` is non-empty is what makes the test red on old
+code and green on new.
 
 - [ ] **Step 3: Refactor `src/docforge/api.py`**
 
@@ -691,11 +697,80 @@ Step 4c: rewrite each test that previously monkey-patched globals. The pattern i
 ```
 
 Apply the same pattern to:
-- `test_returns_503_when_model_not_loaded` — this one needs to delete the embedder override or use `lambda: None` and adjust the assertion (the new handler relies on lifespan-guaranteed embedder; a missing dep raises 500 from FastAPI's `request.state` lookup. Update the test's expectation to `503` only if you keep an explicit guard; otherwise remove this test entirely as the failure mode no longer exists).
-  - **Decision: remove this test** — it tested behaviour that no longer exists in the new architecture (embedder is always present after lifespan starts, by construction). Note the deletion in the commit message.
-- `test_returns_503_on_db_error` — apply the same dependency-overrides pattern; the pool's `acquire` raises.
-- `test_returns_500_on_embed_error` — apply the same pattern; the `embed_query` mock side-effects.
-- The 3 boundary tests added in Phase 3 (`test_search_rejects_*`) need NO refactor — they trigger 422 from Pydantic before any dependency runs.
+
+**`test_returns_503_when_model_not_loaded` — DELETE this test.** The new
+architecture guarantees the embedder is loaded before any request
+handler runs (lifespan startup either succeeds or raises — there's no
+state where a request reaches a handler with `embedder = None`). The
+test asserts unreachable behaviour. Remove the entire `async def
+test_returns_503_when_model_not_loaded(...)` method from
+`TestSearchEndpoint`. Note the deletion in the commit message.
+
+**`test_returns_503_on_db_error`** — rewrite as:
+
+```python
+    @pytest.mark.asyncio
+    async def test_returns_503_on_db_error(self):
+        fake_embedder = MagicMock()
+        fake_embedder.embed_query.return_value = [0.0] * 768
+
+        class _BrokenPool:
+            def acquire(self):
+                raise OSError("db down")
+
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
+        app.dependency_overrides[get_settings] = _settings_stub
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 1,
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 503
+        assert "Database unavailable" in resp.json()["detail"]
+```
+
+**`test_returns_500_on_embed_error`** — rewrite as:
+
+```python
+    @pytest.mark.asyncio
+    async def test_returns_500_on_embed_error(self):
+        fake_embedder = MagicMock()
+        fake_embedder.embed_query.side_effect = RuntimeError("embed broken")
+
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = _settings_stub
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 1,
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 500
+```
+
+**The 3 boundary tests added in Phase 3** (`test_search_rejects_limit_over_max`,
+`test_search_rejects_query_over_max_length`, `test_search_rejects_limit_under_min`)
+need NO refactor — they trigger 422 from Pydantic before any handler
+dependency resolves, so they don't touch globals or overrides.
 
 `TestSourcesEndpoint::test_lists_sources` and `test_returns_503_on_db_error` — same pattern (override `get_pool_dep`, `get_settings`).
 
