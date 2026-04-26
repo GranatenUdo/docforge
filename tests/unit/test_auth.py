@@ -3,33 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.conftest import FakePool
+from tests.conftest import FakePool, fake_settings
+
+
+class _NoOpTransaction:
+    """Async-context-manager stand-in for asyncpg's `conn.transaction()`."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        pass
 
 
 @pytest.fixture
 def stub_downstream(fake_embedder):
     """Short-circuit /search past embedder + DB + log_query so auth tests
-    can focus on auth behaviour."""
-    from docforge.api import app, get_embedder, get_pool_dep, get_settings
+    can focus on auth behaviour. Also stubs `get_azure_scheme` to None so
+    auth-mode-none tests don't need to override it themselves."""
+    from docforge.api import app, get_azure_scheme, get_embedder, get_pool_dep, get_settings
 
     fake_pool = FakePool(rows=[])
-    settings_stub = lambda: SimpleNamespace(  # noqa: E731
-        database_url="postgresql://fake",
-        tag_match_weight=0.1,
-        org_tag_weight=0.05,
-        pool_min_size=5,
-        pool_max_size=25,
-        query_log_retention_days=180,
-    )
 
     app.dependency_overrides[get_embedder] = lambda: fake_embedder()
     app.dependency_overrides[get_pool_dep] = lambda: fake_pool
-    app.dependency_overrides[get_settings] = settings_stub
+    app.dependency_overrides[get_settings] = fake_settings
+    # setdefault so a sibling fixture (e.g. stub_entra) that ran first
+    # keeps its get_azure_scheme override.
+    app.dependency_overrides.setdefault(get_azure_scheme, lambda: None)
 
     yield
 
@@ -67,24 +72,20 @@ class TestAuthModeNone:
 
     @pytest.mark.asyncio
     async def test_search_accepts_unauthenticated(self, stub_downstream):
-        from docforge.api import app, get_azure_scheme
+        from docforge.api import app
 
-        app.dependency_overrides[get_azure_scheme] = lambda: None
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.post(
-                    "/search",
-                    json={
-                        "query": "test",
-                        "user_name": "tobias",
-                        "team_name": "platform",
-                        "area_name": None,
-                        "limit": 3,
-                    },
-                )
-            assert resp.status_code == 200
-        finally:
-            app.dependency_overrides.pop(get_azure_scheme, None)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/search",
+                json={
+                    "query": "test",
+                    "user_name": "tobias",
+                    "team_name": "platform",
+                    "area_name": None,
+                    "limit": 3,
+                },
+            )
+        assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_health_always_unauthenticated(self):
@@ -190,14 +191,7 @@ class TestQueryLogCleanup:
                 return "DELETE 0"
 
             def transaction(self):
-                return _Tx()
-
-        class _Tx:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                pass
+                return _NoOpTransaction()
 
         class _Ctx:
             async def __aenter__(self):
@@ -239,14 +233,7 @@ class TestQueryLogCleanup:
                 return "DELETE 0"
 
             def transaction(self):
-                return _Tx()
-
-        class _Tx:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                pass
+                return _NoOpTransaction()
 
         class _Ctx:
             async def __aenter__(self):
@@ -297,14 +284,7 @@ class TestQueryLogCleanup:
                 return "DELETE 0"
 
             def transaction(self):
-                return _Tx()
-
-        class _Tx:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                pass
+                return _NoOpTransaction()
 
         class _Ctx:
             async def __aenter__(self):

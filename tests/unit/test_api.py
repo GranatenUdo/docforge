@@ -4,48 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from docforge.api import app, get_azure_scheme, get_embedder, get_pool_dep, get_settings
-from tests.conftest import FakePool
-
-
-class _CapturingConn:
-    """Returns rows for SELECT; captures query_log INSERTs via execute."""
-
-    def __init__(self, rows, executes):
-        self._rows = rows
-        self._executes = executes
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-    async def execute(self, query, *args):
-        self._executes.append((query, args))
-
-
-class _CapturingCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    async def __aenter__(self):
-        return self._conn
-
-    async def __aexit__(self, *a):
-        return None
-
-
-class _CapturingPool:
-    def __init__(self, rows):
-        self.rows = rows
-        self.executes = []
-
-    def acquire(self):
-        return _CapturingCtx(_CapturingConn(self.rows, self.executes))
+from tests.conftest import CapturingPool, FakePool, fake_settings
 
 
 @pytest.fixture(autouse=True)
@@ -67,8 +32,8 @@ def _no_lifespan_defaults():
     _fake_embedder.model_name = "test"
 
     app.dependency_overrides[get_azure_scheme] = lambda: None
-    app.dependency_overrides[get_settings] = _settings_stub
-    app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
+    app.dependency_overrides[get_settings] = fake_settings
+    app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
     app.dependency_overrides[get_embedder] = lambda: _fake_embedder
     yield
     app.dependency_overrides.clear()
@@ -77,17 +42,6 @@ def _no_lifespan_defaults():
 def _client():
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
-
-
-def _settings_stub():
-    return SimpleNamespace(
-        database_url="postgresql://fake",
-        tag_match_weight=0.1,
-        org_tag_weight=0.05,
-        pool_min_size=5,
-        pool_max_size=25,
-        query_log_retention_days=180,
-    )
 
 
 class TestHealthEndpoint:
@@ -123,11 +77,11 @@ class TestSearchEndpoint:
         fake_embedder.embed_query.return_value = [0.0] * 768
         fake_embedder.model_name = "fake"
 
-        pool = _CapturingPool(rows)
+        pool = CapturingPool(rows)
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
         app.dependency_overrides[get_pool_dep] = lambda: pool
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -161,7 +115,7 @@ class TestSearchEndpoint:
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
         app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -185,8 +139,8 @@ class TestSearchEndpoint:
         fake_embedder.embed_query.side_effect = RuntimeError("embed broken")
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
-        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -272,8 +226,8 @@ class TestSearchEndpoint:
         fake_embedder.embed_query.return_value = [0.0] * 768
 
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
-        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.post(
@@ -308,7 +262,7 @@ class TestSourcesEndpoint:
         fake_pool = FakePool(rows)
 
         app.dependency_overrides[get_pool_dep] = lambda: fake_pool
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.get("/sources")
@@ -327,7 +281,7 @@ class TestSourcesEndpoint:
                 raise OSError("boom")
 
         app.dependency_overrides[get_pool_dep] = lambda: _BrokenPool()
-        app.dependency_overrides[get_settings] = _settings_stub
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.get("/sources")
@@ -350,19 +304,11 @@ class TestRequestTimingInstrumentation:
 
         monkeypatch.setattr("docforge.api.log_query", fake_log_query)
 
-        class _FakeEmbedder:
-            model_name = "test"
-            dimensions = 768
+        from tests.conftest import FakeEmbedder
 
-            def embed_query(self, q):
-                return [0.0] * 768
-
-        from docforge.api import get_azure_scheme
-
-        app.dependency_overrides[get_embedder] = lambda: _FakeEmbedder()
-        app.dependency_overrides[get_pool_dep] = lambda: _CapturingPool(rows=[])
-        app.dependency_overrides[get_settings] = _settings_stub
-        app.dependency_overrides[get_azure_scheme] = lambda: None
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=[])
+        app.dependency_overrides[get_settings] = fake_settings
         try:
             async with _client() as client:
                 resp = await client.post(

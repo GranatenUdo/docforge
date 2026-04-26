@@ -8,37 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
-class _CapturingConn:
-    def __init__(self, rows, executes):
-        self._rows = rows
-        self._executes = executes
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-    async def execute(self, query, *args):
-        self._executes.append((query, args))
-
-
-class _CapturingCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    async def __aenter__(self):
-        return self._conn
-
-    async def __aexit__(self, *a):
-        return None
-
-
-class _CapturingPool:
-    def __init__(self, rows):
-        self.rows = rows
-        self.executes = []
-
-    def acquire(self):
-        return _CapturingCtx(_CapturingConn(self.rows, self.executes))
+from tests.conftest import CapturingPool
 
 
 @pytest.fixture
@@ -46,7 +16,7 @@ def patch_mcp_deps(monkeypatch):
     def _install(rows):
         from docforge import mcp_server as mod
 
-        pool = _CapturingPool(rows)
+        pool = CapturingPool(rows)
 
         async def fake_get_pool(url, **kwargs):
             return pool

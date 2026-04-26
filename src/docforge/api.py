@@ -35,6 +35,8 @@ async def _query_log_cleanup_loop(pool: asyncpg.Pool, retention_days: int) -> No
     """Each iteration takes a transaction-scoped advisory lock. A replica
     that can't acquire it skips this iteration. The lock auto-releases at
     COMMIT/ROLLBACK and on connection drop — no manual unlock to forget."""
+    # int() coercion makes the f-string SQL below injection-safe; asyncpg's
+    # $1::interval parameter binding doesn't accept str, hence the literal.
     days = int(retention_days)
     while True:
         try:
@@ -85,8 +87,9 @@ async def lifespan(app: FastAPI):
     )
     try:
         # Embedder construction can raise (Phase 1 dimension guard); the
-        # outer finally still closes the pool in that case.
-        embedder = Embedder.from_settings(settings)
+        # outer finally still closes the pool in that case. Offloaded to a
+        # thread so the model-load file I/O doesn't stall the event loop.
+        embedder = await asyncio.to_thread(Embedder.from_settings, settings)
         logger.info("Model loaded: %s (%dd)", embedder.model_name, embedder.dimensions)
 
         azure_scheme = _build_auth_scheme(settings)
