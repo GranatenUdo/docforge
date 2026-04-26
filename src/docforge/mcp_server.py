@@ -43,11 +43,7 @@ def _get_embedder() -> Embedder:
     if _embedder is None:
         settings = _get_settings()
         logger.info("Loading embedding model (this may take a few seconds)...")
-        _embedder = Embedder(
-            settings.embedding_model,
-            hf_token=settings.hf_token.get_secret_value(),
-            expected_dimensions=settings.embedding_dimensions,
-        )
+        _embedder = Embedder.from_settings(settings)
     return _embedder
 
 

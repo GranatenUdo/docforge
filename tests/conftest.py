@@ -61,6 +61,10 @@ class FakeEmbedder:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
+    @classmethod
+    def from_settings(cls, settings) -> "FakeEmbedder":
+        return cls()
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * 767 + [float(i + 1) / 1000.0] for i, _ in enumerate(texts)]
 

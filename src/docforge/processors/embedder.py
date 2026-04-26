@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from docforge.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,20 @@ class Embedder:
                 f"{expected_dimensions}-d model, or update embedding_dimensions "
                 f"and run a schema migration to vector({self.dimensions})."
             )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> Embedder:
+        """Construct an Embedder from the application Settings.
+
+        All four production callers (API, MCP, ingest, CLI) go through this so
+        that the settings-derived construction lives in one place; adding a
+        new settings-driven parameter doesn't require updating every site.
+        """
+        return cls(
+            settings.embedding_model,
+            hf_token=settings.hf_token.get_secret_value(),
+            expected_dimensions=settings.embedding_dimensions,
+        )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts.

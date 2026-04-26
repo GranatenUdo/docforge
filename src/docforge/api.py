@@ -87,11 +87,7 @@ async def lifespan(app: FastAPI):
             settings.auth.audience,
         )
     logger.info("Loading embedding model...")
-    _embedder = Embedder(
-        settings.embedding_model,
-        hf_token=settings.hf_token.get_secret_value(),
-        expected_dimensions=settings.embedding_dimensions,
-    )
+    _embedder = Embedder.from_settings(settings)
     logger.info("Model loaded: %s (%dd)", _embedder.model_name, _embedder.dimensions)
 
     _cleanup_task = asyncio.create_task(
