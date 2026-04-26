@@ -5,6 +5,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
+import httpx
+
 if TYPE_CHECKING:
     from docforge.config import Settings
 
@@ -150,3 +152,86 @@ class Embedder:
             return len(tokenizer.encode(text, add_special_tokens=False))
 
         return count_tokens
+
+
+class RemoteEmbedder:
+    """HTTP client for the docforge embedder service.
+
+    Async-only surface. Sync callers (the CLI) construct Embedder
+    directly and bypass the factory.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        expected_dimensions: int,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self._url = url.rstrip("/")
+        self._token = token
+        self._expected_dimensions = expected_dimensions
+        self._timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
+        self.model_name: str = "remote"
+        self.dimensions: int = expected_dimensions
+
+    async def _ensure_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout_seconds)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _post_embed(self, texts: list[str]) -> list[list[float]]:
+        client = await self._ensure_client()
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(
+                    f"{self._url}/embed",
+                    json={"texts": texts},
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                got_dims = payload["dimensions"]
+                if got_dims != self._expected_dimensions:
+                    raise RuntimeError(
+                        f"Embedder dimension mismatch: service at {self._url} "
+                        f"returned {got_dims}-d, but config requires "
+                        f"{self._expected_dimensions}-d. Either roll the "
+                        f"embedder service to a {self._expected_dimensions}-d "
+                        f"model, or update embedding_dimensions and migrate "
+                        f"the schema."
+                    )
+                return payload["vectors"]
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_exc = e
+                if attempt == 1:
+                    await asyncio.sleep(0.15)
+                    continue
+                raise
+            except httpx.HTTPStatusError as e:
+                # 4xx is config / auth — fail loud, do not retry.
+                if e.response.status_code < 500:
+                    raise
+                last_exc = e
+                if attempt == 1:
+                    await asyncio.sleep(0.15)
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        return await self._post_embed(texts)
+
+    async def aembed_query(self, query: str) -> list[float]:
+        result = await self._post_embed([query])
+        return result[0]
+
+    def get_tokenizer_fn(self) -> Callable[[str], int]:
+        return lambda s: len(s.split())
