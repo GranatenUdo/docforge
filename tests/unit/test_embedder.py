@@ -163,3 +163,47 @@ class TestEmbedderMethods:
         """Batch larger than MAX_BATCH_SIZE raises ValueError before reaching the model."""
         with pytest.raises(ValueError, match="exceeds max"):
             embedder.embed(["x"] * (MAX_BATCH_SIZE + 1))
+
+
+class TestEmbedderAsyncHelpers:
+    """Phase 4b: async helpers wrap sync embed/embed_query via to_thread.
+    Async callers (api, mcp, ingest) use these instead of the sync forms."""
+
+    @pytest.mark.asyncio
+    async def test_aembed_delegates_to_embed(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import sentence_transformers
+
+        from docforge.processors.embedder import Embedder
+
+        # Avoid actually loading a model — patch encode at the source.
+        fake_st = MagicMock()
+        fake_st_instance = MagicMock()
+        fake_st_instance.get_embedding_dimension.return_value = 768
+        fake_st_instance.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 768, [0.2] * 768])
+        fake_st.return_value = fake_st_instance
+        monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_st)
+
+        e = Embedder("test/model", expected_dimensions=768)
+        result = await e.aembed(["a", "b"])
+        assert result == [[0.1] * 768, [0.2] * 768]
+
+    @pytest.mark.asyncio
+    async def test_aembed_query_delegates_to_embed_query(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import sentence_transformers
+
+        from docforge.processors.embedder import Embedder
+
+        fake_st = MagicMock()
+        fake_st_instance = MagicMock()
+        fake_st_instance.get_embedding_dimension.return_value = 768
+        fake_st_instance.encode.return_value = MagicMock(tolist=lambda: [[0.5] * 768])
+        fake_st.return_value = fake_st_instance
+        monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_st)
+
+        e = Embedder("test/model", expected_dimensions=768)
+        result = await e.aembed_query("hello")
+        assert result == [0.5] * 768

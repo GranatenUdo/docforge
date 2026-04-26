@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from docforge.config import Settings
@@ -10,6 +11,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_BATCH_SIZE = 256  # typical sentence-transformers per-call ceiling; chunk above this
+
+
+@runtime_checkable
+class EmbedderProtocol(Protocol):
+    """Common surface across Embedder and RemoteEmbedder.
+
+    Async callers (api, mcp_server, ingest) program against this via
+    `aembed_query` / `aembed`. Sync callers (cli) use Embedder directly,
+    not the protocol.
+    """
+
+    model_name: str
+    dimensions: int
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]: ...
+    async def aembed_query(self, query: str) -> list[float]: ...
+    def get_tokenizer_fn(self) -> Callable[[str], int]: ...
 
 
 class Embedder:
@@ -115,6 +133,14 @@ class Embedder:
         """Generate embedding for a single search query."""
         result = self.embed([query])
         return result[0]
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        """Async wrapper around `embed`; runs the sync model call in a thread."""
+        return await asyncio.to_thread(self.embed, texts)
+
+    async def aembed_query(self, query: str) -> list[float]:
+        """Async wrapper around `embed_query`; runs the sync model call in a thread."""
+        return await asyncio.to_thread(self.embed_query, query)
 
     def get_tokenizer_fn(self) -> Callable[[str], int]:
         """Return a token-counting function using this model's tokenizer."""
