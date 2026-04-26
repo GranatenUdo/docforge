@@ -234,10 +234,12 @@ In `tests/unit/test_auth.py`, append a new test method to the
     async def test_cleanup_loop_skips_when_lock_held_by_another_replica(self, monkeypatch):
         """When pg_try_advisory_xact_lock returns False (another replica holds
         the lock), the loop logs a debug line and skips the DELETE."""
+        fetchval_calls: list[tuple] = []
         delete_calls: list[tuple] = []
 
         class _Conn:
             async def fetchval(self, query, *args):
+                fetchval_calls.append((query, args))
                 # Simulate "lock unavailable" — another replica has it
                 return False
 
@@ -278,6 +280,9 @@ In `tests/unit/test_auth.py`, append a new test method to the
         except asyncio.CancelledError:
             pass
 
+        # The loop ran ≥1 iteration: at least one fetchval (lock probe) happened
+        assert len(fetchval_calls) >= 1
+        assert "pg_try_advisory_xact_lock" in fetchval_calls[0][0]
         # No DELETE should fire because the lock was unavailable
         assert delete_calls == []
 ```
