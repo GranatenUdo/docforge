@@ -1093,10 +1093,21 @@ All 7 should pass.
 
 - [ ] **Step 5: Add an integration test that spawns the embedder**
 
+The CI integration job has no `HF_TOKEN` secret and caches only the
+ungated `sentence-transformers/all-MiniLM-L6-v2` (384-d). To stay
+consistent with `tests/integration/test_embedder_real_model.py`,
+override `EMBEDDING_MODEL` and `EMBEDDING_DIMENSIONS` in the fixture
+and assert against 384-d output. The marker `integration` keeps the
+test out of the unit run.
+
 Create `tests/integration/test_embedder_sidecar.py`:
 
 ```python
-"""End-to-end integration: spawn the embedder service, point search at it."""
+"""End-to-end integration: spawn the embedder service, point a RemoteEmbedder
+at it, exercise the auth + dim-guard contracts.
+
+Uses the ungated all-MiniLM-L6-v2 (384-d) so this runs without HF_TOKEN —
+matching the existing tests/integration/test_embedder_real_model.py pattern."""
 
 from __future__ import annotations
 
@@ -1110,6 +1121,9 @@ import httpx
 import pytest
 import uvicorn
 
+UNGATED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+UNGATED_DIM = 384
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -1119,10 +1133,15 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def embedder_service():
-    """Spawn docforge.embedder_api on a free port; yield (url, token)."""
+    """Spawn docforge.embedder_api on a free port with the ungated model;
+    yield (url, token)."""
     port = _free_port()
     token = "integration-test-token"
+    # Override settings via env vars so the spawned process picks up
+    # the ungated model and matching dims.
     os.environ["EMBEDDER_TOKEN"] = token
+    os.environ["EMBEDDING_MODEL"] = UNGATED_MODEL
+    os.environ["EMBEDDING_DIMENSIONS"] = str(UNGATED_DIM)
 
     config = uvicorn.Config(
         "docforge.embedder_api:app",
@@ -1153,30 +1172,33 @@ def embedder_service():
 
     server.should_exit = True
     thread.join()
-    del os.environ["EMBEDDER_TOKEN"]
+    for var in ("EMBEDDER_TOKEN", "EMBEDDING_MODEL", "EMBEDDING_DIMENSIONS"):
+        os.environ.pop(var, None)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_remote_embedder_against_real_service(embedder_service):
     from docforge.processors.embedder import RemoteEmbedder
 
     url, token = embedder_service
-    e = RemoteEmbedder(url=url, token=token, expected_dimensions=768)
+    e = RemoteEmbedder(url=url, token=token, expected_dimensions=UNGATED_DIM)
     try:
         result = await e.aembed_query("hello world")
-        assert len(result) == 768
+        assert len(result) == UNGATED_DIM
         assert all(isinstance(v, float) for v in result)
     finally:
         await e.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_remote_embedder_rejects_wrong_token(embedder_service):
     from docforge.processors.embedder import RemoteEmbedder
     import httpx
 
     url, _ = embedder_service
-    e = RemoteEmbedder(url=url, token="wrong-token", expected_dimensions=768)
+    e = RemoteEmbedder(url=url, token="wrong-token", expected_dimensions=UNGATED_DIM)
     try:
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await e.aembed_query("x")
@@ -1185,19 +1207,17 @@ async def test_remote_embedder_rejects_wrong_token(embedder_service):
         await e.aclose()
 ```
 
-- [ ] **Step 6: Run integration test (gated on `--with-real-model` or similar)**
-
-The integration test loads the real EmbeddingGemma model — slow on
-first run (model download), fast thereafter (HF cache). Don't include
-in the default unit-test gate. Add to integration suite:
+- [ ] **Step 6: Run integration test**
 
 ```bash
-python -m pytest tests/integration/test_embedder_sidecar.py -v -s --no-cov 2>&1 | tail -10
+python -m pytest -m integration tests/integration/test_embedder_sidecar.py -v -s --no-cov 2>&1 | tail -15
 ```
 
-Mark with `@pytest.mark.integration` if there's an existing marker.
-Otherwise just leave under `tests/integration/` and rely on the
-existing CI integration job to pick it up.
+The CI integration job runs `pytest -m integration --no-cov` over the
+whole `tests/integration/` directory (see `.github/workflows/ci.yml`),
+so the new test is picked up automatically. Local runs need the same
+`-m integration` flag because the marker is excluded from the default
+collection.
 
 - [ ] **Step 7: Lint + full unit suite**
 
@@ -1355,23 +1375,18 @@ The CI workflow forwards the secret to BuildKit via
 layer.
 ```
 
-- [ ] **Step 3: Wire integration tests to spawn the embedder**
+- [ ] **Step 3: Confirm integration job picks up the new test**
 
-The integration test in Task 4 Step 5 already self-spawns via
-`uvicorn.Server` in a thread. The CI integration job needs no extra
-wiring beyond ensuring the test directory is included.
+The existing `integration` job in `.github/workflows/ci.yml` runs
+`pytest -m integration --no-cov` over the whole `tests/` tree. The
+Phase 4b integration test (Task 4 Step 5) is marked
+`@pytest.mark.integration` and uses the ungated MiniLM model, so it
+runs without `HF_TOKEN` and gets picked up automatically — no workflow
+change needed beyond the embedder image-build job in Step 1.
 
-If the existing `ci.yml` runs `pytest tests/integration` already,
-nothing to change. If not, add:
-
-```yaml
-      - name: Run integration tests
-        run: |
-          source .venv/bin/activate
-          python -m pytest tests/integration -v --no-cov
-        env:
-          EMBEDDER_TOKEN: integration-test-token
-```
+The HuggingFace cache key in the integration job
+(`hf-${{ runner.os }}-all-minilm-l6-v2`) already covers this test's
+model. No cache change needed.
 
 - [ ] **Step 4: Verify the workflow syntax**
 
