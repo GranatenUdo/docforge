@@ -226,7 +226,11 @@ async def _search(query: str, user_name: str, team_name: str, area_name: str | N
     user_tags = [team_name] + ([area_name] if area_name else [])
 
     try:
-        pool = await get_pool(settings.database_url)
+        pool = await get_pool(
+            settings.database_url,
+            min_size=settings.pool_min_size,
+            max_size=settings.pool_max_size,
+        )
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -283,7 +287,11 @@ async def _status():
 
     settings = Settings()
     try:
-        pool = await get_pool(settings.database_url)
+        pool = await get_pool(
+            settings.database_url,
+            min_size=settings.pool_min_size,
+            max_size=settings.pool_max_size,
+        )
         async with pool.acquire() as conn:
             sources = await conn.fetchval("SELECT count(*) FROM sources")
             chunks = await conn.fetchval("SELECT count(*) FROM chunks")
