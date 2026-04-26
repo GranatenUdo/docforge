@@ -96,6 +96,8 @@ async def test_query_log_table_exists(pg_url):
             "query",
             "result_count",
             "created_at",
+            "user_oid",
+            "request_ms",
         ]
     finally:
         await conn.close()
