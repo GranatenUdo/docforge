@@ -47,3 +47,21 @@ param containerImage = ''
 // for dev/test to reduce cost — you'll pay in first-request latency.
 param minReplicas = 1
 param maxReplicas = 3
+
+// Embedder Container App image reference. Leave empty for initial deployment
+// (a placeholder image is used). Deploy both containerImage and embedderImage
+// together on the second pass to ensure EMBEDDER_URL is wired correctly.
+param embedderImage = ''
+
+// embedderMinReplicas=0 (scale-to-zero) is cheapest for dev/test.
+// Set to 1 in production to avoid cold-start latency on the first request
+// (embedder cold start ~5–10s with baked model weights).
+param embedderMinReplicas = 0
+param embedderMaxReplicas = 5
+
+// Bearer token shared between the search API and the embedder service.
+// Do NOT commit a real value here. Supply at deploy time:
+//   --parameters embedderToken="$(openssl rand -hex 32)"
+// Rotate by re-deploying with a new value; the Key Vault secret and both
+// Container Apps are updated atomically in the same Bicep apply.
+param embedderToken = '__SET_AT_DEPLOY_TIME__'

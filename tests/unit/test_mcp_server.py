@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,14 +14,14 @@ from tests.conftest import CapturingPool
 def patch_mcp_deps(monkeypatch):
     def _install(rows):
         from docforge import mcp_server as mod
+        from tests.conftest import FakeEmbedder
 
         pool = CapturingPool(rows)
 
         async def fake_get_pool(url, **kwargs):
             return pool
 
-        fake_embedder = MagicMock()
-        fake_embedder.embed_query.return_value = [0.0] * 768
+        fake_embedder = FakeEmbedder()
 
         monkeypatch.setattr(mod, "get_pool", fake_get_pool)
         monkeypatch.setattr(mod, "_get_embedder", lambda: fake_embedder)
@@ -69,7 +68,6 @@ async def test_search_documentation_formats_results(patch_mcp_deps):
     assert "Platform team owns orgs." in result
     assert "0.92" in result
     assert "Tags: platform, cloud" in result
-    fake_embedder.embed_query.assert_called_once_with("who owns orgs")
     # query_log insert fired
     assert any("INSERT INTO query_log" in q for q, _ in pool.executes)
 
@@ -182,18 +180,10 @@ async def test_search_documentation_rejects_query_over_max_length():
 
 @pytest.mark.asyncio
 async def test_search_documentation_runs_embed_via_to_thread(monkeypatch, patch_mcp_deps):
-    """The synchronous embed_query call goes through asyncio.to_thread
-    so the event loop is not blocked during inference."""
-    import asyncio as _asyncio
-
-    captured: dict = {"args": None}
-    original_to_thread = _asyncio.to_thread
-
-    async def spy_to_thread(func, *args, **kwargs):
-        captured["args"] = (func, args, kwargs)
-        return await original_to_thread(func, *args, **kwargs)
-
-    monkeypatch.setattr(_asyncio, "to_thread", spy_to_thread)
+    """The search_documentation handler calls aembed_query on the embedder,
+    which (for in-process Embedder) delegates to asyncio.to_thread internally.
+    This test verifies aembed_query is called with the correct query string."""
+    from unittest.mock import AsyncMock
 
     rows = [
         {
@@ -207,10 +197,12 @@ async def test_search_documentation_runs_embed_via_to_thread(monkeypatch, patch_
     ]
     pool, fake_embedder = patch_mcp_deps(rows)
 
+    # Wrap aembed_query in an AsyncMock so we can assert on the call.
+    spy = AsyncMock(return_value=[0.0] * 768)
+    fake_embedder.aembed_query = spy
+
     from docforge.mcp_server import search_documentation
 
     await search_documentation("hello", user_name="u", team_name="t")
 
-    assert captured["args"] is not None, "embed_query was not run via asyncio.to_thread"
-    assert captured["args"][0] == fake_embedder.embed_query
-    assert captured["args"][1] == ("hello",)
+    spy.assert_called_once_with("hello")

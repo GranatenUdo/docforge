@@ -99,6 +99,59 @@ For team-wide use, deploy the search API to Azure (~$35/month at default SKUs):
 
 See [`deploy/azure/`](deploy/azure/) for Bicep templates and a full cost breakdown.
 
+## Self-hosting / forking
+
+The embedder image bakes the EmbeddingGemma-300M model at build time,
+which requires a HuggingFace access token. Forks and adopters need to:
+
+1. Get an HF token at https://huggingface.co/settings/tokens.
+2. Accept the EmbeddingGemma license at
+   https://huggingface.co/google/embeddinggemma-300m.
+3. Add a repo secret `HF_TOKEN` under
+   `Settings → Secrets and variables → Actions`.
+
+The CI workflow forwards the secret to BuildKit via
+`--mount=type=secret,id=hf_token`; the token never enters any image
+layer. If you fork this repo and run the CI workflow, it will build the
+embedder image automatically on commits to `master` and PRs (without
+pushing unless on `master`). To enable pushes to a registry, also add
+secrets `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD`.
+
+## Upgrading the embedding model
+
+The dimension-mismatch guard in `RemoteEmbedder` makes an
+embedder/search API mismatch loud (`HTTP 503` with a clear log line)
+rather than silent. Upgrade procedure:
+
+1. **Pick the new model.** Note its output dimensionality `D` (e.g.
+   `768` for EmbeddingGemma, `1024` for many newer models).
+
+2. **Update config.** Set `embedding_model: <new>` and
+   `embedding_dimensions: D` in the search API's deployment config
+   (Bicep parameters + Key Vault, or `docforge.yml` for self-hosters).
+
+3. **Build the embedder image** with the new model:
+   ```bash
+   docker build \
+     --build-arg EMBEDDING_MODEL=<new> \
+     --secret id=hf_token,env=HF_TOKEN \
+     -f Dockerfile.embedder \
+     -t docforge-embedder:<tag> .
+   ```
+
+4. **Apply schema migration.** Add a new vector column:
+   ```sql
+   ALTER TABLE chunks ADD COLUMN embedding_new vector(D);
+   ```
+   Re-ingest to populate the new column. Until backfill completes, the
+   search API serves from the old column.
+
+5. **Cut over.** Deploy the new embedder image first, then the new
+   search API. The dim-mismatch guard ensures search refuses to serve
+   wrong-dim vectors.
+
+6. **Drop the old column** after a confidence interval.
+
 ## Configuration
 
 See `docs/` for the full configuration reference, including `docforge.yml` and `sources.yml` schemas.

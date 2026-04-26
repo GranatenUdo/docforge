@@ -217,7 +217,14 @@ async def _search(query: str, user_name: str, team_name: str, area_name: str | N
 
     settings = Settings()
     try:
-        embedder = Embedder.from_settings(settings)
+        # CLI is sync and runs locally — always use in-process Embedder
+        # even when EMBEDDER_URL is set (operators set EMBEDDER_URL for
+        # hosted services, not for local CLI invocations).
+        embedder = Embedder(
+            settings.embedding_model,
+            hf_token=settings.hf_token.get_secret_value(),
+            expected_dimensions=settings.embedding_dimensions,
+        )
     except RuntimeError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

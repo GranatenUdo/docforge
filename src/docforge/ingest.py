@@ -137,7 +137,7 @@ async def _ingest_confluence_source(
 
     logger.info("Embedding %d chunks...", len(chunks))
     texts = [chunk.text for chunk in chunks]
-    embeddings = embedder.embed(texts)
+    embeddings = await embedder.aembed(texts)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -228,7 +228,7 @@ async def _ingest_git_source(
 
         logger.info("Embedding %d chunks for %s/%s", len(chunks), source.title, file.title)
         texts = [chunk.text for chunk in chunks]
-        embeddings = embedder.embed(texts)
+        embeddings = await embedder.aembed(texts)
 
         url = f"file://{source.repo_path}/{file.file_path}"
         async with pool.acquire() as conn:

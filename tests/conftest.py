@@ -114,6 +114,12 @@ class FakeEmbedder:
     def embed_query(self, text: str) -> list[float]:
         return [0.0] * 767 + [0.001]
 
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        return self.embed(texts)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
     def get_tokenizer_fn(self):
         return lambda s: len(s.split())
 

@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     pool_min_size: int = 5
     pool_max_size: int = 25
 
+    # Embedder sidecar (Phase 4b). When `embedder_url` is set, the API,
+    # MCP, and ingest paths delegate embedding to that URL via
+    # RemoteEmbedder; when empty, an in-process Embedder is loaded.
+    embedder_url: str = ""
+    embedder_token: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def _validate_embedder_sidecar(self):
+        if self.embedder_url and not self.embedder_token.get_secret_value():
+            raise ValueError(
+                "embedder_url is set but embedder_token is empty — "
+                "RemoteEmbedder requires a bearer token. Set EMBEDDER_TOKEN "
+                "via env or docforge.yml, or unset embedder_url."
+            )
+        return self
+
     def __init__(self, **kwargs) -> None:
         # Load from docforge.yml if present, then overlay with env vars
         yml_path = Path("docforge.yml")

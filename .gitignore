@@ -39,3 +39,6 @@ models/
 
 # Internal planning artefacts (phase plans, design specs, scratch)
 .superpowers/
+
+# Bicep build artefacts
+deploy/azure/main.json

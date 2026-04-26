@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
+
+import httpx
 
 if TYPE_CHECKING:
     from docforge.config import Settings
@@ -10,6 +13,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_BATCH_SIZE = 256  # typical sentence-transformers per-call ceiling; chunk above this
+
+
+@runtime_checkable
+class EmbedderProtocol(Protocol):
+    """Common surface across Embedder and RemoteEmbedder.
+
+    Async callers (api, mcp_server, ingest) program against this via
+    `aembed_query` / `aembed`. Sync callers (cli) use Embedder directly,
+    not the protocol.
+    """
+
+    model_name: str
+    dimensions: int
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]: ...
+    async def aembed_query(self, query: str) -> list[float]: ...
+    def get_tokenizer_fn(self) -> Callable[[str], int]: ...
 
 
 class Embedder:
@@ -78,13 +98,26 @@ class Embedder:
             )
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> Embedder:
-        """Construct an Embedder from the application Settings.
+    def from_settings(cls, settings: Settings) -> EmbedderProtocol:
+        """Construct an embedder from Settings.
 
-        All four production callers (API, MCP, ingest, CLI) go through this so
-        that the settings-derived construction lives in one place; adding a
-        new settings-driven parameter doesn't require updating every site.
+        Returns RemoteEmbedder when settings.embedder_url is set;
+        otherwise returns an in-process Embedder. The CLI bypasses this
+        factory and constructs Embedder(...) directly so local CLI
+        runs always use the in-process model regardless of EMBEDDER_URL.
         """
+        if settings.embedder_url:
+            token = settings.embedder_token.get_secret_value()
+            if not token:
+                raise RuntimeError(
+                    "embedder_url is set but embedder_token is empty — "
+                    "refusing to construct a RemoteEmbedder without auth"
+                )
+            return RemoteEmbedder(
+                url=settings.embedder_url,
+                token=token,
+                expected_dimensions=settings.embedding_dimensions,
+            )
         return cls(
             settings.embedding_model,
             hf_token=settings.hf_token.get_secret_value(),
@@ -116,6 +149,14 @@ class Embedder:
         result = self.embed([query])
         return result[0]
 
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        """Async wrapper around `embed`; runs the sync model call in a thread."""
+        return await asyncio.to_thread(self.embed, texts)
+
+    async def aembed_query(self, query: str) -> list[float]:
+        """Async wrapper around `embed_query`; runs the sync model call in a thread."""
+        return await asyncio.to_thread(self.embed_query, query)
+
     def get_tokenizer_fn(self) -> Callable[[str], int]:
         """Return a token-counting function using this model's tokenizer."""
         tokenizer = self._model.tokenizer
@@ -124,3 +165,82 @@ class Embedder:
             return len(tokenizer.encode(text, add_special_tokens=False))
 
         return count_tokens
+
+
+class RemoteEmbedder:
+    """HTTP client for the docforge embedder service.
+
+    Async-only surface. Sync callers (the CLI) construct Embedder
+    directly and bypass the factory.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        expected_dimensions: int,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self._url = url.rstrip("/")
+        self._token = token
+        self._expected_dimensions = expected_dimensions
+        self._timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
+        self.model_name: str = "remote"
+        self.dimensions: int = expected_dimensions
+
+    async def _ensure_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout_seconds)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _post_embed(self, texts: list[str]) -> list[list[float]]:
+        client = await self._ensure_client()
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(
+                    f"{self._url}/embed",
+                    json={"texts": texts},
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                got_dims = payload["dimensions"]
+                if got_dims != self._expected_dimensions:
+                    raise RuntimeError(
+                        f"Embedder dimension mismatch: service at {self._url} "
+                        f"returned {got_dims}-d, but config requires "
+                        f"{self._expected_dimensions}-d. Either roll the "
+                        f"embedder service to a {self._expected_dimensions}-d "
+                        f"model, or update embedding_dimensions and migrate "
+                        f"the schema."
+                    )
+                return payload["vectors"]
+            except (httpx.TimeoutException, httpx.TransportError):
+                if attempt == 1:
+                    await asyncio.sleep(0.15)
+                    continue
+                raise
+            except httpx.HTTPStatusError as e:
+                # 4xx is config / auth — fail loud, do not retry.
+                if e.response.status_code < 500 or attempt == 2:
+                    raise
+                await asyncio.sleep(0.15)
+        # The for-loop's two attempts always either return or raise; this
+        # line is unreachable but keeps mypy happy about implicit None.
+        raise RuntimeError("unreachable")
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        return await self._post_embed(texts)
+
+    async def aembed_query(self, query: str) -> list[float]:
+        result = await self._post_embed([query])
+        return result[0]
+
+    def get_tokenizer_fn(self) -> Callable[[str], int]:
+        return lambda s: len(s.split())

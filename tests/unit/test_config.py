@@ -218,3 +218,46 @@ class TestPoolSettings:
         s = Settings()
         assert s.pool_min_size == 2
         assert s.pool_max_size == 10
+
+
+class TestEmbedderSidecarSettings:
+    def test_defaults_when_unset(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in ("EMBEDDER_URL", "EMBEDDER_TOKEN"):
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.embedder_url == ""
+        assert s.embedder_token.get_secret_value() == ""
+
+    def test_url_and_token_loadable_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("EMBEDDER_URL", "https://embed.internal")
+        monkeypatch.setenv("EMBEDDER_TOKEN", "hunter2")
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.embedder_url == "https://embed.internal"
+        assert s.embedder_token.get_secret_value() == "hunter2"
+
+    def test_url_set_without_token_raises(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "docforge.yml").write_text(
+            "embedder_url: https://embed.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("EMBEDDER_TOKEN", raising=False)
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="embedder_token"):
+            Settings()
+
+    def test_token_secretstr_not_in_repr(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("EMBEDDER_URL", "https://embed.internal")
+        monkeypatch.setenv("EMBEDDER_TOKEN", "very-secret-shhh")
+        from docforge.config import Settings
+
+        s = Settings()
+        assert "very-secret-shhh" not in repr(s)
