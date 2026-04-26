@@ -21,7 +21,7 @@
 
 - API boundary tests use the existing `_client()` ASGITransport pattern in `tests/unit/test_api.py`. FastAPI returns 422 with a Pydantic-shaped `detail` list; tests inspect the `loc` field to confirm the right field was rejected.
 - Embedder batch test uses the existing `embedder` fixture in `tests/unit/test_embedder.py::TestEmbedderMethods` — its mocked `encode` is never reached because the size check raises first.
-- **MCP boundary not explicitly tested in this plan.** FastMCP's Pydantic layer enforces Annotated constraints when a tool is invoked through the MCP protocol, but a direct Python call (which is how `tests/unit/test_mcp_server.py` exercises the tool) bypasses Pydantic. Adding a FastMCP-protocol-level test would expand scope; trusting FastMCP's well-tested validation layer is acceptable for v0.3. If MCP boundary testing becomes necessary, a follow-up task can introduce it.
+- MCP boundary tests use `fastmcp.client.Client` to invoke `search_documentation` through the protocol layer (where FastMCP applies Pydantic validation from the `Annotated[T, Field(...)]` metadata). Verified during planning that FastMCP 3.x raises `fastmcp.exceptions.ToolError` (wrapping the underlying `pydantic.ValidationError`) when input violates the constraints. Tests don't need to patch the embedder or DB because validation rejects before the tool function body runs.
 
 ---
 
@@ -33,6 +33,7 @@
 - Modify: `src/docforge/processors/embedder.py` — add `MAX_BATCH_SIZE = 256` constant; raise `ValueError` in `embed` when input exceeds it
 - Modify: `tests/unit/test_api.py` — add 2 boundary tests in `TestSearchEndpoint`
 - Modify: `tests/unit/test_embedder.py` — add 1 batch-limit test in `TestEmbedderMethods`
+- Modify: `tests/unit/test_mcp_server.py` — add 2 MCP-protocol boundary tests at the bottom of the file
 
 - [ ] **Step 1: Write the failing API boundary tests**
 
@@ -87,15 +88,65 @@ Append one new test method to the `TestEmbedderMethods` class in `tests/unit/tes
             embedder.embed(["x"] * (MAX_BATCH_SIZE + 1))
 ```
 
+- [ ] **Step 2b: Write the failing MCP boundary tests**
+
+Append two new test functions at the end of `tests/unit/test_mcp_server.py` (after the existing `test_list_sources_empty_returns_hint`):
+
+```python
+@pytest.mark.asyncio
+async def test_search_documentation_rejects_limit_over_max():
+    """FastMCP enforces the Annotated le=50 constraint at the protocol layer."""
+    from fastmcp.client import Client
+    from fastmcp.exceptions import ToolError
+
+    from docforge.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="less_than_equal"):
+            await client.call_tool(
+                "search_documentation",
+                {
+                    "query": "q",
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 51,
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_search_documentation_rejects_query_over_max_length():
+    """FastMCP enforces the Annotated max_length=8000 constraint."""
+    from fastmcp.client import Client
+    from fastmcp.exceptions import ToolError
+
+    from docforge.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="string_too_long"):
+            await client.call_tool(
+                "search_documentation",
+                {
+                    "query": "x" * 8001,
+                    "user_name": "u",
+                    "team_name": "t",
+                    "limit": 5,
+                },
+            )
+```
+
+These tests don't need the `patch_mcp_deps` fixture because FastMCP's Pydantic validation rejects the call before the tool function body runs — embedder, DB pool, and `_get_settings` are never invoked.
+
 - [ ] **Step 3: Run the new tests — verify they fail**
 
 ```bash
-python -m pytest tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_limit_over_max tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_query_over_max_length tests/unit/test_embedder.py::TestEmbedderMethods::test_embed_rejects_batch_over_max_size -v --tb=short 2>&1 | tail -20
+python -m pytest tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_limit_over_max tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_query_over_max_length tests/unit/test_embedder.py::TestEmbedderMethods::test_embed_rejects_batch_over_max_size tests/unit/test_mcp_server.py::test_search_documentation_rejects_limit_over_max tests/unit/test_mcp_server.py::test_search_documentation_rejects_query_over_max_length -v --tb=short 2>&1 | tail -25
 ```
 
 Expected:
 - API tests fail (current `SearchRequest` accepts any limit and query length, returning 200 or a downstream 503, not 422).
 - Embedder test fails with `ImportError: cannot import name 'MAX_BATCH_SIZE'`.
+- MCP tests: behaviour depends on what 3.x does with an unconstrained `int`/`str`. Most likely they fail because no rejection happens (the call goes through to the tool body and either succeeds or fails downstream for a different reason). Either way, they don't yet enforce the constraint we want.
 
 - [ ] **Step 4: Apply the API constraints in `src/docforge/api.py`**
 
@@ -225,10 +276,10 @@ Replace with:
 - [ ] **Step 7: Run the targeted tests — verify they pass**
 
 ```bash
-python -m pytest tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_limit_over_max tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_query_over_max_length tests/unit/test_embedder.py::TestEmbedderMethods::test_embed_rejects_batch_over_max_size -v --tb=short 2>&1 | tail -15
+python -m pytest tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_limit_over_max tests/unit/test_api.py::TestSearchEndpoint::test_search_rejects_query_over_max_length tests/unit/test_embedder.py::TestEmbedderMethods::test_embed_rejects_batch_over_max_size tests/unit/test_mcp_server.py::test_search_documentation_rejects_limit_over_max tests/unit/test_mcp_server.py::test_search_documentation_rejects_query_over_max_length -v --tb=short 2>&1 | tail -20
 ```
 
-Expected: 3 tests pass.
+Expected: 5 tests pass.
 
 - [ ] **Step 8: Run the full unit suite**
 
@@ -236,7 +287,7 @@ Expected: 3 tests pass.
 python -m pytest -m "not integration" -q --no-header --tb=line 2>&1 | tail -5
 ```
 
-Expected: `161 passed, 12 deselected` (158 pre-existing + 3 new). No regressions.
+Expected: `163 passed, 12 deselected` (158 pre-existing + 5 new). No regressions.
 
 If any pre-existing test fails because it sent `limit > 50` or a long query, update that test's payload to a valid value — the boundary is the contract now. The most likely candidate is anything that sets `limit` very high "just in case." Search for `"limit":` in `tests/` and audit before relaxing the new caps.
 
@@ -251,7 +302,7 @@ Expected: clean. If `ruff format --check` complains about the new `Annotated[...
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/docforge/api.py src/docforge/mcp_server.py src/docforge/processors/embedder.py tests/unit/test_api.py tests/unit/test_embedder.py
+git add src/docforge/api.py src/docforge/mcp_server.py src/docforge/processors/embedder.py tests/unit/test_api.py tests/unit/test_embedder.py tests/unit/test_mcp_server.py
 git commit -m "$(cat <<'EOF'
 feat(api,mcp,embedder): hard-cap request boundaries
 
@@ -268,10 +319,9 @@ deployment. Three caps stop that:
 - Embedder.embed: raises ValueError when len(texts) > 256 (the typical
   per-call batch size for sentence-transformers; chunk above that)
 
-API and MCP both surface 422 with Pydantic's named-field error detail
-so a misbehaving client can fix itself on first contact. The embedder
-batch raises ValueError with a remediation hint ("chunk into smaller
-batches").
+API surfaces 422 with Pydantic's named-field error detail; MCP surfaces
+fastmcp.exceptions.ToolError wrapping the same Pydantic error. Both
+tested explicitly (5 new boundary tests).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
