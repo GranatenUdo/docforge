@@ -68,7 +68,7 @@ select = ["E", "F", "I", "W"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "integration: requires Docker (pgvector container)",
+    "integration: tests requiring real external resources (Docker for Postgres, network for embedding model)",
 ]
 addopts = "--cov=src/docforge"
 
