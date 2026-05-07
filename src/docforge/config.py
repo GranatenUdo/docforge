@@ -104,7 +104,7 @@ class Settings(BaseSettings):
         yml_path = Path("docforge.yml")
         yml_values = {}
         if yml_path.exists():
-            with open(yml_path) as f:
+            with open(yml_path, encoding="utf-8") as f:
                 yml = yaml.safe_load(f) or {}
             # Flatten nested embedding config
             if "embedding" in yml:

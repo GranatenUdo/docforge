@@ -80,3 +80,24 @@ class TestTags:
         sources = load_sources(yml)
         assert sources[0].tags == ["platform", "cloud"]
         assert sources[1].tags == ["org"]
+
+
+def test_load_sources_handles_utf8_titles(tmp_path, monkeypatch):
+    """Regression: sources.yml with non-ASCII titles (emoji, em-dash) must
+    load on systems whose default locale is not UTF-8 (Windows cp1252)."""
+    yml = tmp_path / "sources.yml"
+    yml.write_text(
+        'sources:\n'
+        '  - type: confluence_page\n'
+        '    page_id: "1"\n'
+        '    space_key: HEL\n'
+        '    title: "\U0001F3AF Light-Year Strategy — em-dash"\n'
+        '    tags: [org]\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("locale.getpreferredencoding", lambda do_setlocale=True: "ascii")
+
+    sources = load_sources(yml)
+    assert len(sources) == 1
+    assert sources[0].title == "\U0001F3AF Light-Year Strategy — em-dash"
