@@ -19,7 +19,7 @@ from docforge.processors.embedder import Embedder, EmbedderProtocol
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "knowledge-hub",
+    "docforge",
     instructions=(
         "Search across your team's indexed documentation including team responsibilities, "
         "coding guidelines, architecture standards, and cross-team interfaces. "

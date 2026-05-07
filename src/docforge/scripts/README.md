@@ -54,7 +54,8 @@ will score ~100% regardless of retrieval quality; a query set in natural colleag
 phrasing will score lower even on a perfect system.
 
 **First run -> record the baseline.** Commit the reported recall@1, recall@5, MRR
-and the current `sources.yml` commit SHA to `rag/eval/baseline.md`.
+and the current `sources.yml` commit SHA to your team's baseline file (e.g.,
+`eval/baseline.md` in your deployment repo).
 
 **Future runs -> compare against the baseline.** If metrics drop materially,
 investigate: did `sources.yml` change? Did ingest drift? Did embeddings change?

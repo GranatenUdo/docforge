@@ -3,7 +3,7 @@
 Usage:
     python -m docforge.scripts.eval_search \\
       --api-url https://<fqdn> \\
-      --ground-truth rag/eval/ground_truth.yml \\
+      --ground-truth path/to/ground_truth.yml \\
       --user tobias.ens --team platform --area cloud \\
       --k 5
 
