@@ -33,7 +33,8 @@ param acrName string
 
 @description('Container Registry SKU. Basic is cheapest (10 GB included, low throughput); Standard (100 GB, higher throughput) suits multi-image deployments; Premium adds geo-replication.')
 @allowed(['Basic', 'Standard', 'Premium'])
-param acrSku string = 'Basic'
+// Standard required: the v0.3 Phase 4b embedder image (~13.6 GB) exceeds Basic's 10 GB quota.
+param acrSku string = 'Standard'
 
 @description('Azure region for all resources.')
 param location string = resourceGroup().location

@@ -61,7 +61,9 @@ param embedderMaxReplicas = 5
 
 // Bearer token shared between the search API and the embedder service.
 // Do NOT commit a real value here. Supply at deploy time:
-//   --parameters embedderToken="$(openssl rand -hex 32)"
+//   --parameters embedderToken="$(openssl rand -hex 32)"            (Linux/macOS)
+//   --parameters embedderToken="$(python -c 'import secrets; print(secrets.token_hex(32))')"  (cross-platform)
+//   --parameters embedderToken="$([Convert]::ToHexString((1..32 | %{[byte](Get-Random -Max 256)})))"  (PowerShell)
 // Rotate by re-deploying with a new value; the Key Vault secret and both
 // Container Apps are updated atomically in the same Bicep apply.
 param embedderToken = '__SET_AT_DEPLOY_TIME__'
