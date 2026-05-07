@@ -25,6 +25,22 @@ jobs:
         run: python -m pip install --upgrade build
       - name: Build distribution
         run: python -m build
+      - name: Verify wheel RECORD invariants
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl | head -1)
+          RECORD=$(unzip -p "$WHEEL" "*-info/RECORD")
+          DOCFORGE=$(echo "$RECORD" | grep -c '^docforge/' || true)
+          SRC=$(echo "$RECORD" | grep -c '^src/docforge' || true)
+          if [ "$DOCFORGE" -lt 1 ]; then
+            echo "ERROR: wheel RECORD has no docforge/ entries" >&2
+            exit 1
+          fi
+          if [ "$SRC" -ne 0 ]; then
+            echo "ERROR: wheel RECORD has src/docforge/ entries (src/ leaked into install path)" >&2
+            exit 1
+          fi
+          echo "OK: $DOCFORGE docforge/ entries, $SRC src/docforge entries"
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
       - name: Create GitHub Release
