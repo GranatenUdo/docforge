@@ -71,7 +71,7 @@ jobs:
           fi
       - uses: actions/checkout@v6
         if: steps.check.outputs.skip != 'true'
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
         if: steps.check.outputs.skip != 'true'
       - name: Login to ACR
         if: steps.check.outputs.push == 'true'
