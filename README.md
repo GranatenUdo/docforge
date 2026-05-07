@@ -95,11 +95,12 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ## Deploy to your infrastructure
 
-For team-wide use, deploy the search API to Azure (~$35/month at default SKUs):
+For team-wide use, deploy the search API to Azure (~$90/month at default SKUs with embedder always-on for production; ~$55/month with the default scale-to-zero embedder):
 
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
-- Container Registry, Key Vault, Log Analytics, managed environment.
+- Container App running the embedder service (EmbeddingGemma-300M, model baked into the image).
+- Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
 See [`deploy/azure/`](deploy/azure/) for Bicep templates and a full cost breakdown.

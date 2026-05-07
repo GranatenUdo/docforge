@@ -7,12 +7,12 @@ For a single developer, `docforge serve` on stdio is enough — Claude Code or C
 
 ## Target architecture
 
-Seven Azure resources in one resource group (~$45/month at default SKUs in West Europe):
+Seven Azure resources in one resource group (~$90/month at default SKUs in West Europe with `embedderMinReplicas=1`; ~$55/month with the default `embedderMinReplicas=0` scale-to-zero embedder):
 
 - **Postgres Flexible Server** (Burstable B1ms, 32 GB) with `pgvector` enabled at provisioning time.
-- **Container App** running `docforge serve --api` with Entra ID authentication enabled.
-- **Container App: embedder** running the EmbeddingGemma-300M sidecar (v0.3 Phase 4b). The search API delegates embedding to this service via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
-- **Container Registry** (Basic) hosting the docforge Docker image.
+- **Container App** running `docforge serve --api` with Entra ID authentication enabled (1 vCPU / 1 GiB).
+- **Container App: embedder** running the EmbeddingGemma-300M sidecar (v0.3 Phase 4b, 2 vCPU / 4 GiB). The search API delegates embedding to this service via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
+- **Container Registry** (Standard — required for the ~13.6 GB embedder image; ACR Basic's 10 GB quota is too small).
 - **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
 - **Log Analytics workspace** (30-day retention) for Container App logs.
 - **Container Apps managed environment** (Consumption plan).
@@ -26,7 +26,7 @@ Teammates use a lightweight MCP client that shells out to the hosted API.
 Bicep templates under [`deploy/azure/`](https://github.com/GranatenUdo/docforge/tree/master/deploy/azure) in the repo cover:
 
 - Postgres Flexible Server with `pgvector` installed at provisioning time.
-- Container App environment with 1 always-on replica (warm-up is ~15–30 s for model load on cold starts).
+- Container App environment with 1 always-on search-api replica (cold-start ~30 s for container spin-up; the search API no longer loads the model in-process since the v0.3 Phase 4b embedder split). The embedder Container App defaults to scale-to-zero (`embedderMinReplicas=0`), with ~5–10 s cold-start because the EmbeddingGemma weights are baked into `Dockerfile.embedder` at build time.
 - Managed identity for pulling from Key Vault.
 
 ### 2. Configure authentication
@@ -47,7 +47,7 @@ Run `docforge ingest` from anywhere that can reach the database (a jump box, Git
 
 ## Operating notes
 
-- **Cold-start window.** Container App with minReplicas=1 avoids cold starts in steady state, but post-deployment the first request pays a 15–30 s model-load cost. That's included in P95 as honest signal.
+- **Cold-start window.** Search-api with `minReplicas=1` avoids container cold-starts in steady state; post-deployment the first request pays a ~30 s container spin-up cost (no model load — that responsibility moved to the embedder in Phase 4b). The embedder's default `embedderMinReplicas=0` adds another ~5–10 s on the first request after idle (container spin-up only; weights are baked into the image, so there is no runtime model download). For production traffic, set `embedderMinReplicas=1` to keep the embedder warm. All cold-start latency is included in P95 as honest signal.
 - **Orphan pruning.** When you remove a source from `sources.yml`, run `docforge ingest --purge-orphans` (dry-run) and then `--confirm` to delete. No auto-purge.
 - **Backups.** Postgres Flexible Server Standard_B1ms gets 7-day PITR by default. Test the restore procedure annually:
   ```bash

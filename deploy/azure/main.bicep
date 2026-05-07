@@ -31,6 +31,11 @@ param namePrefix string = 'docforge'
 @description('Container Registry name. Must be globally unique (3-50 alphanumeric). Lowercase required.')
 param acrName string
 
+@description('Container Registry SKU. Basic is cheapest (10 GB included, low throughput); Standard (100 GB, higher throughput) suits multi-image deployments; Premium adds geo-replication.')
+@allowed(['Basic', 'Standard', 'Premium'])
+// Standard required: the v0.3 Phase 4b embedder image (~13.6 GB) exceeds Basic's 10 GB quota.
+param acrSku string = 'Standard'
+
 @description('Azure region for all resources.')
 param location string = resourceGroup().location
 
@@ -248,7 +253,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   location: location
   tags: tags
   sku: {
-    name: 'Basic'
+    name: acrSku
   }
   properties: {
     adminUserEnabled: false

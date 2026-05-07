@@ -39,7 +39,7 @@ The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus un
 Two surfaces, one in-process (CLI) and one hosted (multi-user team deployment):
 
 - **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process.
-- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API can offload embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and start in <10s; the embedder hosts the model in one always-warm replica behind a shared-secret bearer token (`EMBEDDER_TOKEN`).
+- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); cold-start is ~5–10 s with the baked model weights (`Dockerfile.embedder` bakes EmbeddingGemma at build time, so there is no runtime download). The embedder defaults to `embedderMinReplicas=0` (scale-to-zero); set it to `1` for production to keep the model warm.
 
 Both surfaces expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
 
