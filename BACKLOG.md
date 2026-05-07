@@ -8,13 +8,11 @@ public, items here can migrate to GitHub Issues.
 - **Repo cleanup PR A — polish bundle** (Medium, maintenance) — `[project.urls]`, `Makefile`, `.editorconfig`, `.superpowers/` move, README FAQ trim, this `BACKLOG.md`. Spec: `.superpowers/specs/2026-04-25-repo-cleanup-and-backlog-design.md`.
 - **Repo cleanup PR B — asset dedup** (Small, maintenance) — Astro prebuild copy script (`microsite/scripts/sync-assets.mjs`); remove the eight duplicate copies from `microsite/public/`.
 - **Repo cleanup PR C — src/ layout** (Medium, maintenance) — `git mv docforge/ src/docforge/`; `pyproject.toml`, `Dockerfile`, CI workflow, `CONTRIBUTING.md`, `README.md` path updates.
-- **v0.2.1 release** (Small, maintenance) — Bump version, promote `CHANGELOG` `[Unreleased]` to `[0.2.1]`, tag, push.
 
 ## Small
 
 - **Upload social preview card** (maintenance) — GitHub UI: *Settings → Social preview*; upload `docs/assets/social-preview.png`.
 - **Spot-check Discussions categories** (maintenance) — `/discussions → ⋯ → Manage`. Confirm *Announcements / Q&A / Ideas / Show and tell* exist.
-- **Flip repo public** (launch) — When ready: `gh repo edit GranatenUdo/docforge --visibility public --accept-visibility-change-consequences`.
 - **Add wheel-RECORD invariant guard to `release.yml`** (maintenance) — Catch a future misconfigured src layout before it ships a broken wheel. One-liner shell step: assert `grep -c '^docforge/' >= 1` AND `grep -c '^src/docforge' == 0`.
 
 ## Medium
