@@ -5,6 +5,8 @@ on:
     branches: [master]
   push:
     branches: [master]
+  # Manual reruns of lint/test/integration. Does not trigger build-embedder-image
+  # (that job's `if:` gates on push to master, deliberately).
   workflow_dispatch:
 
 permissions:
@@ -85,8 +87,8 @@ jobs:
           file: ./Dockerfile.embedder
           push: ${{ steps.check.outputs.push == 'true' }}
           tags: |
-            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-embedder:{1}', secrets.ACR_LOGIN_SERVER, github.sha) || 'docforge-embedder:dev' }}
-            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-embedder:latest', secrets.ACR_LOGIN_SERVER) || 'docforge-embedder:latest' }}
+            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-embedder:{1}', secrets.ACR_LOGIN_SERVER, github.sha) || format('docforge-embedder:{0}', github.sha) }}
+            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-embedder:latest', secrets.ACR_LOGIN_SERVER) || '' }}
           secrets: |
             "hf_token=${{ secrets.HF_TOKEN }}"
 
