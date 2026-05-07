@@ -36,12 +36,12 @@ The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus un
 
 ### 4. Serve
 
-Two modes:
+Two surfaces, one in-process (CLI) and one hosted (multi-user team deployment):
 
-- **`docforge serve`** — FastMCP server over stdio. Ideal for local assistants (Claude Code, Cursor with MCP).
-- **`docforge serve --api`** — FastAPI over HTTP. Ideal for hosted deployment with multiple users via Entra ID authentication.
+- **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process.
+- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API can offload embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and start in <10s; the embedder hosts the model in one always-warm replica behind a shared-secret bearer token (`EMBEDDER_TOKEN`).
 
-Both expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
+Both surfaces expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
 
 ## What docforge is **not**
 

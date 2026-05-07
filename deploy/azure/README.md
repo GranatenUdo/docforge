@@ -4,22 +4,72 @@ Bicep template to deploy docforge as a hosted service on Azure Container Apps, b
 
 ## What gets deployed
 
-Six resources in a single resource group (~$35/month at default SKUs):
+Seven resources in a single resource group (~$45/month at default SKUs):
 
 | Resource | Purpose | Default SKU |
 |---|---|---|
-| Key Vault | Runtime secrets (`hf-token`, `confluence-api-token`, `database-url`) | Standard |
-| Container Registry | Hosts the docforge Docker image | Basic |
+| Key Vault | Runtime secrets (`hf-token`, `confluence-api-token`, `database-url`, `embedder-token`) | Standard |
+| Container Registry | Hosts the docforge Docker image **and** the embedder image (~13.6 GB) | Standard (NOT Basic — embedder image exceeds Basic's 10 GB quota) |
 | Postgres Flexible Server | Vector store + metadata, pgvector extension enabled | Burstable B1ms, 32 GB |
 | Log Analytics workspace | Container App logs | PerGB2018, 30-day retention |
-| Container Apps managed environment | Compute host for the container | Consumption plan |
-| Container App | Runs the docforge FastAPI image; `minReplicas=1` by default | 1 CPU, 2 GB |
+| Container Apps managed environment | Compute host for both container apps | Consumption plan |
+| Container App: search-api | Runs `docforge serve --api`; `minReplicas=1` by default | 1 CPU, 1 GB |
+| Container App: embedder | Runs the EmbeddingGemma sidecar; `minReplicas=1` by default | 1 CPU, 1 GB |
 
-The Container App uses a system-assigned managed identity with:
+The split into two Container Apps is the v0.3 Phase 4b architecture: the
+embedder service hosts the model and exposes a `POST /embed` endpoint; the
+search API and ingest workers call into it via `EMBEDDER_URL` instead of
+loading the model in-process. Search API replicas drop from ~2 GB RSS to
+~400 MB and start in <10s. The embedder is bound to a persistent
+`minReplicas=1` to avoid 60-120s cold-start on the first query after idle.
+
+Both Container Apps use a system-assigned managed identity with:
 - **Key Vault Secrets User** on the Key Vault — reads secrets at runtime via identity, no connection strings stored in env vars.
-- **AcrPull** on the Container Registry — pulls the image without admin credentials.
+- **AcrPull** on the Container Registry — pulls images without admin credentials.
 
 No admin credentials are stored anywhere except Key Vault.
+
+## Embedder service (v0.3 Phase 4b)
+
+The embedder is a separate Container App that hosts the EmbeddingGemma-300M
+model and exposes a `POST /embed` endpoint protected by a shared-secret
+bearer token. The search API, MCP server, and ingest worker call this
+endpoint instead of loading the 1.2 GB model in-process.
+
+**Image build.** A separate `Dockerfile.embedder` at the repo root builds
+the embedder image. The model is baked in at build time using BuildKit's
+secret mount (`--mount=type=secret,id=hf_token`); the HuggingFace token
+never enters any image layer. Build with:
+
+```bash
+docker build \
+  --secret id=hf_token,env=HF_TOKEN \
+  -f Dockerfile.embedder \
+  -t docforge-embedder:latest .
+```
+
+**ACR SKU note.** The baked-in model makes the embedder image ~13.6 GB. Azure
+Container Registry Basic has a 10 GB storage quota, which means **the
+default ACR SKU must be Standard or Premium for this deployment.** The
+Bicep parameter `acrSku` defaults to `Standard`. If you previously
+provisioned with Basic, you can upgrade in place: `az acr update --name
+<acr> --sku Standard`.
+
+**Shared-secret auth.** The search API authenticates to the embedder via a
+bearer token (`EMBEDDER_TOKEN`). Generate at deploy time:
+
+```bash
+openssl rand -hex 32
+```
+
+Pass the value as a Bicep parameter (`embedderToken=...`); the deploy
+template stores it in Key Vault and references it from both Container Apps.
+Rotate by re-deploying with a new value.
+
+**Cost.** Embedder Container App at 1 CPU / 1 GB / `minReplicas=1` adds
+~$10/month at West Europe Consumption pricing. Setting `embedderMinReplicas=0`
+saves the ~$10/month at the cost of 60-120s cold-start latency on the first
+query after idle (model load).
 
 ## Optional: Entra ID authentication
 
@@ -104,14 +154,25 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
    docker push $ACR_SERVER/docforge:latest
    ```
 
-6. Point the Container App at the new image:
+6. Build and push the embedder image:
+   ```bash
+   docker build \
+     --secret id=hf_token,env=HF_TOKEN \
+     -f Dockerfile.embedder \
+     -t docforge-embedder:latest .
+
+   docker tag docforge-embedder:latest $ACR_SERVER/docforge-embedder:latest
+   docker push $ACR_SERVER/docforge-embedder:latest
+   ```
+
+7. Point the Container App at the new image:
    ```bash
    az containerapp update \
      --name docforge-search-api --resource-group <rg-name> \
      --image $ACR_SERVER/docforge:latest
    ```
 
-7. Initialize the database and ingest:
+8. Initialize the database and ingest:
    ```bash
    # Construct DATABASE_URL from Step 4 outputs
    export DATABASE_URL="postgresql://dfadmin:<password>@<databaseHost>:5432/docforge?sslmode=require"
@@ -120,7 +181,7 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
    docforge ingest
    ```
 
-8. Smoke test:
+9. Smoke test:
    ```bash
    curl -fsS https://<apiFqdn>/health
    # → {"status":"ok", "model":"google/embeddinggemma-300m"}
@@ -145,20 +206,28 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 | `logRetentionDays` | 30 | Log Analytics retention. |
 | `containerImage` | `''` | Image reference. Leave empty first time; set after you push to ACR. |
 | `minReplicas` / `maxReplicas` | 1 / 3 | App scaling. `minReplicas=1` avoids 5-minute cold starts (model download). Set to 0 for dev to save ~$10/mo at the cost of first-request latency. |
+| `embedderImage` | `''` | Embedder image reference. Leave empty first time; set after pushing. |
+| `embedderToken` | *(required)* | Shared-secret bearer for embedder auth. Generate via `openssl rand -hex 32`. |
+| `embedderMinReplicas` / `embedderMaxReplicas` | 1 / 5 | Embedder app scaling. `embedderMinReplicas=1` keeps the model warm. |
+| `acrSku` | `Standard` | ACR pricing tier. **Must be `Standard` or `Premium`** — embedder image exceeds Basic's 10 GB quota. |
 
 ## Cost
 
-At default SKUs, ~$35/month in West Europe:
+At default SKUs, ~$45/month in West Europe:
 
 | Resource | Monthly |
 |---|---|
 | Postgres B1ms + 32 GB | ~$19 |
-| Container Apps (1 replica always on) | ~$12 |
-| Container Registry Basic | ~$5 |
+| Container Apps: search-api (1 replica always on) | ~$12 |
+| Container Apps: embedder (1 replica always on) | ~$10 |
+| Container Registry Standard | ~$20 (full month) — note: Basic at $5 is too small for the embedder image |
 | Key Vault Standard | <$1 |
 | Log Analytics (low volume) | ~$2 |
 
-`minReplicas=0` drops ~$10/mo. Increasing Postgres tier or storage is the main scaling cost lever.
+Setting `minReplicas=0` on either Container App drops ~$10-12/month at the
+cost of cold-start latency. The embedder cold-start (60-120s for model load)
+is the longer of the two, so `embedderMinReplicas=0` is a worse tradeoff
+than `minReplicas=0` on search-api.
 
 ## Architecture notes
 
