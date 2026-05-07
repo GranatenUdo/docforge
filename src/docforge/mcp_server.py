@@ -144,7 +144,7 @@ async def search_documentation(
 
 @mcp.tool()
 async def list_sources() -> str:
-    """List all documentation sources currently indexed in the knowledge hub.
+    """List all documentation sources currently indexed by docforge.
 
     Returns the title, URL, status, and last crawl time for each source.
     Use this to see what documentation is available for searching.
