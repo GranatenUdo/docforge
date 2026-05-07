@@ -87,12 +87,12 @@ def test_load_sources_handles_utf8_titles(tmp_path, monkeypatch):
     load on systems whose default locale is not UTF-8 (Windows cp1252)."""
     yml = tmp_path / "sources.yml"
     yml.write_text(
-        'sources:\n'
-        '  - type: confluence_page\n'
+        "sources:\n"
+        "  - type: confluence_page\n"
         '    page_id: "1"\n'
-        '    space_key: HEL\n'
-        '    title: "\U0001F3AF Light-Year Strategy — em-dash"\n'
-        '    tags: [org]\n',
+        "    space_key: HEL\n"
+        '    title: "\U0001f3af Light-Year Strategy — em-dash"\n'
+        "    tags: [org]\n",
         encoding="utf-8",
     )
 
@@ -100,4 +100,4 @@ def test_load_sources_handles_utf8_titles(tmp_path, monkeypatch):
 
     sources = load_sources(yml)
     assert len(sources) == 1
-    assert sources[0].title == "\U0001F3AF Light-Year Strategy — em-dash"
+    assert sources[0].title == "\U0001f3af Light-Year Strategy — em-dash"
