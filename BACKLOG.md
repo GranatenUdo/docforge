@@ -30,4 +30,4 @@ public, items here can migrate to GitHub Issues.
 
 ## Done
 
-(Items move here as PRs ship in v0.2.1+.)
+- **Publication readiness — 2026-05-07** — Closed: MCP server identifier rename to `docforge`, master CI fork-friendly fix, `deploy/azure/README.md` Phase-4b update (7 resources, embedder section, ACR Standard SKU note), microsite architecture + deployment embedder additions, broken `.superpowers/` link replaced with inline `az postgres restore` command, removal of leftover `docs/superpowers/` artifacts, README HF prereq promotion, v0.3.0 release.

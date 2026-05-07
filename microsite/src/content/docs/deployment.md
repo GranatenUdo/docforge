@@ -7,10 +7,11 @@ For a single developer, `docforge serve` on stdio is enough — Claude Code or C
 
 ## Target architecture
 
-Six Azure resources in one resource group (~$35/month at default SKUs in West Europe):
+Seven Azure resources in one resource group (~$45/month at default SKUs in West Europe):
 
 - **Postgres Flexible Server** (Burstable B1ms, 32 GB) with `pgvector` enabled at provisioning time.
 - **Container App** running `docforge serve --api` with Entra ID authentication enabled.
+- **Container App: embedder** running the EmbeddingGemma-300M sidecar (v0.3 Phase 4b). The search API delegates embedding to this service via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
 - **Container Registry** (Basic) hosting the docforge Docker image.
 - **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
 - **Log Analytics workspace** (30-day retention) for Container App logs.
@@ -48,4 +49,12 @@ Run `docforge ingest` from anywhere that can reach the database (a jump box, Git
 
 - **Cold-start window.** Container App with minReplicas=1 avoids cold starts in steady state, but post-deployment the first request pays a 15–30 s model-load cost. That's included in P95 as honest signal.
 - **Orphan pruning.** When you remove a source from `sources.yml`, run `docforge ingest --purge-orphans` (dry-run) and then `--confirm` to delete. No auto-purge.
-- **Backups.** Postgres Flexible Server Standard_B1ms gets 7-day PITR by default. Test the restore procedure annually — the [runbook](https://github.com/GranatenUdo/docforge/blob/master/.superpowers/specs/2026-04-22-operational-readiness-design.md) has the exact `az postgres flexible-server restore` incantation.
+- **Backups.** Postgres Flexible Server Standard_B1ms gets 7-day PITR by default. Test the restore procedure annually:
+  ```bash
+  az postgres flexible-server restore \
+    --resource-group <rg> \
+    --name <new-server-name> \
+    --source-server <source-server-name> \
+    --restore-time '<ISO-8601 timestamp within last 7 days>'
+  ```
+  The restore creates a new server; the source is untouched. After verifying the restore, drop the new server.

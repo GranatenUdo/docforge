@@ -49,13 +49,18 @@ For the full trust model, accepted risks, and assumptions docforge makes about i
 
 ## Quick Start
 
+**Prerequisites:**
+- Python 3.12+
+- Docker (for the local Postgres + pgvector container)
+- A [Hugging Face token](https://huggingface.co/settings/tokens) with access to the gated [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) model. Accept the model license on the model page first.
+
 ```bash
 pip install docforge-cli
 docforge init my-project
 cd my-project
 # Edit docforge.yml with your Confluence URL
 # Edit sources.yml with your page IDs and local git repo paths
-# Edit .env with your credentials
+# Edit .env with your credentials (CONFLUENCE_API_TOKEN, HF_TOKEN, DATABASE_URL)
 docker compose up -d db
 docforge init-db
 docforge ingest
