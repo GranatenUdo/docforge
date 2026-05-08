@@ -20,3 +20,18 @@ class NoneAuth:
 
     async def headers(self) -> dict[str, str]:
         return {}
+
+
+class BearerAuth:
+    """Static Bearer token from DOCFORGE_API_TOKEN env var."""
+
+    def __init__(self) -> None:
+        token = os.environ.get("DOCFORGE_API_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError(
+                "BearerAuth requires DOCFORGE_API_TOKEN env var to be set."
+            )
+        self._token = token
+
+    async def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"}
