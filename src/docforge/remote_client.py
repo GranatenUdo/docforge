@@ -150,3 +150,35 @@ class RemoteBackend:
                 header += f"\nTags: {', '.join(tags)}"
             parts.append(f"{header}\n\n{r['text']}")
         return "\n\n---\n\n".join(parts)
+
+    async def list_sources(self) -> str:
+        """List indexed sources from the remote API."""
+        try:
+            headers = await self._auth.headers()
+        except Exception as e:
+            return f"Auth provider error: {e}"
+
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
+                resp = await client.get(f"{self._url}/sources", headers=headers)
+        except httpx.ConnectError:
+            return f"Could not reach remote API at {self._url}."
+        except httpx.HTTPError as e:
+            return f"Remote API error: {e}"
+
+        if resp.status_code == 401:
+            return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
+        if resp.status_code != 200:
+            return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
+
+        data = resp.json()
+        sources = data.get("sources", [])
+        if not sources:
+            return "No sources indexed."
+
+        lines = [f"**{data.get('count', len(sources))} indexed sources:**\n"]
+        for s in sources:
+            lines.append(
+                f"- **{s['title']}** ({s['chunk_count']} chunks, {s['status']})"
+            )
+        return "\n".join(lines)

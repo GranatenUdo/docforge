@@ -219,3 +219,36 @@ async def test_remote_backend_search_network_error_returns_friendly_error(monkey
     result = await backend.search(query="x", limit=5)
     assert "Could not reach" in result
     assert "https://api.example.com" in result
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_list_sources_happy_path(monkeypatch):
+    monkeypatch.setenv("DOCFORGE_USER", "tobias.ens")  # should NOT appear in body
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["method"] = request.method
+        captured["body"] = request.content
+        return httpx.Response(
+            200,
+            json={
+                "sources": [
+                    {"title": "Test Page", "chunk_count": 5, "status": "active"},
+                ],
+                "count": 1,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    result = await backend.list_sources()
+
+    assert "1 indexed sources" in result
+    assert "Test Page" in result
+    assert "5 chunks" in result
+    assert captured["url"] == "https://api.example.com/sources"
+    assert captured["method"] == "GET"
+    assert captured["body"] == b""
