@@ -63,3 +63,16 @@ class AzureAuth:
     async def headers(self) -> dict[str, str]:
         token = await self._credential.get_token(f"{self._audience}/.default")
         return {"Authorization": f"Bearer {token.token}"}
+
+
+def make_auth_provider(name: str) -> AuthProvider:
+    """Return an AuthProvider instance for the given name."""
+    if name == "none":
+        return NoneAuth()
+    if name == "bearer":
+        return BearerAuth()
+    if name == "azure":
+        return AzureAuth()
+    raise ValueError(
+        f"Unknown auth provider: {name!r}. Valid: none, bearer, azure."
+    )

@@ -65,3 +65,22 @@ async def test_azure_auth_returns_bearer_from_credential(monkeypatch):
     headers = await auth.headers()
     assert headers == {"Authorization": "Bearer fake-jwt-token"}
     fake_credential.get_token.assert_awaited_once_with("api://test-audience/.default")
+
+
+def test_make_auth_provider_none():
+    from docforge.remote_client import make_auth_provider, NoneAuth
+    p = make_auth_provider("none")
+    assert isinstance(p, NoneAuth)
+
+
+def test_make_auth_provider_bearer(monkeypatch):
+    monkeypatch.setenv("DOCFORGE_API_TOKEN", "x")
+    from docforge.remote_client import make_auth_provider, BearerAuth
+    p = make_auth_provider("bearer")
+    assert isinstance(p, BearerAuth)
+
+
+def test_make_auth_provider_unknown_raises():
+    from docforge.remote_client import make_auth_provider
+    with pytest.raises(ValueError, match="Unknown auth provider"):
+        make_auth_provider("oauth")
