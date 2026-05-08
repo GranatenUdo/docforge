@@ -203,7 +203,7 @@ async def search(
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to embed query")
 
-    user_tags = [req.team_name] + ([req.area_name] if req.area_name else [])
+    user_tags = [t for t in (req.team_name, req.area_name) if t]
 
     try:
         async with pool.acquire() as conn:
@@ -241,9 +241,12 @@ async def search(
 
     request_ms = int((time.perf_counter() - start) * 1000)
 
+    effective_user_name = (
+        user.preferred_username if user else (req.user_name or "anonymous")
+    )
     await log_query(
         pool,
-        user.preferred_username if user else req.user_name,
+        effective_user_name,
         req.team_name,
         req.area_name,
         req.query,

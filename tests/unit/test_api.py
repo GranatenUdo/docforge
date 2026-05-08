@@ -227,6 +227,48 @@ class TestSearchEndpoint:
         finally:
             app.dependency_overrides.clear()
 
+    @pytest.mark.asyncio
+    async def test_search_uses_anonymous_when_no_auth_no_user_name(self, monkeypatch):
+        """POST /search without user_name and no auth → log_query receives 'anonymous'."""
+        captured: dict = {}
+
+        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+            captured["user_name"] = user_name
+            captured["team_name"] = team_name
+
+        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+
+        async with _client() as client:
+            resp = await client.post("/search", json={"query": "hello", "limit": 5})
+
+        assert resp.status_code == 200
+        assert captured["user_name"] == "anonymous"
+        assert captured["team_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_search_uses_auth_subject_when_present(self, monkeypatch):
+        """POST /search with auth subject → log_query receives preferred_username."""
+        from types import SimpleNamespace
+        from docforge.api import _auth_dependency
+
+        captured: dict = {}
+
+        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+            captured["user_name"] = user_name
+
+        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+
+        fake_user = SimpleNamespace(preferred_username="tobias.ens", oid="abc-123")
+        app.dependency_overrides[_auth_dependency] = lambda: fake_user
+        try:
+            async with _client() as client:
+                resp = await client.post("/search", json={"query": "hello", "limit": 5})
+        finally:
+            del app.dependency_overrides[_auth_dependency]
+
+        assert resp.status_code == 200
+        assert captured["user_name"] == "tobias.ens"
+
 
 class TestSourcesEndpoint:
     @pytest.mark.asyncio
