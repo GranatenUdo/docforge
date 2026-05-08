@@ -105,6 +105,39 @@ For team-wide use, deploy the search API to Azure (~$90/month at default SKUs wi
 
 See [`deploy/azure/`](deploy/azure/) for Bicep templates and a full cost breakdown.
 
+## Use a hosted instance (no local DB required)
+
+If your team already operates a docforge deployment and you only want to *use* it from your editor (Claude Code, etc.), you don't need to clone, ingest, or run Postgres locally:
+
+```bash
+# Generic (no auth)
+pip install docforge-cli
+claude mcp add -s user -e DOCFORGE_API_URL=https://docforge.example.com \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL
+
+# Static Bearer token
+pip install docforge-cli
+claude mcp add -s user \
+  -e DOCFORGE_API_URL=https://docforge.example.com \
+  -e DOCFORGE_API_TOKEN=eyJ... \
+  -e DOCFORGE_AUTH=bearer \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth bearer
+
+# Entra (Azure AD)
+pip install docforge-cli[azure]
+az login --tenant <your-tenant-id>
+claude mcp add -s user \
+  -e DOCFORGE_API_URL=https://docforge.example.com \
+  -e DOCFORGE_AUDIENCE=api://<app-registration-uri> \
+  -e DOCFORGE_AUTH=azure \
+  -e DOCFORGE_TEAM=your-team \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth azure
+```
+
+With `--auth azure`, `user_name` is bound to your Entra JWT subject — you can't (and don't need to) configure it.
+
+`DOCFORGE_TEAM` is optional but recommended for team-tag relevance boosting in search results.
+
 ## Self-hosting / forking
 
 The embedder image bakes the EmbeddingGemma-300M model at build time,

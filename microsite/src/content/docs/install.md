@@ -61,3 +61,38 @@ docforge search "how do we handle retries"
 ```
 
 `status` shows indexed source + chunk counts. `search` runs a test query against the index and prints top results with source attribution.
+
+## Use a hosted instance (no local DB required)
+
+If your team already operates a docforge deployment and you only want to *use* it from your editor (Claude Code, etc.), you don't need to clone, ingest, or run Postgres locally:
+
+```bash
+# Generic (no auth)
+pip install docforge-cli
+claude mcp add -s user -e DOCFORGE_API_URL=https://docforge.example.com \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL
+
+# Static Bearer token
+pip install docforge-cli
+claude mcp add -s user \
+  -e DOCFORGE_API_URL=https://docforge.example.com \
+  -e DOCFORGE_API_TOKEN=eyJ... \
+  -e DOCFORGE_AUTH=bearer \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth bearer
+
+# Entra (Azure AD)
+pip install docforge-cli[azure]
+az login --tenant <your-tenant-id>
+claude mcp add -s user \
+  -e DOCFORGE_API_URL=https://docforge.example.com \
+  -e DOCFORGE_AUDIENCE=api://<app-registration-uri> \
+  -e DOCFORGE_AUTH=azure \
+  -e DOCFORGE_TEAM=your-team \
+  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth azure
+```
+
+:::note
+With `--auth azure`, `user_name` is bound to your Entra JWT subject — you can't (and don't need to) configure it.
+
+`DOCFORGE_TEAM` is optional but recommended for team-tag relevance boosting in search results.
+:::
