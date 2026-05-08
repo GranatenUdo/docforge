@@ -243,9 +243,7 @@ def test_serve_remote_api_dispatches_to_run_remote_mcp(monkeypatch):
 
 def test_serve_remote_api_and_api_mutually_exclusive(monkeypatch):
     """Passing both --api and --remote-api errors with exit code 1."""
-    result = runner.invoke(
-        app, ["serve", "--api", "--remote-api", "https://api.example.com"]
-    )
+    result = runner.invoke(app, ["serve", "--api", "--remote-api", "https://api.example.com"])
     assert result.exit_code == 1
     assert "mutually exclusive" in (result.output + (result.stderr or ""))
 

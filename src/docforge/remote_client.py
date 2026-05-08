@@ -3,6 +3,7 @@
 Used by `docforge serve --remote-api $URL --auth ...`. See the
 2026-05-08-docforge-remote-api-mode-design.md spec for the full design.
 """
+
 from __future__ import annotations
 
 import os
@@ -31,9 +32,7 @@ class BearerAuth:
     def __init__(self) -> None:
         token = os.environ.get("DOCFORGE_API_TOKEN", "").strip()
         if not token:
-            raise RuntimeError(
-                "BearerAuth requires DOCFORGE_API_TOKEN env var to be set."
-            )
+            raise RuntimeError("BearerAuth requires DOCFORGE_API_TOKEN env var to be set.")
         self._token = token
 
     async def headers(self) -> dict[str, str]:
@@ -51,15 +50,11 @@ class AzureAuth:
         try:
             from azure.identity.aio import DefaultAzureCredential
         except ImportError as e:
-            raise ImportError(
-                "Azure auth requires `pip install docforge-cli[azure]`."
-            ) from e
+            raise ImportError("Azure auth requires `pip install docforge-cli[azure]`.") from e
 
         audience = os.environ.get("DOCFORGE_AUDIENCE", "").strip()
         if not audience:
-            raise RuntimeError(
-                "AzureAuth requires DOCFORGE_AUDIENCE env var to be set."
-            )
+            raise RuntimeError("AzureAuth requires DOCFORGE_AUDIENCE env var to be set.")
         self._audience = audience
         self._credential = DefaultAzureCredential()
 
@@ -76,9 +71,7 @@ def make_auth_provider(name: str) -> AuthProvider:
         return BearerAuth()
     if name == "azure":
         return AzureAuth()
-    raise ValueError(
-        f"Unknown auth provider: {name!r}. Valid: none, bearer, azure."
-    )
+    raise ValueError(f"Unknown auth provider: {name!r}. Valid: none, bearer, azure.")
 
 
 class RemoteBackend:
@@ -118,18 +111,14 @@ class RemoteBackend:
 
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self._url}/search", json=body, headers=headers
-                )
+                resp = await client.post(f"{self._url}/search", json=body, headers=headers)
         except httpx.ConnectError:
             return f"Could not reach remote API at {self._url}."
         except httpx.HTTPError as e:
             return f"Remote API error: {e}"
 
         if resp.status_code == 401:
-            return (
-                "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
-            )
+            return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
         if 500 <= resp.status_code < 600:
             return f"Remote API error ({resp.status_code}). Try again in a moment."
         if resp.status_code != 200:
@@ -179,9 +168,7 @@ class RemoteBackend:
 
         lines = [f"**{data.get('count', len(sources))} indexed sources:**\n"]
         for s in sources:
-            lines.append(
-                f"- **{s['title']}** ({s['chunk_count']} chunks, {s['status']})"
-            )
+            lines.append(f"- **{s['title']}** ({s['chunk_count']} chunks, {s['status']})")
         return "\n".join(lines)
 
 

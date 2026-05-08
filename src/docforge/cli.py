@@ -139,14 +139,18 @@ def serve(
             typer.echo("Error: --api and --remote-api are mutually exclusive.", err=True)
             raise typer.Exit(1)
         from docforge.remote_client import run_remote_mcp
+
         run_remote_mcp(url=remote_api, auth_name=auth)
         return
     if api:
         import uvicorn
+
         from docforge.api import app as fastapi_app
+
         uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
     else:
         from docforge.mcp_server import mcp
+
         mcp.run()
 
 

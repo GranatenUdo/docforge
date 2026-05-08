@@ -1,7 +1,9 @@
 """Tests for the remote-API MCP client mode."""
+
 from __future__ import annotations
 
 import json
+import sys
 
 import httpx
 import pytest
@@ -10,6 +12,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_none_auth_returns_empty_headers():
     from docforge.remote_client import NoneAuth
+
     auth = NoneAuth()
     headers = await auth.headers()
     assert headers == {}
@@ -19,6 +22,7 @@ async def test_none_auth_returns_empty_headers():
 async def test_bearer_auth_returns_authorization_header(monkeypatch):
     monkeypatch.setenv("DOCFORGE_API_TOKEN", "abc123")
     from docforge.remote_client import BearerAuth
+
     auth = BearerAuth()
     headers = await auth.headers()
     assert headers == {"Authorization": "Bearer abc123"}
@@ -27,16 +31,15 @@ async def test_bearer_auth_returns_authorization_header(monkeypatch):
 def test_bearer_auth_raises_when_token_unset(monkeypatch):
     monkeypatch.delenv("DOCFORGE_API_TOKEN", raising=False)
     from docforge.remote_client import BearerAuth
+
     with pytest.raises(RuntimeError, match="DOCFORGE_API_TOKEN"):
         BearerAuth()
-
-
-import sys
 
 
 def test_azure_auth_raises_when_audience_unset(monkeypatch):
     monkeypatch.delenv("DOCFORGE_AUDIENCE", raising=False)
     from docforge.remote_client import AzureAuth
+
     with pytest.raises(RuntimeError, match="DOCFORGE_AUDIENCE"):
         AzureAuth()
 
@@ -46,6 +49,7 @@ def test_azure_auth_raises_when_extra_not_installed(monkeypatch):
     monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
     monkeypatch.setitem(sys.modules, "azure.identity.aio", None)
     from docforge.remote_client import AzureAuth
+
     with pytest.raises(ImportError, match=r"\[azure\]"):
         AzureAuth()
 
@@ -55,6 +59,7 @@ async def test_azure_auth_returns_bearer_from_credential(monkeypatch):
     monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
 
     from unittest.mock import AsyncMock, MagicMock
+
     fake_token = MagicMock(token="fake-jwt-token")
     fake_credential = MagicMock()
     fake_credential.get_token = AsyncMock(return_value=fake_token)
@@ -64,6 +69,7 @@ async def test_azure_auth_returns_bearer_from_credential(monkeypatch):
     monkeypatch.setitem(sys.modules, "azure.identity.aio", fake_aio_module)
 
     from docforge.remote_client import AzureAuth
+
     auth = AzureAuth()
     headers = await auth.headers()
     assert headers == {"Authorization": "Bearer fake-jwt-token"}
@@ -71,20 +77,23 @@ async def test_azure_auth_returns_bearer_from_credential(monkeypatch):
 
 
 def test_make_auth_provider_none():
-    from docforge.remote_client import make_auth_provider, NoneAuth
+    from docforge.remote_client import NoneAuth, make_auth_provider
+
     p = make_auth_provider("none")
     assert isinstance(p, NoneAuth)
 
 
 def test_make_auth_provider_bearer(monkeypatch):
     monkeypatch.setenv("DOCFORGE_API_TOKEN", "x")
-    from docforge.remote_client import make_auth_provider, BearerAuth
+    from docforge.remote_client import BearerAuth, make_auth_provider
+
     p = make_auth_provider("bearer")
     assert isinstance(p, BearerAuth)
 
 
 def test_make_auth_provider_unknown_raises():
     from docforge.remote_client import make_auth_provider
+
     with pytest.raises(ValueError, match="Unknown auth provider"):
         make_auth_provider("oauth")
 
@@ -120,7 +129,8 @@ async def test_remote_backend_search_happy_path(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(
         url="https://api.example.com",
         auth=NoneAuth(),
@@ -149,7 +159,8 @@ async def test_remote_backend_search_includes_set_identity(monkeypatch):
         return httpx.Response(200, json={"results": [], "query": "x", "count": 0})
 
     transport = httpx.MockTransport(handler)
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     await backend.search(query="x", limit=5)
 
@@ -172,7 +183,8 @@ async def test_remote_backend_search_empty_results_no_ingest_hint(monkeypatch):
     transport = httpx.MockTransport(
         lambda req: httpx.Response(200, json={"results": [], "query": "x", "count": 0})
     )
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.search(query="x", limit=5)
 
@@ -186,7 +198,8 @@ async def test_remote_backend_search_401_returns_friendly_error(monkeypatch):
     transport = httpx.MockTransport(
         lambda req: httpx.Response(401, json={"detail": "Unauthorized"})
     )
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.search(query="x", limit=5)
     assert "Auth failed" in result
@@ -199,7 +212,8 @@ async def test_remote_backend_search_500_returns_friendly_error(monkeypatch):
     transport = httpx.MockTransport(
         lambda req: httpx.Response(500, json={"detail": "Server error"})
     )
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.search(query="x", limit=5)
     assert "Remote API error" in result
@@ -214,7 +228,8 @@ async def test_remote_backend_search_network_error_returns_friendly_error(monkey
         raise httpx.ConnectError("connection refused", request=request)
 
     transport = httpx.MockTransport(handler)
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.search(query="x", limit=5)
     assert "Could not reach" in result
@@ -242,7 +257,8 @@ async def test_remote_backend_list_sources_happy_path(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    from docforge.remote_client import RemoteBackend, NoneAuth
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.list_sources()
 
@@ -264,17 +280,21 @@ def test_run_remote_mcp_constructs_components(monkeypatch):
         def __init__(self, name: str, instructions: str = "") -> None:
             constructed["name"] = name
             constructed["tools"] = []
+
         def tool(self):
             def deco(fn):
                 constructed["tools"].append(fn.__name__)
                 return fn
+
             return deco
+
         def run(self) -> None:
             constructed["ran"] = True
 
     monkeypatch.setattr("docforge.remote_client.FastMCP", FakeMCP)
 
     from docforge.remote_client import run_remote_mcp
+
     run_remote_mcp(url="https://api.example.com", auth_name="none")
 
     assert constructed["name"] == "docforge"

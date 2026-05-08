@@ -241,9 +241,7 @@ async def search(
 
     request_ms = int((time.perf_counter() - start) * 1000)
 
-    effective_user_name = (
-        user.preferred_username if user else (req.user_name or "anonymous")
-    )
+    effective_user_name = user.preferred_username if user else (req.user_name or "anonymous")
     await log_query(
         pool,
         effective_user_name,

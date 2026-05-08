@@ -249,6 +249,7 @@ class TestSearchEndpoint:
     async def test_search_uses_auth_subject_when_present(self, monkeypatch):
         """POST /search with auth subject → log_query receives preferred_username."""
         from types import SimpleNamespace
+
         from docforge.api import _auth_dependency
 
         captured: dict = {}
@@ -358,6 +359,7 @@ class TestRequestTimingInstrumentation:
 def test_search_request_user_name_and_team_name_optional():
     """SearchRequest validates without user_name or team_name (relaxed schema)."""
     from docforge.api import SearchRequest
+
     req = SearchRequest(query="hello", limit=5)
     assert req.user_name is None
     assert req.team_name is None
@@ -368,6 +370,7 @@ def test_search_request_user_name_and_team_name_optional():
 def test_search_request_accepts_full_body_for_backwards_compat():
     """Existing clients still work when sending all identity fields."""
     from docforge.api import SearchRequest
+
     req = SearchRequest(
         query="hello",
         user_name="tobias.ens",
