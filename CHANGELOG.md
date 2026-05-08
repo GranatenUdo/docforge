@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-08
+
+### Changed
+
+- `RemoteBackend` now reuses a single `httpx.AsyncClient` across calls (was: a fresh client per request). Reduces tool-invocation latency by ~100-200 ms over public-internet deployments by amortizing TCP+TLS handshake. Pattern mirrors `RemoteEmbedder`.
+- `--auth` is now an `AuthName` Enum (was: plain string). Adds Typer tab-completion, earlier validation, and `mypy` exhaustiveness on the dispatch.
+- `serve()` now warns to stderr when `--auth` is set without `--remote-api` (previously silently ignored).
+- Extracted `format_search_results_markdown()` shared helper between local `mcp_server.py` and remote `remote_client.py`. Standardized result-header separator on `--`. (Was: em-dash in local, double-hyphen in remote.)
+- `RemoteBackend.search` and `list_sources` now share a `_request()` helper that owns auth-fetch, network-error handling, and 401/5xx/non-200 branching. Removes ~20 lines of duplicated scaffolding.
+
 ## [0.4.0] - 2026-05-08
 
 ### Added
