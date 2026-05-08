@@ -52,12 +52,6 @@ class TestHealthEndpoint:
 
 class TestSearchEndpoint:
     @pytest.mark.asyncio
-    async def test_rejects_missing_required_identity_fields(self):
-        async with _client() as client:
-            resp = await client.post("/search", json={"query": "q", "limit": 1})
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
     async def test_returns_results_on_success(self):
         rows = [
             {
@@ -233,6 +227,49 @@ class TestSearchEndpoint:
         finally:
             app.dependency_overrides.clear()
 
+    @pytest.mark.asyncio
+    async def test_search_uses_anonymous_when_no_auth_no_user_name(self, monkeypatch):
+        """POST /search without user_name and no auth → log_query receives 'anonymous'."""
+        captured: dict = {}
+
+        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+            captured["user_name"] = user_name
+            captured["team_name"] = team_name
+
+        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+
+        async with _client() as client:
+            resp = await client.post("/search", json={"query": "hello", "limit": 5})
+
+        assert resp.status_code == 200
+        assert captured["user_name"] == "anonymous"
+        assert captured["team_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_search_uses_auth_subject_when_present(self, monkeypatch):
+        """POST /search with auth subject → log_query receives preferred_username."""
+        from types import SimpleNamespace
+
+        from docforge.api import _auth_dependency
+
+        captured: dict = {}
+
+        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+            captured["user_name"] = user_name
+
+        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+
+        fake_user = SimpleNamespace(preferred_username="tobias.ens", oid="abc-123")
+        app.dependency_overrides[_auth_dependency] = lambda: fake_user
+        try:
+            async with _client() as client:
+                resp = await client.post("/search", json={"query": "hello", "limit": 5})
+        finally:
+            del app.dependency_overrides[_auth_dependency]
+
+        assert resp.status_code == 200
+        assert captured["user_name"] == "tobias.ens"
+
 
 class TestSourcesEndpoint:
     @pytest.mark.asyncio
@@ -317,3 +354,30 @@ class TestRequestTimingInstrumentation:
         assert captured["request_ms"] >= 0
         # Sanity: should be much less than a second for a stubbed handler.
         assert captured["request_ms"] < 1000
+
+
+def test_search_request_user_name_and_team_name_optional():
+    """SearchRequest validates without user_name or team_name (relaxed schema)."""
+    from docforge.api import SearchRequest
+
+    req = SearchRequest(query="hello", limit=5)
+    assert req.user_name is None
+    assert req.team_name is None
+    assert req.area_name is None
+    assert req.query == "hello"
+
+
+def test_search_request_accepts_full_body_for_backwards_compat():
+    """Existing clients still work when sending all identity fields."""
+    from docforge.api import SearchRequest
+
+    req = SearchRequest(
+        query="hello",
+        user_name="tobias.ens",
+        team_name="ccl",
+        area_name="cloud",
+        limit=10,
+    )
+    assert req.user_name == "tobias.ens"
+    assert req.team_name == "ccl"
+    assert req.area_name == "cloud"

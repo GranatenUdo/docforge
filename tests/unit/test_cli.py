@@ -222,3 +222,42 @@ class TestHelperCoroutines:
         with pytest.raises(typer.Exit) as ex:
             await _ingest()
         assert ex.value.exit_code == 1
+
+
+def test_serve_remote_api_dispatches_to_run_remote_mcp(monkeypatch):
+    """`docforge serve --remote-api $URL --auth bearer` calls run_remote_mcp(url, 'bearer')."""
+    captured = {}
+
+    def fake_run_remote_mcp(*, url: str, auth_name: str) -> None:
+        captured["url"] = url
+        captured["auth_name"] = auth_name
+
+    monkeypatch.setattr("docforge.remote_client.run_remote_mcp", fake_run_remote_mcp)
+
+    result = runner.invoke(
+        app, ["serve", "--remote-api", "https://api.example.com", "--auth", "bearer"]
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {"url": "https://api.example.com", "auth_name": "bearer"}
+
+
+def test_serve_remote_api_and_api_mutually_exclusive(monkeypatch):
+    """Passing both --api and --remote-api errors with exit code 1."""
+    result = runner.invoke(app, ["serve", "--api", "--remote-api", "https://api.example.com"])
+    assert result.exit_code == 1
+    assert "mutually exclusive" in (result.output + (result.stderr or ""))
+
+
+def test_serve_remote_api_falls_back_to_env_var(monkeypatch):
+    """When --remote-api flag is omitted but DOCFORGE_API_URL is set, it's used."""
+    monkeypatch.setenv("DOCFORGE_API_URL", "https://from-env.example.com")
+    captured = {}
+
+    def fake_run_remote_mcp(*, url: str, auth_name: str) -> None:
+        captured["url"] = url
+
+    monkeypatch.setattr("docforge.remote_client.run_remote_mcp", fake_run_remote_mcp)
+
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0, result.output
+    assert captured["url"] == "https://from-env.example.com"

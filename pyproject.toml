@@ -49,6 +49,10 @@ entra = [
     # aiohttp is required by azure-identity.aio's async pipeline
     "aiohttp>=3.10,<4.0",
 ]
+azure = [
+    "azure-identity>=1.19,<2.0",
+    "aiohttp>=3.10,<4.0",  # required by azure-identity.aio
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
