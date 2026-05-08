@@ -49,6 +49,32 @@ def _get_embedder() -> EmbedderProtocol:
     return _embedder
 
 
+def format_search_results_markdown(
+    results: list[dict],
+    *,
+    empty_message: str = "No documentation found matching your query.",
+) -> str:
+    """Render a list of search-result dicts as the canonical Markdown shape.
+
+    Each result must have keys: similarity, source_title, source_url, text.
+    Optional: section_title, source_tags.
+    """
+    if not results:
+        return empty_message
+
+    parts: list[str] = []
+    for i, r in enumerate(results, 1):
+        header = f"**Result {i}** (relevance: {r['similarity']:.2f}) -- {r['source_title']}"
+        if r.get("section_title"):
+            header += f" > {r['section_title']}"
+        header += f"\nSource: {r['source_url']}"
+        tags = r.get("source_tags") or []
+        if tags:
+            header += f"\nTags: {', '.join(tags)}"
+        parts.append(f"{header}\n\n{r['text']}")
+    return "\n\n---\n\n".join(parts)
+
+
 @mcp.tool()
 async def search_documentation(
     query: Annotated[str, Field(max_length=8000)],
@@ -115,31 +141,23 @@ async def search_documentation(
 
     await log_query(pool, user_name, team_name, area_name, query, len(rows))
 
-    if not rows:
-        return (
+    return format_search_results_markdown(
+        [
+            {
+                "similarity": row["similarity"],
+                "source_title": row["source_title"],
+                "source_url": row["source_url"],
+                "section_title": row["section_title"],
+                "source_tags": list(row["source_tags"] or []),
+                "text": row["text"],
+            }
+            for row in rows
+        ],
+        empty_message=(
             "No documentation found matching your query. "
             "The index may be empty -- run `python -m docforge ingest` to populate it."
-        )
-
-    parts: list[str] = []
-    for i, row in enumerate(rows, 1):
-        similarity = row["similarity"]
-        source = row["source_title"]
-        url = row["source_url"]
-        section = row["section_title"]
-        text = row["text"]
-        tags = list(row["source_tags"] or [])
-
-        header = f"**Result {i}** (relevance: {similarity:.2f}) — {source}"
-        if section:
-            header += f" > {section}"
-        header += f"\nSource: {url}"
-        if tags:
-            header += f"\nTags: {', '.join(tags)}"
-
-        parts.append(f"{header}\n\n{text}")
-
-    return "\n\n---\n\n".join(parts)
+        ),
+    )
 
 
 @mcp.tool()

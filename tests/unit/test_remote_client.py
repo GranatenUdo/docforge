@@ -217,7 +217,7 @@ async def test_remote_backend_search_500_returns_friendly_error(monkeypatch):
     backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
     result = await backend.search(query="x", limit=5)
     assert "Remote API error" in result
-    assert "5" in result
+    assert "(500)" in result
 
 
 @pytest.mark.asyncio

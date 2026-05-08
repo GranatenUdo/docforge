@@ -225,10 +225,12 @@ class TestHelperCoroutines:
 
 
 def test_serve_remote_api_dispatches_to_run_remote_mcp(monkeypatch):
-    """`docforge serve --remote-api $URL --auth bearer` calls run_remote_mcp(url, 'bearer')."""
+    """`serve --remote-api $URL --auth bearer` calls run_remote_mcp with AuthName.bearer."""
+    from docforge.remote_client import AuthName
+
     captured = {}
 
-    def fake_run_remote_mcp(*, url: str, auth_name: str) -> None:
+    def fake_run_remote_mcp(*, url: str, auth_name) -> None:
         captured["url"] = url
         captured["auth_name"] = auth_name
 
@@ -238,7 +240,8 @@ def test_serve_remote_api_dispatches_to_run_remote_mcp(monkeypatch):
         app, ["serve", "--remote-api", "https://api.example.com", "--auth", "bearer"]
     )
     assert result.exit_code == 0, result.output
-    assert captured == {"url": "https://api.example.com", "auth_name": "bearer"}
+    assert captured["url"] == "https://api.example.com"
+    assert captured["auth_name"] is AuthName.bearer
 
 
 def test_serve_remote_api_and_api_mutually_exclusive(monkeypatch):
@@ -253,7 +256,7 @@ def test_serve_remote_api_falls_back_to_env_var(monkeypatch):
     monkeypatch.setenv("DOCFORGE_API_URL", "https://from-env.example.com")
     captured = {}
 
-    def fake_run_remote_mcp(*, url: str, auth_name: str) -> None:
+    def fake_run_remote_mcp(*, url: str, auth_name) -> None:
         captured["url"] = url
 
     monkeypatch.setattr("docforge.remote_client.run_remote_mcp", fake_run_remote_mcp)

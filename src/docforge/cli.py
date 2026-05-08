@@ -8,6 +8,8 @@ from pathlib import Path
 
 import typer
 
+from docforge.remote_client import AuthName
+
 app = typer.Typer(
     help="Forge searchable context from Confluence and git repos for AI coding assistants.",
 )
@@ -125,24 +127,26 @@ def serve(
         help="Run MCP backed by a remote search API at this URL",
         envvar="DOCFORGE_API_URL",
     ),
-    auth: str = typer.Option(
-        "none",
+    auth: AuthName = typer.Option(
+        AuthName.none,
         "--auth",
-        help="Auth provider for --remote-api: none | bearer | azure",
+        help="Auth provider for --remote-api",
         envvar="DOCFORGE_AUTH",
     ),
 ) -> None:
     """Run the MCP server (or FastAPI API with --api, or remote-backed MCP with --remote-api)."""
     _setup_logging()
+    if remote_api and api:
+        typer.echo("Error: --api and --remote-api are mutually exclusive.", err=True)
+        raise typer.Exit(1)
+    if auth is not AuthName.none and not remote_api:
+        typer.echo("Warning: --auth has no effect without --remote-api.", err=True)
+
     if remote_api:
-        if api:
-            typer.echo("Error: --api and --remote-api are mutually exclusive.", err=True)
-            raise typer.Exit(1)
         from docforge.remote_client import run_remote_mcp
 
         run_remote_mcp(url=remote_api, auth_name=auth)
-        return
-    if api:
+    elif api:
         import uvicorn
 
         from docforge.api import app as fastapi_app
