@@ -110,12 +110,31 @@ class RemoteBackend:
         """Search the remote API and return Markdown-formatted results."""
         body: dict[str, object] = {"query": query, "limit": limit}
         body.update(self._identity_body())
-        headers = await self._auth.headers()
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
-            resp = await client.post(f"{self._url}/search", json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        try:
+            headers = await self._auth.headers()
+        except Exception as e:
+            return f"Auth provider error: {e}"
 
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+                resp = await client.post(
+                    f"{self._url}/search", json=body, headers=headers
+                )
+        except httpx.ConnectError:
+            return f"Could not reach remote API at {self._url}."
+        except httpx.HTTPError as e:
+            return f"Remote API error: {e}"
+
+        if resp.status_code == 401:
+            return (
+                "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
+            )
+        if 500 <= resp.status_code < 600:
+            return f"Remote API error ({resp.status_code}). Try again in a moment."
+        if resp.status_code != 200:
+            return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
+
+        data = resp.json()
         results = data.get("results", [])
         if not results:
             return "No documentation found matching your query."

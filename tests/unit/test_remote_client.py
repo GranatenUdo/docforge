@@ -178,3 +178,44 @@ async def test_remote_backend_search_empty_results_no_ingest_hint(monkeypatch):
 
     assert "No documentation found" in result
     assert "ingest" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_401_returns_friendly_error(monkeypatch):
+    monkeypatch.delenv("DOCFORGE_USER", raising=False)
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(401, json={"detail": "Unauthorized"})
+    )
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    result = await backend.search(query="x", limit=5)
+    assert "Auth failed" in result
+    assert "401" in result
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_500_returns_friendly_error(monkeypatch):
+    monkeypatch.delenv("DOCFORGE_USER", raising=False)
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(500, json={"detail": "Server error"})
+    )
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    result = await backend.search(query="x", limit=5)
+    assert "Remote API error" in result
+    assert "5" in result
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_network_error_returns_friendly_error(monkeypatch):
+    monkeypatch.delenv("DOCFORGE_USER", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    transport = httpx.MockTransport(handler)
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    result = await backend.search(query="x", limit=5)
+    assert "Could not reach" in result
+    assert "https://api.example.com" in result
