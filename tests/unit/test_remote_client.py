@@ -252,3 +252,32 @@ async def test_remote_backend_list_sources_happy_path(monkeypatch):
     assert captured["url"] == "https://api.example.com/sources"
     assert captured["method"] == "GET"
     assert captured["body"] == b""
+
+
+def test_run_remote_mcp_constructs_components(monkeypatch):
+    """run_remote_mcp wires AuthProvider, RemoteBackend, FastMCP without crashing."""
+    monkeypatch.delenv("DOCFORGE_API_TOKEN", raising=False)
+
+    constructed = {}
+
+    class FakeMCP:
+        def __init__(self, name: str, instructions: str = "") -> None:
+            constructed["name"] = name
+            constructed["tools"] = []
+        def tool(self):
+            def deco(fn):
+                constructed["tools"].append(fn.__name__)
+                return fn
+            return deco
+        def run(self) -> None:
+            constructed["ran"] = True
+
+    monkeypatch.setattr("docforge.remote_client.FastMCP", FakeMCP)
+
+    from docforge.remote_client import run_remote_mcp
+    run_remote_mcp(url="https://api.example.com", auth_name="none")
+
+    assert constructed["name"] == "docforge"
+    assert "search_documentation" in constructed["tools"]
+    assert "list_sources" in constructed["tools"]
+    assert constructed["ran"] is True

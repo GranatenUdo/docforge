@@ -9,6 +9,7 @@ import os
 from typing import Protocol
 
 import httpx
+from fastmcp import FastMCP
 
 
 class AuthProvider(Protocol):
@@ -182,3 +183,30 @@ class RemoteBackend:
                 f"- **{s['title']}** ({s['chunk_count']} chunks, {s['status']})"
             )
         return "\n".join(lines)
+
+
+INSTRUCTIONS = (
+    "Search across your team's indexed documentation including team responsibilities, "
+    "coding guidelines, architecture standards, and cross-team interfaces. "
+    "Use the search_documentation tool when you need information about other teams, "
+    "shared coding practices, or organizational knowledge."
+)
+
+
+def run_remote_mcp(*, url: str, auth_name: str = "none") -> None:
+    """Run an MCP server proxying tool calls to a remote docforge search-api."""
+    auth = make_auth_provider(auth_name)
+    backend = RemoteBackend(url=url, auth=auth)
+    mcp = FastMCP("docforge", instructions=INSTRUCTIONS)
+
+    @mcp.tool()
+    async def search_documentation(query: str, limit: int = 5) -> str:
+        """Search across indexed documentation from Confluence pages and git repos."""
+        return await backend.search(query=query, limit=limit)
+
+    @mcp.tool()
+    async def list_sources() -> str:
+        """List all documentation sources currently indexed."""
+        return await backend.list_sources()
+
+    mcp.run()
