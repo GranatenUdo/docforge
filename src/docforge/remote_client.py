@@ -7,10 +7,19 @@ Used by `docforge serve --remote-api $URL --auth ...`. See the
 from __future__ import annotations
 
 import os
+from enum import Enum
 from typing import Protocol
 
 import httpx
 from fastmcp import FastMCP
+
+
+class AuthName(str, Enum):
+    """Selectable auth providers for the --remote-api mode."""
+
+    none = "none"
+    bearer = "bearer"
+    azure = "azure"
 
 
 class AuthProvider(Protocol):
@@ -63,15 +72,19 @@ class AzureAuth:
         return {"Authorization": f"Bearer {token.token}"}
 
 
-def make_auth_provider(name: str) -> AuthProvider:
+def make_auth_provider(name: AuthName | str) -> AuthProvider:
     """Return an AuthProvider instance for the given name."""
-    if name == "none":
+    try:
+        name = AuthName(name) if isinstance(name, str) else name
+    except ValueError as e:
+        raise ValueError(f"Unknown auth provider: {name!r}. Valid: none, bearer, azure.") from e
+    if name is AuthName.none:
         return NoneAuth()
-    if name == "bearer":
+    if name is AuthName.bearer:
         return BearerAuth()
-    if name == "azure":
+    if name is AuthName.azure:
         return AzureAuth()
-    raise ValueError(f"Unknown auth provider: {name!r}. Valid: none, bearer, azure.")
+    raise ValueError(f"Unknown auth provider: {name!r}.")
 
 
 class RemoteBackend:
@@ -86,7 +99,18 @@ class RemoteBackend:
     ) -> None:
         self._url = url.rstrip("/")
         self._auth = auth
-        self._transport = transport  # for tests
+        self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+
+    async def _ensure_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(transport=self._transport, timeout=30.0)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     def _identity_body(self) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -100,18 +124,25 @@ class RemoteBackend:
                 out[body_key] = val
         return out
 
-    async def search(self, *, query: str, limit: int = 5) -> str:
-        """Search the remote API and return Markdown-formatted results."""
-        body: dict[str, object] = {"query": query, "limit": limit}
-        body.update(self._identity_body())
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, object] | None = None,
+    ) -> httpx.Response | str:
+        """Perform an HTTP request with auth and uniform error handling.
+
+        Returns the Response on 2xx; an already-formatted error string otherwise.
+        """
         try:
             headers = await self._auth.headers()
         except Exception as e:
             return f"Auth provider error: {e}"
 
+        client = await self._ensure_client()
         try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
-                resp = await client.post(f"{self._url}/search", json=body, headers=headers)
+            resp = await client.request(method, f"{self._url}{path}", json=json, headers=headers)
         except httpx.ConnectError:
             return f"Could not reach remote API at {self._url}."
         except httpx.HTTPError as e:
@@ -123,45 +154,28 @@ class RemoteBackend:
             return f"Remote API error ({resp.status_code}). Try again in a moment."
         if resp.status_code != 200:
             return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
+        return resp
 
-        data = resp.json()
-        results = data.get("results", [])
-        if not results:
-            return "No documentation found matching your query."
+    async def search(self, *, query: str, limit: int = 5) -> str:
+        """Search the remote API and return Markdown-formatted results."""
+        body: dict[str, object] = {"query": query, "limit": limit}
+        body.update(self._identity_body())
+        result = await self._request("POST", "/search", json=body)
+        if isinstance(result, str):
+            return result
 
-        parts: list[str] = []
-        for i, r in enumerate(results, 1):
-            header = f"**Result {i}** (relevance: {r['similarity']:.2f}) -- {r['source_title']}"
-            if r.get("section_title"):
-                header += f" > {r['section_title']}"
-            header += f"\nSource: {r['source_url']}"
-            tags = r.get("source_tags") or []
-            if tags:
-                header += f"\nTags: {', '.join(tags)}"
-            parts.append(f"{header}\n\n{r['text']}")
-        return "\n\n---\n\n".join(parts)
+        from docforge.mcp_server import format_search_results_markdown
+
+        data = result.json()
+        return format_search_results_markdown(data.get("results", []))
 
     async def list_sources(self) -> str:
         """List indexed sources from the remote API."""
-        try:
-            headers = await self._auth.headers()
-        except Exception as e:
-            return f"Auth provider error: {e}"
+        result = await self._request("GET", "/sources")
+        if isinstance(result, str):
+            return result
 
-        try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
-                resp = await client.get(f"{self._url}/sources", headers=headers)
-        except httpx.ConnectError:
-            return f"Could not reach remote API at {self._url}."
-        except httpx.HTTPError as e:
-            return f"Remote API error: {e}"
-
-        if resp.status_code == 401:
-            return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
-        if resp.status_code != 200:
-            return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
-
-        data = resp.json()
+        data = result.json()
         sources = data.get("sources", [])
         if not sources:
             return "No sources indexed."
@@ -180,7 +194,7 @@ INSTRUCTIONS = (
 )
 
 
-def run_remote_mcp(*, url: str, auth_name: str = "none") -> None:
+def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> None:
     """Run an MCP server proxying tool calls to a remote docforge search-api."""
     auth = make_auth_provider(auth_name)
     backend = RemoteBackend(url=url, auth=auth)
