@@ -134,3 +134,47 @@ async def test_remote_backend_search_happy_path(monkeypatch):
     assert "Tags: org" in result
     assert captured["url"] == "https://api.example.com/search"
     assert captured["body"] == {"query": "hello", "limit": 5}
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_includes_set_identity(monkeypatch):
+    monkeypatch.setenv("DOCFORGE_USER", "tobias.ens")
+    monkeypatch.setenv("DOCFORGE_TEAM", "ccl")
+    monkeypatch.setenv("DOCFORGE_AREA", "cloud")
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"results": [], "query": "x", "count": 0})
+
+    transport = httpx.MockTransport(handler)
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    await backend.search(query="x", limit=5)
+
+    assert captured["body"] == {
+        "query": "x",
+        "limit": 5,
+        "user_name": "tobias.ens",
+        "team_name": "ccl",
+        "area_name": "cloud",
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_empty_results_no_ingest_hint(monkeypatch):
+    """Empty-result message must not say 'run docforge ingest' — remote users can't."""
+    monkeypatch.delenv("DOCFORGE_USER", raising=False)
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+    monkeypatch.delenv("DOCFORGE_AREA", raising=False)
+
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json={"results": [], "query": "x", "count": 0})
+    )
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+    result = await backend.search(query="x", limit=5)
+
+    assert "No documentation found" in result
+    assert "ingest" not in result.lower()
