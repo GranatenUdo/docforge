@@ -5,9 +5,7 @@ public, items here can migrate to GitHub Issues.
 
 ## In progress
 
-- **Repo cleanup PR A — polish bundle** (Medium, maintenance) — `[project.urls]`, `Makefile`, `.editorconfig`, `.superpowers/` move, README FAQ trim, this `BACKLOG.md`. Spec: `.superpowers/specs/2026-04-25-repo-cleanup-and-backlog-design.md`.
-- **Repo cleanup PR B — asset dedup** (Small, maintenance) — Astro prebuild copy script (`microsite/scripts/sync-assets.mjs`); remove the eight duplicate copies from `microsite/public/`.
-- **Repo cleanup PR C — src/ layout** (Medium, maintenance) — `git mv docforge/ src/docforge/`; `pyproject.toml`, `Dockerfile`, CI workflow, `CONTRIBUTING.md`, `README.md` path updates.
+(none)
 
 ## Small
 
@@ -28,4 +26,5 @@ public, items here can migrate to GitHub Issues.
 
 ## Done
 
+- **Repo cleanup PRs A/B/C — 2026-05-07 (verified done)** — Closed during continuation-plan critical review: PR A items already in (`[project.urls]`, Makefile, .editorconfig, FAQ trimmed; `.superpowers/` move done in PR #16). PR B done (`microsite/scripts/sync-assets.mjs` + `microsite/public/` removed). PR C done (`src/docforge/` package layout, `pyproject.toml` `where = ["src"]`). Plus removed `docforge/docforge/` __pycache__ cruft from before the src/ migration.
 - **Publication readiness — 2026-05-07** — Closed: MCP server identifier rename to `docforge`, master CI fork-friendly fix, `deploy/azure/README.md` Phase-4b update (7 resources, embedder section, ACR Standard SKU note), microsite architecture + deployment embedder additions, broken `.superpowers/` link replaced with inline `az postgres restore` command, removal of leftover `docs/superpowers/` artifacts, README HF prereq promotion, v0.3.0 release.
