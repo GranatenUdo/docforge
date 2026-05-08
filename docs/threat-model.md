@@ -53,6 +53,14 @@
 - Azure subscription governance (who has owner/contributor rights, break-glass accounts). Consumer-specific.
 - Physical security of the Azure Postgres data.
 
+## `--remote-api` mode
+
+The engine in `--remote-api` mode is a thin HTTP proxy: it forwards request bodies and Authorization headers to the remote API and returns Markdown-formatted responses. It does NOT enforce auth itself. Trust boundaries:
+
+- The deployed API enforces auth (e.g., via fastapi-azure-auth in `[entra]` mode) and decides who is authorized.
+- With `--auth azure`, the engine sends a Bearer token minted by `DefaultAzureCredential`. The API validates the JWT and binds `user_name` to `preferred_username` server-side. The engineer cannot override `user_name` via env var.
+- With `--auth bearer` or `--auth none`, there is no auth subject. The body's `user_name` (from `DOCFORGE_USER` env) is used as-is or defaults to `"anonymous"`. Deployments using these modes should not rely on `user_name` for any security-sensitive decision.
+
 ## Review cadence
 
 This threat model is reviewed on major docforge version changes, on changes to the deployment topology (`docforge/deploy/azure/main.bicep`), and at least annually. Reviews that surface new threats or change mitigations update this document and bump the date stamp below.

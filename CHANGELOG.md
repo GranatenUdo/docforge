@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docforge serve --remote-api $URL` mode runs an MCP server that proxies tool calls to a remote docforge search-api. Use this on team-member machines to consume a hosted deployment without running a local Postgres or ingest pipeline.
+- `--auth none|bearer|azure` flag selects the auth provider. `azure` requires `pip install docforge-cli[azure]`.
+- New `[azure]` extra: client-side `azure-identity` + `aiohttp` (subset of `[entra]`).
+- Identity env vars (`DOCFORGE_USER`, `DOCFORGE_TEAM`, `DOCFORGE_AREA`) supplied to the search request body when set; omitted if unset.
+
+### Changed
+
+- `SearchRequest.user_name` and `SearchRequest.team_name` are now optional (`str | None = None`). Backwards-compatible: existing clients sending strings still validate.
+- `/search` handler resolves the effective user from the auth subject (`user.preferred_username`) when present, falling back to `req.user_name` or `"anonymous"` if both are absent.
+
 ## [0.3.0] - 2026-05-07
 
 ### Added
