@@ -155,8 +155,8 @@ async def _auth_dependency(
 
 class SearchRequest(BaseModel):
     query: str = Field(..., max_length=8000)
-    user_name: str
-    team_name: str
+    user_name: str | None = None
+    team_name: str | None = None
     area_name: str | None = None
     limit: int = Field(5, ge=1, le=50)
 

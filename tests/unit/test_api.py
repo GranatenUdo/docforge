@@ -52,12 +52,6 @@ class TestHealthEndpoint:
 
 class TestSearchEndpoint:
     @pytest.mark.asyncio
-    async def test_rejects_missing_required_identity_fields(self):
-        async with _client() as client:
-            resp = await client.post("/search", json={"query": "q", "limit": 1})
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
     async def test_returns_results_on_success(self):
         rows = [
             {
@@ -317,3 +311,28 @@ class TestRequestTimingInstrumentation:
         assert captured["request_ms"] >= 0
         # Sanity: should be much less than a second for a stubbed handler.
         assert captured["request_ms"] < 1000
+
+
+def test_search_request_user_name_and_team_name_optional():
+    """SearchRequest validates without user_name or team_name (relaxed schema)."""
+    from docforge.api import SearchRequest
+    req = SearchRequest(query="hello", limit=5)
+    assert req.user_name is None
+    assert req.team_name is None
+    assert req.area_name is None
+    assert req.query == "hello"
+
+
+def test_search_request_accepts_full_body_for_backwards_compat():
+    """Existing clients still work when sending all identity fields."""
+    from docforge.api import SearchRequest
+    req = SearchRequest(
+        query="hello",
+        user_name="tobias.ens",
+        team_name="ccl",
+        area_name="cloud",
+        limit=10,
+    )
+    assert req.user_name == "tobias.ens"
+    assert req.team_name == "ccl"
+    assert req.area_name == "cloud"
