@@ -41,6 +41,6 @@ class SourcesFile(BaseModel):
 
 def load_sources(path: str | Path) -> list[SourceConfig]:
     """Load source configurations from a YAML file."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return SourcesFile.model_validate(data).sources
