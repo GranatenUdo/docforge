@@ -117,18 +117,36 @@ def search(
 
 
 @app.command()
-def serve(api: bool = typer.Option(False, help="Run FastAPI search API instead of MCP")):
-    """Run the MCP server (or FastAPI API with --api)."""
+def serve(
+    api: bool = typer.Option(False, help="Run FastAPI search API instead of MCP"),
+    remote_api: str | None = typer.Option(
+        None,
+        "--remote-api",
+        help="Run MCP backed by a remote search API at this URL",
+        envvar="DOCFORGE_API_URL",
+    ),
+    auth: str = typer.Option(
+        "none",
+        "--auth",
+        help="Auth provider for --remote-api: none | bearer | azure",
+        envvar="DOCFORGE_AUTH",
+    ),
+) -> None:
+    """Run the MCP server (or FastAPI API with --api, or remote-backed MCP with --remote-api)."""
     _setup_logging()
+    if remote_api:
+        if api:
+            typer.echo("Error: --api and --remote-api are mutually exclusive.", err=True)
+            raise typer.Exit(1)
+        from docforge.remote_client import run_remote_mcp
+        run_remote_mcp(url=remote_api, auth_name=auth)
+        return
     if api:
         import uvicorn
-
         from docforge.api import app as fastapi_app
-
         uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
     else:
         from docforge.mcp_server import mcp
-
         mcp.run()
 
 
