@@ -26,3 +26,42 @@ def test_bearer_auth_raises_when_token_unset(monkeypatch):
     from docforge.remote_client import BearerAuth
     with pytest.raises(RuntimeError, match="DOCFORGE_API_TOKEN"):
         BearerAuth()
+
+
+import sys
+
+
+def test_azure_auth_raises_when_audience_unset(monkeypatch):
+    monkeypatch.delenv("DOCFORGE_AUDIENCE", raising=False)
+    from docforge.remote_client import AzureAuth
+    with pytest.raises(RuntimeError, match="DOCFORGE_AUDIENCE"):
+        AzureAuth()
+
+
+def test_azure_auth_raises_when_extra_not_installed(monkeypatch):
+    """If azure.identity.aio isn't importable, AzureAuth raises ImportError."""
+    monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
+    monkeypatch.setitem(sys.modules, "azure.identity.aio", None)
+    from docforge.remote_client import AzureAuth
+    with pytest.raises(ImportError, match=r"\[azure\]"):
+        AzureAuth()
+
+
+@pytest.mark.asyncio
+async def test_azure_auth_returns_bearer_from_credential(monkeypatch):
+    monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
+
+    from unittest.mock import AsyncMock, MagicMock
+    fake_token = MagicMock(token="fake-jwt-token")
+    fake_credential = MagicMock()
+    fake_credential.get_token = AsyncMock(return_value=fake_token)
+
+    fake_aio_module = MagicMock()
+    fake_aio_module.DefaultAzureCredential = MagicMock(return_value=fake_credential)
+    monkeypatch.setitem(sys.modules, "azure.identity.aio", fake_aio_module)
+
+    from docforge.remote_client import AzureAuth
+    auth = AzureAuth()
+    headers = await auth.headers()
+    assert headers == {"Authorization": "Bearer fake-jwt-token"}
+    fake_credential.get_token.assert_awaited_once_with("api://test-audience/.default")

@@ -35,3 +35,31 @@ class BearerAuth:
 
     async def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
+
+
+class AzureAuth:
+    """Entra Bearer token via DefaultAzureCredential.
+
+    Requires `pip install docforge-cli[azure]`. Reads target audience
+    from DOCFORGE_AUDIENCE env var.
+    """
+
+    def __init__(self) -> None:
+        try:
+            from azure.identity.aio import DefaultAzureCredential
+        except ImportError as e:
+            raise ImportError(
+                "Azure auth requires `pip install docforge-cli[azure]`."
+            ) from e
+
+        audience = os.environ.get("DOCFORGE_AUDIENCE", "").strip()
+        if not audience:
+            raise RuntimeError(
+                "AzureAuth requires DOCFORGE_AUDIENCE env var to be set."
+            )
+        self._audience = audience
+        self._credential = DefaultAzureCredential()
+
+    async def headers(self) -> dict[str, str]:
+        token = await self._credential.get_token(f"{self._audience}/.default")
+        return {"Authorization": f"Bearer {token.token}"}
