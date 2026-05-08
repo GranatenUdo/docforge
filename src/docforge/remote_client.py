@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from typing import Protocol
 
+import httpx
+
 
 class AuthProvider(Protocol):
     """Async source of HTTP headers attached to each remote request."""
@@ -76,3 +78,56 @@ def make_auth_provider(name: str) -> AuthProvider:
     raise ValueError(
         f"Unknown auth provider: {name!r}. Valid: none, bearer, azure."
     )
+
+
+class RemoteBackend:
+    """Proxy to a remote docforge search-api over HTTP."""
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        auth: AuthProvider,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._url = url.rstrip("/")
+        self._auth = auth
+        self._transport = transport  # for tests
+
+    def _identity_body(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for env_var, body_key in (
+            ("DOCFORGE_USER", "user_name"),
+            ("DOCFORGE_TEAM", "team_name"),
+            ("DOCFORGE_AREA", "area_name"),
+        ):
+            val = os.environ.get(env_var, "").strip()
+            if val:
+                out[body_key] = val
+        return out
+
+    async def search(self, *, query: str, limit: int = 5) -> str:
+        """Search the remote API and return Markdown-formatted results."""
+        body: dict[str, object] = {"query": query, "limit": limit}
+        body.update(self._identity_body())
+        headers = await self._auth.headers()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.post(f"{self._url}/search", json=body, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        results = data.get("results", [])
+        if not results:
+            return "No documentation found matching your query."
+
+        parts: list[str] = []
+        for i, r in enumerate(results, 1):
+            header = f"**Result {i}** (relevance: {r['similarity']:.2f}) -- {r['source_title']}"
+            if r.get("section_title"):
+                header += f" > {r['section_title']}"
+            header += f"\nSource: {r['source_url']}"
+            tags = r.get("source_tags") or []
+            if tags:
+                header += f"\nTags: {', '.join(tags)}"
+            parts.append(f"{header}\n\n{r['text']}")
+        return "\n\n---\n\n".join(parts)

@@ -1,6 +1,9 @@
 """Tests for the remote-API MCP client mode."""
 from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
 
 
@@ -84,3 +87,50 @@ def test_make_auth_provider_unknown_raises():
     from docforge.remote_client import make_auth_provider
     with pytest.raises(ValueError, match="Unknown auth provider"):
         make_auth_provider("oauth")
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_search_happy_path(monkeypatch):
+    """search() POSTs to /search and formats the response as Markdown."""
+    monkeypatch.delenv("DOCFORGE_USER", raising=False)
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+    monkeypatch.delenv("DOCFORGE_AREA", raising=False)
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "text": "Hello world",
+                        "section_title": "Intro",
+                        "source_title": "Test Page",
+                        "source_url": "https://example.com/page",
+                        "source_tags": ["org"],
+                        "similarity": 0.85,
+                    },
+                ],
+                "query": "hello",
+                "count": 1,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    from docforge.remote_client import RemoteBackend, NoneAuth
+    backend = RemoteBackend(
+        url="https://api.example.com",
+        auth=NoneAuth(),
+        transport=transport,
+    )
+    result = await backend.search(query="hello", limit=5)
+
+    assert "Test Page" in result
+    assert "**Result 1**" in result
+    assert "0.85" in result
+    assert "Tags: org" in result
+    assert captured["url"] == "https://api.example.com/search"
+    assert captured["body"] == {"query": "hello", "limit": 5}
