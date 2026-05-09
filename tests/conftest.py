@@ -87,6 +87,9 @@ def fake_settings():
         pool_min_size=5,
         pool_max_size=25,
         query_log_retention_days=180,
+        hybrid_pool_size=100,
+        rrf_k=60,
+        fts_language="english",
     )
 
 
