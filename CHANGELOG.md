@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-09
+
+### Added
+
+- `deploy/azure/main.bicep`: new `denseWeight` and `sparseWeight` parameters (default `'1.0'`) wired through to Container App env vars `DENSE_WEIGHT` and `SPARSE_WEIGHT`. Lets deployers tune weighted RRF via bicepparam without touching engine code defaults. Engine code defaults stay at 1.0 (= classic RRF) per Bruch et al. 2023's caution that weight tuning is dataset-specific.
+
+### Changed
+
+- No runtime behavior change at engine defaults. Operators can now express their tuned weights declaratively in `*.bicepparam` instead of imperatively via `az containerapp update --set-env-vars`.
+
 ## [0.5.1] - 2026-05-09
 
 ### Added
