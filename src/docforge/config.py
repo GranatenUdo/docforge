@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     tag_match_weight: float = 0.1
     org_tag_weight: float = 0.05
 
+    # Hybrid retrieval (RRF over dense + sparse). rrf_k=60 matches the universal
+    # default (Azure AI Search, Elasticsearch, OpenSearch); higher k flattens
+    # the rank distribution, lower amplifies. hybrid_pool_size is the top-N
+    # from each retriever feeding RRF — 4-10x req.limit is the standard rule,
+    # and req.limit caps at 50 so 100 covers under-recalled queries with margin.
+    # fts_language is the Postgres text-search config; switch to 'simple' if
+    # non-English content appears in the corpus.
+    rrf_k: int = 60
+    hybrid_pool_size: int = 100
+    fts_language: str = "english"
+
     # Default identity (used as CLI flag defaults when set via env/yml)
     default_user_name: str = ""
     default_team_name: str = ""

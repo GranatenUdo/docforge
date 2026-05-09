@@ -209,31 +209,63 @@ async def search(
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT
-                    c.text,
-                    c.section_title,
-                    s.title AS source_title,
-                    s.url AS source_url,
-                    s.tags AS source_tags,
-                    1 - (c.embedding <=> $1::vector) AS similarity,
-                    (1 - (c.embedding <=> $1::vector)) *
-                        (1
-                         + $2::float * cardinality(
-                             ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
-                           )
-                         + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
-                        ) AS boosted_score
-                FROM chunks c
-                JOIN sources s ON c.source_id = s.id
-                WHERE s.status = 'active'
+                WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
+                     dense AS (
+                         SELECT id, source_id, text, section_title,
+                                ROW_NUMBER() OVER (ORDER BY dist) AS rank
+                         FROM (
+                             SELECT c.id, c.source_id, c.text, c.section_title,
+                                    c.embedding <=> $1::vector AS dist
+                             FROM chunks c JOIN sources s ON c.source_id = s.id
+                             WHERE s.status = 'active'
+                             ORDER BY c.embedding <=> $1::vector
+                             LIMIT $3
+                         ) AS t
+                     ),
+                     sparse AS (
+                         SELECT id, source_id, text, section_title,
+                                ROW_NUMBER() OVER (ORDER BY rk DESC) AS rank
+                         FROM (
+                             SELECT c.id, c.source_id, c.text, c.section_title,
+                                    ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) AS rk
+                             FROM chunks c JOIN sources s ON c.source_id = s.id
+                             WHERE s.status = 'active'
+                               AND c.text_tsv @@ (SELECT q FROM q_tsq)
+                             ORDER BY ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) DESC
+                             LIMIT $3
+                         ) AS t
+                     ),
+                     fused AS (
+                         SELECT COALESCE(d.id, sp.id) AS id,
+                                COALESCE(d.source_id, sp.source_id) AS source_id,
+                                COALESCE(d.text, sp.text) AS text,
+                                COALESCE(d.section_title, sp.section_title) AS section_title,
+                                COALESCE(1.0/($9 + d.rank), 0)
+                                  + COALESCE(1.0/($9 + sp.rank), 0) AS rrf
+                         FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
+                     )
+                SELECT f.text, f.section_title,
+                       s.title AS source_title, s.url AS source_url, s.tags AS source_tags,
+                       f.rrf AS similarity,
+                       f.rrf * (1
+                                + $4::float * cardinality(
+                                    ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
+                                  )
+                                + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
+                       ) AS boosted_score
+                FROM fused f JOIN sources s ON f.source_id = s.id
                 ORDER BY boosted_score DESC
-                LIMIT $5
+                LIMIT $7
                 """,
-                np.array(query_vector, dtype=np.float32),
-                settings.tag_match_weight,
-                user_tags,
-                settings.org_tag_weight,
-                req.limit,
+                np.array(query_vector, dtype=np.float32),  # $1
+                req.query,  # $2
+                settings.hybrid_pool_size,  # $3
+                settings.tag_match_weight,  # $4
+                user_tags,  # $5
+                settings.org_tag_weight,  # $6
+                req.limit,  # $7
+                settings.fts_language,  # $8
+                settings.rrf_k,  # $9
             )
     except Exception as e:
         logger.error("Database error during search: %s", e)
