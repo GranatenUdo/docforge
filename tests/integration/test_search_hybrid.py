@@ -291,12 +291,19 @@ async def test_weights_shift_ranking(pg_url):
             HYBRID_SEARCH_SQL,
             _vec(0.0),
             "intellix dispatch",
-            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            POOL,
+            WEIGHT_TAG,
+            ["platform"],
+            WEIGHT_ORG,
+            LIMIT,
+            FTS_LANG,
+            RRF_K,
             1.0,  # dense_weight = $10
             0.0,  # sparse_weight = $11 -> sparse contribution becomes 0
         )
-        assert rows[0]["source_title"] == "DenseStrong", \
+        assert rows[0]["source_title"] == "DenseStrong", (
             f"expected DenseStrong with sparse_weight=0, got {[r['source_title'] for r in rows]}"
+        )
 
         # Case B: dense_weight=0 -> RRF reduces to sparse_weight/(k+r_s) -> pure sparse
         # DenseStrong has no sparse match (rrf=0); SparseStrong is sparse rank 1 -> wins
@@ -304,11 +311,18 @@ async def test_weights_shift_ranking(pg_url):
             HYBRID_SEARCH_SQL,
             _vec(0.0),
             "intellix dispatch",
-            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            POOL,
+            WEIGHT_TAG,
+            ["platform"],
+            WEIGHT_ORG,
+            LIMIT,
+            FTS_LANG,
+            RRF_K,
             0.0,
             1.0,
         )
-        assert rows[0]["source_title"] == "SparseStrong", \
+        assert rows[0]["source_title"] == "SparseStrong", (
             f"expected SparseStrong with dense_weight=0, got {[r['source_title'] for r in rows]}"
+        )
     finally:
         await conn.close()
