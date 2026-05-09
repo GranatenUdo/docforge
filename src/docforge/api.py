@@ -258,14 +258,14 @@ async def search(
                 LIMIT $7
                 """,
                 np.array(query_vector, dtype=np.float32),  # $1
-                req.query,                                  # $2
-                settings.hybrid_pool_size,                  # $3
-                settings.tag_match_weight,                  # $4
-                user_tags,                                  # $5
-                settings.org_tag_weight,                    # $6
-                req.limit,                                  # $7
-                settings.fts_language,                      # $8
-                settings.rrf_k,                             # $9
+                req.query,  # $2
+                settings.hybrid_pool_size,  # $3
+                settings.tag_match_weight,  # $4
+                user_tags,  # $5
+                settings.org_tag_weight,  # $6
+                req.limit,  # $7
+                settings.fts_language,  # $8
+                settings.rrf_k,  # $9
             )
     except Exception as e:
         logger.error("Database error during search: %s", e)

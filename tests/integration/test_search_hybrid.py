@@ -146,9 +146,15 @@ async def test_dense_only_winner(pg_url):
 
         rows = await conn.fetch(
             HYBRID_SEARCH_SQL,
-            _vec(0.0),                   # $1: query vector at angle 0
-            "zzz_no_match_keyword",      # $2: query text — won't match any tsvector
-            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            _vec(0.0),  # $1: query vector at angle 0
+            "zzz_no_match_keyword",  # $2: query text — won't match any tsvector
+            POOL,
+            WEIGHT_TAG,
+            ["platform"],
+            WEIGHT_ORG,
+            LIMIT,
+            FTS_LANG,
+            RRF_K,
         )
         assert [r["source_title"] for r in rows][0] == "DenseTarget"
     finally:
@@ -178,9 +184,15 @@ async def test_sparse_only_winner(pg_url):
 
         rows = await conn.fetch(
             HYBRID_SEARCH_SQL,
-            _vec(0.0),                            # query vec aligned with Other
+            _vec(0.0),  # query vec aligned with Other
             "BackgroundProcessService dispatch",  # $2: matches Target's text
-            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            POOL,
+            WEIGHT_TAG,
+            ["platform"],
+            WEIGHT_ORG,
+            LIMIT,
+            FTS_LANG,
+            RRF_K,
         )
         titles = [r["source_title"] for r in rows]
         # Target appears in results despite losing the dense ranking
@@ -222,23 +234,26 @@ async def test_hybrid_winner_above_single_path_winners(pg_url):
         sid_dense = await _insert_source(conn, "DenseOnly")
         sid_sparse = await _insert_source(conn, "SparseOnly")
 
-        await _insert_chunk(
-            conn, sid_dense, "completely off-topic prose", _vec(0.05)
-        )
-        await _insert_chunk(
-            conn, sid_hybrid, "intellix dispatch strategy with retries", _vec(0.10)
-        )
+        await _insert_chunk(conn, sid_dense, "completely off-topic prose", _vec(0.05))
+        await _insert_chunk(conn, sid_hybrid, "intellix dispatch strategy with retries", _vec(0.10))
         await _insert_chunk(
             conn, sid_sparse, "intellix dispatch strategy in another context", _vec(1.5)
         )
 
         rows = await conn.fetch(
             HYBRID_SEARCH_SQL,
-            _vec(0.0),                   # query vec
-            "intellix dispatch",         # matches Hybrid and Sparse
-            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            _vec(0.0),  # query vec
+            "intellix dispatch",  # matches Hybrid and Sparse
+            POOL,
+            WEIGHT_TAG,
+            ["platform"],
+            WEIGHT_ORG,
+            LIMIT,
+            FTS_LANG,
+            RRF_K,
         )
-        assert rows[0]["source_title"] == "HybridTarget", \
+        assert rows[0]["source_title"] == "HybridTarget", (
             f"expected HybridTarget first, got {[r['source_title'] for r in rows]}"
+        )
     finally:
         await conn.close()
