@@ -173,14 +173,15 @@ async def _ingest_confluence_source(
                 await conn.execute(
                     """
                     INSERT INTO chunks (source_id, chunk_index, text,
-                                        embedding, section_title)
-                    VALUES ($1, $2, $3, $4, $5)
+                                        embedding, section_title, title)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     """,
                     source_id,
                     chunk.chunk_index,
                     chunk.text,
                     np.array(embedding, dtype=np.float32),
                     chunk.section_title,
+                    source.title,
                 )
 
     logger.info("Stored %d chunks for: %s", len(chunks), source.title)
@@ -263,14 +264,15 @@ async def _ingest_git_source(
                     await conn.execute(
                         """
                         INSERT INTO chunks (source_id, chunk_index, text,
-                                            embedding, section_title)
-                        VALUES ($1, $2, $3, $4, $5)
+                                            embedding, section_title, title)
+                        VALUES ($1, $2, $3, $4, $5, $6)
                         """,
                         source_id,
                         chunk.chunk_index,
                         chunk.text,
                         np.array(embedding, dtype=np.float32),
                         chunk.section_title,
+                        file.title,
                     )
 
         logger.info("Stored %d chunks for: %s/%s", len(chunks), source.title, file.title)
