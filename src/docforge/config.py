@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     hybrid_pool_size: int = 100
     fts_language: str = "english"
 
+    # Weighted RRF — multipliers on each retriever's reciprocal-rank contribution.
+    # Defaults at 1.0 = classic RRF (the v0.5.0 default). Tune via env var
+    # (DENSE_WEIGHT / SPARSE_WEIGHT) or docforge.yml; eval-driven.
+    dense_weight: float = 1.0
+    sparse_weight: float = 1.0
+
     # Default identity (used as CLI flag defaults when set via env/yml)
     default_user_name: str = ""
     default_team_name: str = ""

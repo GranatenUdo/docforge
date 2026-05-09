@@ -271,3 +271,15 @@ def test_hybrid_retrieval_defaults():
     assert s.rrf_k == 60
     assert s.hybrid_pool_size == 100
     assert s.fts_language == "english"
+
+
+def test_weighted_rrf_defaults():
+    """Weighted RRF defaults at 1.0 == classic RRF behavior (the v0.5.0 default).
+
+    Setting either to a non-1.0 value moves to weighted-RRF without changing
+    the formula's structure. The defaults match the v0.5.0 ship state."""
+    from docforge.config import Settings
+
+    s = Settings()
+    assert s.dense_weight == 1.0
+    assert s.sparse_weight == 1.0
