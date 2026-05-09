@@ -118,6 +118,12 @@ param embedderMaxReplicas int = 5
 @secure()
 param embedderToken string
 
+@description('Per-retriever multiplier on the dense path RRF contribution. Default 1.0 = classic RRF. Container Apps env values are strings; pydantic-settings parses to float at runtime.')
+param denseWeight string = '1.0'
+
+@description('Per-retriever multiplier on the sparse path RRF contribution. Default 1.0 = classic RRF. Bruch et al. 2023 (ACM TOIS) shows weight tuning is dataset-specific — adjust via bicepparam per deployment, not by changing this default.')
+param sparseWeight string = '1.0'
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
@@ -397,6 +403,14 @@ var realContainerEnv = [
   {
     name: 'EMBEDDER_TOKEN'
     secretRef: 'embedder-token'
+  }
+  {
+    name: 'DENSE_WEIGHT'
+    value: denseWeight
+  }
+  {
+    name: 'SPARSE_WEIGHT'
+    value: sparseWeight
   }
 ]
 
