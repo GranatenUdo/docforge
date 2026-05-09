@@ -240,7 +240,8 @@ async def search(
                                 COALESCE(d.source_id, sp.source_id) AS source_id,
                                 COALESCE(d.text, sp.text) AS text,
                                 COALESCE(d.section_title, sp.section_title) AS section_title,
-                                COALESCE(1.0/($9 + d.rank), 0) + COALESCE(1.0/($9 + sp.rank), 0) AS rrf
+                                COALESCE(1.0/($9 + d.rank), 0)
+                                  + COALESCE(1.0/($9 + sp.rank), 0) AS rrf
                          FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
                      )
                 SELECT f.text, f.section_title,

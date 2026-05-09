@@ -108,7 +108,9 @@ WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
      )
 SELECT s.title AS source_title, f.rrf AS similarity,
        f.rrf * (1
-                + $4::float * cardinality(ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[])))
+                + $4::float * cardinality(
+                    ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
+                  )
                 + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
        ) AS boosted_score
 FROM fused f JOIN sources s ON f.source_id = s.id
