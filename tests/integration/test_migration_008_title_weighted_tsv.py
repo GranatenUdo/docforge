@@ -59,16 +59,17 @@ async def test_text_tsv_includes_weighted_title(pg_url):
         # at weight 'A'. Postgres tsvector text representation uses :NA where N is
         # position and A is weight letter (e.g., "'weight':1A").
         assert "A" in tsv, f"expected weight A on title tokens, got: {tsv}"
-        assert "'weight'" in tsv or "'titl'" in tsv or "'test'" in tsv, \
+        assert "'weight'" in tsv or "'titl'" in tsv or "'test'" in tsv, (
             f"expected title tokens (stemmed), got: {tsv}"
+        )
         # Section heading 'Heading Section' -> 'head', 'section' at weight 'B'
         assert "B" in tsv, f"expected weight B on section_title tokens, got: {tsv}"
-        assert "'section'" in tsv or "'head'" in tsv, \
-            f"expected section_title tokens, got: {tsv}"
+        assert "'section'" in tsv or "'head'" in tsv, f"expected section_title tokens, got: {tsv}"
         # Body 'unique body content' -> 'uniqu', 'bodi', 'content' at weight 'D'
         # (default; appears in text representation without trailing weight letter)
-        assert "'uniqu'" in tsv or "'bodi'" in tsv or "'content'" in tsv, \
+        assert "'uniqu'" in tsv or "'bodi'" in tsv or "'content'" in tsv, (
             f"expected body tokens, got: {tsv}"
+        )
     finally:
         await conn.close()
 
@@ -102,9 +103,7 @@ async def test_backfill_join_logic(pg_url):
             sid,
             vec,
         )
-        before = await conn.fetchval(
-            "SELECT title FROM chunks WHERE source_id = $1", sid
-        )
+        before = await conn.fetchval("SELECT title FROM chunks WHERE source_id = $1", sid)
         assert before == ""
 
         # Run the backfill SQL the migration runs (only-if-empty guard)
@@ -115,9 +114,7 @@ async def test_backfill_join_logic(pg_url):
             WHERE s.id = chunks.source_id AND chunks.title = ''
             """
         )
-        after = await conn.fetchval(
-            "SELECT title FROM chunks WHERE source_id = $1", sid
-        )
+        after = await conn.fetchval("SELECT title FROM chunks WHERE source_id = $1", sid)
         assert after == "Backfill Source"
     finally:
         await conn.close()
