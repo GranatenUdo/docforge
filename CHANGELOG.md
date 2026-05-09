@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-09
+
+### Added
+
+- **Hybrid retrieval** (`api.py /search`): Postgres FTS sparse path runs alongside the existing pgvector dense path; results fused via classic Reciprocal Rank Fusion (k=60). Most useful for exact-identifier queries ("BackgroundProcessService dispatch", "ADR-002") that dense-only retrieval missed. Tag-boost re-rank now applies to the RRF score.
+- New `Settings` fields: `rrf_k` (default 60), `hybrid_pool_size` (default 100), `fts_language` (default `'english'`). All safe defaults; no .env / docforge.yml change required.
+- Migration 007: adds `chunks.text_tsv` GENERATED STORED `tsvector` column + GIN index. Postgres backfills existing rows on `ALTER TABLE` — no re-ingest needed.
+
+### Changed
+
+- **`SearchResult.similarity` field semantic.** Previously: cosine similarity ∈ [0, 1]. Now: fused RRF score, typically ∈ [0, 0.033]. Result ordering is what consumers should rely on; the absolute score is no longer cosine-comparable. The MCP search-tool consumer (Claude) reads results by rank, so end-user behavior is unchanged.
+
+### Migration notes
+
+- The migration is additive. Existing dense-only queries continue to work against a v0.4.x database (the new column and index simply go unused). After upgrading to v0.5.0 image, run `init_db` (which iterates packaged migrations) or apply `007_add_chunks_text_tsv.sql` directly to add the column and index. For ~tens of thousands of chunks, lock window is sub-second.
+
 ## [0.4.1] - 2026-05-08
 
 ### Changed
