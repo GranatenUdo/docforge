@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-09
+
+### Added
+
+- `Settings.dense_weight` (default 1.0) and `Settings.sparse_weight` (default 1.0): per-retriever multipliers on the RRF reciprocal-rank score. At defaults, behavior is identical to v0.5.0 classic RRF. Tune via `DENSE_WEIGHT` / `SPARSE_WEIGHT` env vars or `docforge.yml`.
+- New integration test `test_weights_shift_ranking` proving the weight params flow through the SQL formula end-to-end (`sparse_weight=0` collapses to dense-only ranking; `dense_weight=0` collapses to sparse-only).
+
+### Changed
+
+- `/search` SQL RRF formula now multiplies each retriever's reciprocal-rank by its corresponding weight. No behavior change at default weights; opens the door to weight-tuned hybrid retrieval. See `dw-docforge/docs/superpowers/plans/2026-05-09-hybrid-retrieval-followup-plan.md` for the sweep methodology.
+
 ## [0.5.0] - 2026-05-09
 
 ### Added
