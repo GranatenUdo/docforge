@@ -240,8 +240,8 @@ async def search(
                                 COALESCE(d.source_id, sp.source_id) AS source_id,
                                 COALESCE(d.text, sp.text) AS text,
                                 COALESCE(d.section_title, sp.section_title) AS section_title,
-                                COALESCE(1.0/($9 + d.rank), 0)
-                                  + COALESCE(1.0/($9 + sp.rank), 0) AS rrf
+                                COALESCE($10::float / ($9 + d.rank), 0)
+                                  + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
                          FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
                      )
                 SELECT f.text, f.section_title,
@@ -266,6 +266,8 @@ async def search(
                 req.limit,  # $7
                 settings.fts_language,  # $8
                 settings.rrf_k,  # $9
+                settings.dense_weight,  # $10
+                settings.sparse_weight,  # $11
             )
     except Exception as e:
         logger.error("Database error during search: %s", e)

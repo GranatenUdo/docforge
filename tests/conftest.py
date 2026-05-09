@@ -90,6 +90,8 @@ def fake_settings():
         hybrid_pool_size=100,
         rrf_k=60,
         fts_language="english",
+        dense_weight=1.0,
+        sparse_weight=1.0,
     )
 
 

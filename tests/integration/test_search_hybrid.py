@@ -70,7 +70,7 @@ async def _insert_chunk(conn, source_id: str, text: str, vec: np.ndarray) -> Non
 # Keep this string in sync with src/docforge/api.py if either changes.
 # Parameters: $1=query_vec, $2=query_text, $3=pool_size, $4=tag_match_weight,
 #             $5=user_tags, $6=org_tag_weight, $7=req.limit, $8=fts_language,
-#             $9=rrf_k.
+#             $9=rrf_k, $10=dense_weight, $11=sparse_weight.
 HYBRID_SEARCH_SQL = """
 WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
      dense AS (
@@ -103,7 +103,8 @@ WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
                 COALESCE(d.source_id, sp.source_id) AS source_id,
                 COALESCE(d.text, sp.text) AS text,
                 COALESCE(d.section_title, sp.section_title) AS section_title,
-                COALESCE(1.0/($9 + d.rank), 0) + COALESCE(1.0/($9 + sp.rank), 0) AS rrf
+                COALESCE($10::float / ($9 + d.rank), 0)
+                  + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
          FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
      )
 SELECT s.title AS source_title, f.rrf AS similarity,
@@ -155,6 +156,8 @@ async def test_dense_only_winner(pg_url):
             LIMIT,
             FTS_LANG,
             RRF_K,
+            1.0,  # $10: dense_weight
+            1.0,  # $11: sparse_weight
         )
         assert [r["source_title"] for r in rows][0] == "DenseTarget"
     finally:
@@ -193,6 +196,8 @@ async def test_sparse_only_winner(pg_url):
             LIMIT,
             FTS_LANG,
             RRF_K,
+            1.0,  # $10: dense_weight
+            1.0,  # $11: sparse_weight
         )
         titles = [r["source_title"] for r in rows]
         # Target appears in results despite losing the dense ranking
@@ -251,9 +256,59 @@ async def test_hybrid_winner_above_single_path_winners(pg_url):
             LIMIT,
             FTS_LANG,
             RRF_K,
+            1.0,  # $10: dense_weight
+            1.0,  # $11: sparse_weight
         )
         assert rows[0]["source_title"] == "HybridTarget", (
             f"expected HybridTarget first, got {[r['source_title'] for r in rows]}"
         )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_weights_shift_ranking(pg_url):
+    """Sparse_weight=0 collapses RRF to pure dense; dense_weight=0 collapses to
+    pure sparse. Proves the weight params actually flow through the SQL formula
+    end-to-end."""
+    conn = await asyncpg.connect(pg_url)
+    try:
+        await register_vector(conn)
+
+        sid_dense = await _insert_source(conn, "DenseStrong")
+        sid_sparse = await _insert_source(conn, "SparseStrong")
+
+        # DenseStrong: vector at 0.05 (very close to query at 0.0); text matches no keyword
+        await _insert_chunk(conn, sid_dense, "general English prose nothing relevant", _vec(0.05))
+        # SparseStrong: vector at math.pi/2 (orthogonal to query); text matches "intellix dispatch"
+        await _insert_chunk(
+            conn, sid_sparse, "intellix dispatch strategy in a context", _vec(math.pi / 2)
+        )
+
+        # Case A: sparse_weight=0 -> RRF reduces to dense_weight/(k+r_d) -> pure dense
+        # DenseStrong dense rank 1, SparseStrong dense rank 2 -> DenseStrong wins
+        rows = await conn.fetch(
+            HYBRID_SEARCH_SQL,
+            _vec(0.0),
+            "intellix dispatch",
+            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            1.0,  # dense_weight = $10
+            0.0,  # sparse_weight = $11 -> sparse contribution becomes 0
+        )
+        assert rows[0]["source_title"] == "DenseStrong", \
+            f"expected DenseStrong with sparse_weight=0, got {[r['source_title'] for r in rows]}"
+
+        # Case B: dense_weight=0 -> RRF reduces to sparse_weight/(k+r_s) -> pure sparse
+        # DenseStrong has no sparse match (rrf=0); SparseStrong is sparse rank 1 -> wins
+        rows = await conn.fetch(
+            HYBRID_SEARCH_SQL,
+            _vec(0.0),
+            "intellix dispatch",
+            POOL, WEIGHT_TAG, ["platform"], WEIGHT_ORG, LIMIT, FTS_LANG, RRF_K,
+            0.0,
+            1.0,
+        )
+        assert rows[0]["source_title"] == "SparseStrong", \
+            f"expected SparseStrong with dense_weight=0, got {[r['source_title'] for r in rows]}"
     finally:
         await conn.close()
