@@ -261,3 +261,13 @@ class TestEmbedderSidecarSettings:
 
         s = Settings()
         assert "very-secret-shhh" not in repr(s)
+
+
+def test_hybrid_retrieval_defaults():
+    """Hybrid retrieval Settings defaults match the design spec."""
+    from docforge.config import Settings
+
+    s = Settings()
+    assert s.rrf_k == 60
+    assert s.hybrid_pool_size == 100
+    assert s.fts_language == "english"
