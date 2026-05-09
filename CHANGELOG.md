@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-09
+
+### Added
+
+- Migration 008: `chunks.title` TEXT NOT NULL DEFAULT '' column, backfilled from `sources.title` via JOIN UPDATE. New `chunks.text_tsv` GENERATED expression combines title (weight A), section_title (weight B), and text (weight D) via `setweight()`. Lock window roughly 15-90 seconds on ~20k chunks during deploy.
+- `ingest.py`: both INSERT call sites (Confluence path uses `source.title`; git path uses `file.title`) populate the new column so post-deploy ingests stay populated.
+
+### Changed
+
+- **Sparse retrieval path now matches titles and section headings**, weighted via `ts_rank_cd` defaults (title ~10x body, section ~4x body). Improves recall on queries where the right doc's title contains query terms but its chunk bodies don't — the failure mode identified in `dw-docforge/docs/superpowers/findings/2026-05-09-hybrid-regression-diagnosis.md`. No engine code default changes; behavior shift is purely in the GENERATED tsvector expression.
+
+### Migration notes
+
+- Migration 008 must be applied to the production Postgres BEFORE the new image rolls. The OLD container's SQL doesn't reference the new column shape, so adding it (via a column drop+recreate) is safe while the old container is still serving. The NEW container's SQL uses the new column shape directly. Same migration-first deploy ordering as v0.5.0's migration 007.
+
 ## [0.5.2] - 2026-05-09
 
 ### Added
