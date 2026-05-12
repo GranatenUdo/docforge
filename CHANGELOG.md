@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-12
+
+### Fixed
+
+- `api.py` lifespan now calls `logging.basicConfig(level=INFO, force=True)` so that `docforge.api` INFO logs (per-phase `search_phases` line, `query_log cleanup` heartbeat, error context) reach Container Apps stdout. Uvicorn's default config leaves the root logger at WARNING, which silently dropped all application-side INFO logs. Discovered during the v0.6.1 deploy: the `search_phases` line we just added was working in unit tests (pytest's caplog intercepts everything) but invisible in production.
+
 ## [0.6.1] - 2026-05-12
 
 ### Added
