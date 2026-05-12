@@ -78,6 +78,19 @@ async def lifespan(app: FastAPI):
 
     Yields a dict whose entries flow into request.state for handler access
     via the Depends getters below."""
+    # Ensure INFO-level docforge logs reach stdout. Uvicorn configures only
+    # its own uvicorn.access / uvicorn.error loggers; the root logger stays
+    # at WARNING by default, which silences logger.info() calls from
+    # docforge.api (per-phase search_phases timing, query_log cleanup
+    # heartbeat, etc.). force=True overrides any handler uvicorn may have
+    # already attached. Format mirrors cli._setup_logging for consistency.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
+
     settings = Settings()
     embedder: EmbedderProtocol | None = None  # set inside try; outer finally reads it
     pool = await asyncpg.create_pool(

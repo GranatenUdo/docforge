@@ -425,3 +425,55 @@ class TestSearchPhaseLogging:
                 assert key in line, f"missing {key} in: {line}"
         finally:
             app.dependency_overrides.clear()
+
+
+class TestLifespanLoggingConfig:
+    @pytest.mark.asyncio
+    async def test_lifespan_configures_root_logger_at_info(self, monkeypatch):
+        """The lifespan installs a root logger handler at INFO so that
+        docforge.api logger.info() calls reach stdout in production.
+
+        Regression guard for the silent /search latency logs we discovered
+        in production: uvicorn leaves the root logger at WARNING by default,
+        so logger.info() from docforge.* was filtered before any handler.
+
+        We force the root logger to WARNING first, then enter the lifespan
+        (mocking out pool/embedder construction so we exercise only the
+        logging-config slice), and assert the root logger is now INFO."""
+        import logging
+
+        from docforge import api as api_module
+
+        # Stand the root logger up at WARNING (uvicorn's default state in prod).
+        root = logging.getLogger()
+        saved_level = root.level
+        saved_handlers = root.handlers[:]
+        logging.basicConfig(level=logging.WARNING, force=True)
+        assert root.level == logging.WARNING
+
+        # Make lifespan abort cheaply right after the logging.basicConfig call
+        # so we don't need a real Postgres pool / embedder. The lifespan calls
+        # asyncpg.create_pool immediately after basicConfig.
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("stop after logging setup")
+
+        monkeypatch.setattr(api_module.asyncpg, "create_pool", _boom)
+
+        try:
+            async with api_module.lifespan(api_module.app):
+                pass  # pragma: no cover - lifespan should raise before yield
+        except RuntimeError as e:
+            assert "stop after logging setup" in str(e)
+        finally:
+            # Capture result before restoring so the assertion message is clean.
+            final_level = root.level
+            # Restore root logger state so we don't pollute other tests.
+            for h in root.handlers[:]:
+                root.removeHandler(h)
+            for h in saved_handlers:
+                root.addHandler(h)
+            root.setLevel(saved_level)
+
+        assert final_level == logging.INFO, (
+            f"lifespan must reconfigure root logger to INFO; got {final_level}"
+        )
