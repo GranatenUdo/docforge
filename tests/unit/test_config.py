@@ -16,8 +16,8 @@ class TestSettingsDefaults:
         s = Settings()
         assert s.database_url == "postgresql://docforge:localdev@localhost:5432/docforge"
         assert s.confluence_base_url == ""
-        assert s.embedding_model == "google/embeddinggemma-300m"
-        assert s.embedding_dimensions == 768
+        assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
+        assert s.embedding_dimensions == 1024
         assert s.chunk_max_tokens == 500
         assert s.sources_file == "sources.yml"
         assert s.tag_match_weight == pytest.approx(0.1)
@@ -65,7 +65,7 @@ class TestYamlLoading:
         from docforge.config import Settings
 
         s = Settings()
-        assert s.embedding_model == "google/embeddinggemma-300m"
+        assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
 
 
 class TestPrecedence:
@@ -283,3 +283,12 @@ def test_weighted_rrf_defaults():
     s = Settings()
     assert s.dense_weight == 1.0
     assert s.sparse_weight == 1.0
+
+
+def test_embedder_defaults_match_qwen_migration():
+    """Engine defaults reflect the v0.7.0 Qwen-4B migration."""
+    from docforge.config import Settings
+
+    s = Settings()
+    assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
+    assert s.embedding_dimensions == 1024
