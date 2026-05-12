@@ -34,7 +34,7 @@ class TestEmbedderInit:
 
         assert emb.model_name == "primary/model"
         assert emb.dimensions == 768
-        mock_st.assert_called_once_with("primary/model", token="tok")
+        mock_st.assert_called_once_with("primary/model", token="tok", truncate_dim=None)
 
     def test_falls_back_when_primary_fails(self):
         fake_fallback = _fake_st_model(dim=384)
@@ -70,7 +70,7 @@ class TestEmbedderInit:
 
             Embedder("some/model", hf_token="")
 
-        mock_st.assert_called_once_with("some/model", token="env_tok_123")
+        mock_st.assert_called_once_with("some/model", token="env_tok_123", truncate_dim=None)
 
     def test_passes_none_when_no_token_available(self, monkeypatch):
         monkeypatch.delenv("HF_TOKEN", raising=False)
@@ -80,7 +80,7 @@ class TestEmbedderInit:
 
             Embedder("open/model", hf_token="")
 
-        mock_st.assert_called_once_with("open/model", token=None)
+        mock_st.assert_called_once_with("open/model", token=None, truncate_dim=None)
 
     def test_raises_when_loaded_dim_does_not_match_expected(self):
         """Guard fires when configured embedding_dimensions disagrees with model."""
@@ -207,3 +207,119 @@ class TestEmbedderAsyncHelpers:
         e = Embedder("test/model", expected_dimensions=768)
         result = await e.aembed_query("hello")
         assert result == [0.5] * 768
+
+
+class TestQwenMigration:
+    """Task 2: Qwen-4B default, Matryoshka truncate_dim, instruction-aware query prompt."""
+
+    def test_embedder_default_model_is_qwen(self):
+        """The Embedder class default model_name parameter matches Settings default."""
+        import inspect
+        from docforge.processors.embedder import Embedder
+
+        sig = inspect.signature(Embedder.__init__)
+        default = sig.parameters["model_name"].default
+        assert default == "Qwen/Qwen3-Embedding-4B", \
+            f"Embedder default model_name is {default!r}, expected Qwen-4B"
+
+    def test_embedder_passes_truncate_dim_to_sentence_transformer(self, monkeypatch):
+        """Verify Embedder forwards expected_dimensions as truncate_dim so MRL slicing
+        happens at the SentenceTransformer layer (not post-hoc in our code)."""
+        import sys
+        from docforge.processors.embedder import Embedder
+
+        captured = {}
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None):
+                captured["name"] = name
+                captured["truncate_dim"] = truncate_dim
+                self.prompts = {}
+
+            def get_embedding_dimension(self):
+                return captured.get("truncate_dim") or 2560
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+                n = len(texts) if isinstance(texts, list) else 1
+                return np.zeros((n, self.get_embedding_dimension()), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+                return T()
+
+        monkeypatch.setitem(sys.modules, "sentence_transformers",
+                            type("M", (), {"SentenceTransformer": FakeST})())
+
+        emb = Embedder(model_name="Qwen/Qwen3-Embedding-4B", expected_dimensions=1024)
+        assert captured["truncate_dim"] == 1024
+        assert emb.dimensions == 1024
+
+    def test_embed_query_passes_prompt_name_query_for_qwen(self, monkeypatch):
+        """Verify Embedder.embed_query forwards prompt_name='query' when model has the template."""
+        import sys
+        from docforge.processors.embedder import Embedder
+
+        captured_kwargs = []
+
+        class FakeSTQwen:
+            def __init__(self, name, token=None, truncate_dim=None):
+                self._dim = truncate_dim or 2560
+                # Qwen models expose a 'query' prompt template
+                self.prompts = {"query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "}
+            def get_embedding_dimension(self):
+                return self._dim
+            def encode(self, texts, **kwargs):
+                import numpy as np
+                captured_kwargs.append(kwargs)
+                n = len(texts) if isinstance(texts, list) else 1
+                return np.zeros((n, self._dim), dtype=np.float32)
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+                return T()
+
+        monkeypatch.setitem(sys.modules, "sentence_transformers",
+                            type("M", (), {"SentenceTransformer": FakeSTQwen})())
+
+        emb = Embedder(model_name="Qwen/Qwen3-Embedding-4B", expected_dimensions=1024)
+        emb.embed_query("test query")
+        assert any(kw.get("prompt_name") == "query" for kw in captured_kwargs), \
+            f"embed_query did not forward prompt_name='query'; got kwargs={captured_kwargs}"
+
+    def test_embed_query_skips_prompt_name_when_model_has_no_query_prompt(self, monkeypatch):
+        """Legacy models (Gemma, all-MiniLM) lack a 'query' prompt — must skip the kwarg."""
+        import sys
+        from docforge.processors.embedder import Embedder
+
+        captured_kwargs = []
+
+        class FakeSTNoPrompts:
+            def __init__(self, name, token=None, truncate_dim=None):
+                self._dim = truncate_dim or 384
+                self.prompts = {}  # no query template
+            def get_embedding_dimension(self):
+                return self._dim
+            def encode(self, texts, **kwargs):
+                import numpy as np
+                captured_kwargs.append(kwargs)
+                return np.zeros((1, self._dim), dtype=np.float32)
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+                return T()
+
+        monkeypatch.setitem(sys.modules, "sentence_transformers",
+                            type("M", (), {"SentenceTransformer": FakeSTNoPrompts})())
+
+        emb = Embedder(model_name="legacy/model", expected_dimensions=384)
+        emb.embed_query("q")
+        assert "prompt_name" not in captured_kwargs[0], \
+            f"prompt_name was passed to a legacy model: {captured_kwargs}"

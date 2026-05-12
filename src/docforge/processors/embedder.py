@@ -36,17 +36,21 @@ class Embedder:
     """Generates text embeddings using a sentence-transformers model.
 
     Loads the model once at initialization and reuses it for all calls.
-    Default model is EmbeddingGemma-300M (768 dimensions).
-    Falls back to all-MiniLM-L6-v2 (384 dimensions) if the primary model fails to load.
+    Default model is Qwen3-Embedding-4B with Matryoshka truncation to
+    1024 dimensions (native 2560). Instruction-aware: queries pass
+    prompt_name="query" for the model's query-side template; documents
+    use no prompt prefix.
 
-    Raises RuntimeError at init time if expected_dimensions is provided and
-    the loaded model (primary or fallback) reports a different dimension.
-    Pass expected_dimensions=settings.embedding_dimensions to enable the guard.
+    Falls back to all-MiniLM-L6-v2 (384 dimensions) if the primary
+    model fails to load. Raises RuntimeError at init time if
+    expected_dimensions is provided and the loaded model reports a
+    different dimension. Pass expected_dimensions=settings.embedding_dimensions
+    to enable the guard.
     """
 
     def __init__(
         self,
-        model_name: str = "google/embeddinggemma-300m",
+        model_name: str = "Qwen/Qwen3-Embedding-4B",
         hf_token: str = "",
         expected_dimensions: int | None = None,
     ) -> None:
@@ -58,7 +62,11 @@ class Embedder:
 
         try:
             logger.info("Loading embedding model: %s", model_name)
-            self._model = SentenceTransformer(model_name, token=hf_token or None)
+            self._model = SentenceTransformer(
+                model_name,
+                token=hf_token or None,
+                truncate_dim=expected_dimensions,
+            )
             self.model_name = model_name
             self.dimensions = self._model.get_embedding_dimension()
             logger.info("Model loaded: %s (%d dimensions)", self.model_name, self.dimensions)
@@ -145,9 +153,19 @@ class Embedder:
         return embeddings.tolist()
 
     def embed_query(self, query: str) -> list[float]:
-        """Generate embedding for a single search query."""
-        result = self.embed([query])
-        return result[0]
+        """Generate embedding for a single search query.
+
+        Uses prompt_name="query" when the loaded model has a "query"
+        prompt template (Qwen3 family). Legacy models without that
+        template (Gemma, all-MiniLM fallback) skip the kwarg.
+        """
+        if not query:
+            raise ValueError("embed_query requires a non-empty query string")
+        encode_kwargs: dict = {"show_progress_bar": False, "normalize_embeddings": True}
+        if "query" in (getattr(self._model, "prompts", None) or {}):
+            encode_kwargs["prompt_name"] = "query"
+        result = self._model.encode([query], **encode_kwargs)
+        return result.tolist()[0]
 
     async def aembed(self, texts: list[str]) -> list[list[float]]:
         """Async wrapper around `embed`; runs the sync model call in a thread."""
