@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-12
+
+### Changed
+
+- **Embedder model: EmbeddingGemma-300M → Qwen3-Embedding-4B.** Default embedding model swap with full operational migration. Apache 2.0 license replaces Gemma Terms; ~7pp MTEB-Multilingual lift at the model level. Engine code defaults now `Qwen/Qwen3-Embedding-4B` / 1024 dim. The `processors.Embedder` class now forwards `truncate_dim=expected_dimensions` to `SentenceTransformer(...)` so Matryoshka truncation happens at the ST layer. `Embedder.embed_query()` passes `prompt_name="query"` when the model has the template (Qwen3 family); legacy models skip the kwarg.
+- **`chunks.embedding` dim 768 → 1024.** Matryoshka truncation from Qwen-4B's 2560 native; quality retention estimated 95-98% per Qwen's own truncation guidance.
+- **`schema.sql` updated to `vector(1024)`** for fresh-DB init parity.
+
+### Added
+
+- `deploy/azure/main.bicep`: optional Workload-Profiles env (Consumption + opt-in `gpu-nc8as-t4` profile), plus `nameSuffix`, `searchApiWorkloadProfileName`, `embedderWorkloadProfileName`, `embedderCpu`, `embedderMemoryGi`, `enableWorkloadProfiles`, `enableGpuProfile` params. Operators can keep the existing Consumption-tier sizing (default) or opt into GPU inference via bicepparam.
+- `sql/migrations/009_embedding_dim_1024.sql`: drops + re-creates `chunks.embedding` at the new dim. **BREAKING**: re-ingest required after applying.
+
+### Migration notes
+
+This release requires a coordinated cutover: bring up a new embedder Container App backed by the GPU workload profile, point search-api at it, apply migration 009, truncate chunks, re-ingest all sources. Expected downtime: 30-45 min during low-usage hours. See the migration plan in `dw-docforge/docs/superpowers/plans/2026-05-12-qwen-embedder-migration-plan.md` for the exact step ordering and rollback procedure.
+
+Operators on legacy Gemma deployments can continue on v0.6.x indefinitely — the engine doesn't require this upgrade.
+
 ## [0.6.2] - 2026-05-12
 
 ### Fixed
