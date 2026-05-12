@@ -4,6 +4,7 @@ The migration is intentionally destructive (drops + re-adds the column,
 forces re-ingest). The session-scoped pgvector testcontainer applies all
 migrations in order; this test asserts the post-migration column shape.
 """
+
 from __future__ import annotations
 
 import asyncpg
@@ -23,8 +24,7 @@ async def test_embedding_column_is_1024_dim(pg_url):
               AND attname = 'embedding'
             """
         )
-        assert type_str == "vector(1024)", \
-            f"expected vector(1024), got {type_str!r}"
+        assert type_str == "vector(1024)", f"expected vector(1024), got {type_str!r}"
     finally:
         await conn.close()
 
