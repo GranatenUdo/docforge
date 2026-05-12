@@ -197,7 +197,12 @@ class RemoteEmbedder:
         url: str,
         token: str,
         expected_dimensions: int,
-        timeout_seconds: float = 5.0,
+        # 5s was tuned for the small Gemma-300M embedder where every call
+        # is sub-second. With Qwen-4B on a Tesla T4, cold connections + larger
+        # batches push p99 past 5s. Default bumped to 60s; the retry loop
+        # still bounds total wait to ~120s on the slow path. Callers can
+        # override via the constructor if a stricter SLA is needed.
+        timeout_seconds: float = 60.0,
     ) -> None:
         self._url = url.rstrip("/")
         self._token = token
