@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-12
+
+### Added
+
+- `api.py`: per-phase latency log line on every `/search` call:
+
+      search_phases query_len=N t_embed_ms=X t_db_ms=Y t_total_ms=Z rows=M
+
+  Lets operators tail Container Apps logs to see where /search time is spent (embedder vs Postgres vs Python) without a full distributed-tracing setup. No behavior change.
+
 ## [0.6.0] - 2026-05-09
 
 ### Added
