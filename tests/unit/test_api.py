@@ -381,3 +381,47 @@ def test_search_request_accepts_full_body_for_backwards_compat():
     assert req.user_name == "tobias.ens"
     assert req.team_name == "ccl"
     assert req.area_name == "cloud"
+
+
+class TestSearchPhaseLogging:
+    @pytest.mark.asyncio
+    async def test_search_logs_phase_latencies(self, caplog):
+        """Every /search call emits a 'search_phases' log line with
+        t_embed_ms, t_db_ms, t_total_ms — needed for production p95 diagnosis."""
+        import logging
+
+        caplog.set_level(logging.INFO, logger="docforge.api")
+
+        from tests.conftest import CapturingPool, FakeEmbedder, fake_settings
+
+        pool = CapturingPool([
+            {
+                "text": "row",
+                "section_title": None,
+                "source_title": "Doc",
+                "source_url": "https://x",
+                "source_tags": [],
+                "similarity": 0.01,
+            }
+        ])
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = fake_settings
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={"query": "x", "team_name": "ccl", "limit": 1},
+                )
+            assert resp.status_code == 200, resp.text
+
+            messages = [r.getMessage() for r in caplog.records]
+            phase_lines = [m for m in messages if "search_phases" in m]
+            assert phase_lines, (
+                f"expected a 'search_phases' log line; got messages: {messages}"
+            )
+            line = phase_lines[0]
+            for key in ("t_embed_ms=", "t_db_ms=", "t_total_ms="):
+                assert key in line, f"missing {key} in: {line}"
+        finally:
+            app.dependency_overrides.clear()
