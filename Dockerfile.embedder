@@ -10,6 +10,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY src/ src/
 
+# Pre-install torch from PyTorch's cu124 index BEFORE the main package install.
+# Azure Container Apps GPU workload profiles (T4) run host NVIDIA driver
+# version 12.4. Without this pin, pip resolves to torch with CUDA 13 nvidia
+# wheels, which then silently fall back to CPU at runtime — making Qwen-4B
+# inference impractically slow. The `pip install .` step below sees torch is
+# already installed and leaves it alone.
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch==2.5.1+cu124
+
 RUN pip install --no-cache-dir "."
 
 # Pre-download the embedding model. HF_TOKEN comes from a BuildKit
