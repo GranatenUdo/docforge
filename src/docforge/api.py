@@ -197,14 +197,17 @@ async def search(
     """Search indexed documentation by semantic similarity."""
     start = time.perf_counter()
 
+    t_embed_start = time.perf_counter()
     try:
         query_vector = await embedder.aembed_query(req.query)
     except Exception as e:
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to embed query")
+    t_embed_ms = int((time.perf_counter() - t_embed_start) * 1000)
 
     user_tags = [t for t in (req.team_name, req.area_name) if t]
 
+    t_db_start = time.perf_counter()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -272,8 +275,19 @@ async def search(
     except Exception as e:
         logger.error("Database error during search: %s", e)
         raise HTTPException(status_code=503, detail="Database unavailable")
+    t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
-    request_ms = int((time.perf_counter() - start) * 1000)
+    t_total_ms = int((time.perf_counter() - start) * 1000)
+    logger.info(
+        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d t_total_ms=%d rows=%d",
+        len(req.query),
+        t_embed_ms,
+        t_db_ms,
+        t_total_ms,
+        len(rows),
+    )
+
+    request_ms = t_total_ms
 
     effective_user_name = user.preferred_username if user else (req.user_name or "anonymous")
     await log_query(
