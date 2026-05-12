@@ -394,16 +394,18 @@ class TestSearchPhaseLogging:
 
         from tests.conftest import CapturingPool, FakeEmbedder, fake_settings
 
-        pool = CapturingPool([
-            {
-                "text": "row",
-                "section_title": None,
-                "source_title": "Doc",
-                "source_url": "https://x",
-                "source_tags": [],
-                "similarity": 0.01,
-            }
-        ])
+        pool = CapturingPool(
+            [
+                {
+                    "text": "row",
+                    "section_title": None,
+                    "source_title": "Doc",
+                    "source_url": "https://x",
+                    "source_tags": [],
+                    "similarity": 0.01,
+                }
+            ]
+        )
         app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
         app.dependency_overrides[get_pool_dep] = lambda: pool
         app.dependency_overrides[get_settings] = fake_settings
@@ -417,9 +419,7 @@ class TestSearchPhaseLogging:
 
             messages = [r.getMessage() for r in caplog.records]
             phase_lines = [m for m in messages if "search_phases" in m]
-            assert phase_lines, (
-                f"expected a 'search_phases' log line; got messages: {messages}"
-            )
+            assert phase_lines, f"expected a 'search_phases' log line; got messages: {messages}"
             line = phase_lines[0]
             for key in ("t_embed_ms=", "t_db_ms=", "t_total_ms="):
                 assert key in line, f"missing {key} in: {line}"
