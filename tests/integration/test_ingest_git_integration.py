@@ -52,8 +52,8 @@ async def test_end_to_end_ingest_and_search(tmp_path, pg_url, fake_embedder):
         for row in tags_rows:
             assert row["tags"] == ["platform", "cloud"]
 
-        query_vec = np.zeros(768, dtype=np.float32)
-        query_vec[767] = 0.001
+        query_vec = np.zeros(1024, dtype=np.float32)
+        query_vec[1023] = 0.001
         rows = await conn.fetch(
             """
             SELECT c.text, s.title AS source_title,

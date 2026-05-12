@@ -35,8 +35,8 @@ async def _insert_chunk(conn, source_id: str, text: str, vec: np.ndarray):
 
 
 def _vec(last_dim: float) -> np.ndarray:
-    v = np.zeros(768, dtype=np.float32)
-    v[767] = last_dim
+    v = np.zeros(1024, dtype=np.float32)
+    v[1023] = last_dim
     return v
 
 

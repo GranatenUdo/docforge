@@ -74,7 +74,7 @@ async def test_purge_orphans_with_confirm_deletes(pg_url):
             await conn.execute(
                 """
                 INSERT INTO chunks (source_id, chunk_index, text, embedding)
-                VALUES ($1, 0, 'body', array_fill(0.0::real, ARRAY[768])::vector(768))
+                VALUES ($1, 0, 'body', array_fill(0.0::real, ARRAY[1024])::vector(1024))
                 """,
                 orphan_id,
             )

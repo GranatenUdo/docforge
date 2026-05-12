@@ -25,7 +25,7 @@ from pgvector.asyncpg import register_vector
 
 
 def _vec(angle_rad: float) -> np.ndarray:
-    """Deterministic 768-dim unit vector at angle `angle_rad` in the (axis 0, axis 1) plane.
+    """Deterministic 1024-dim unit vector at angle `angle_rad` in the (axis 0, axis 1) plane.
 
     Two vectors at angles a and b have cosine distance 1 - cos(a - b):
         _vec(0.0) and _vec(0.0)       -> distance 0     (identical)
@@ -34,7 +34,7 @@ def _vec(angle_rad: float) -> np.ndarray:
 
     Use this to control which chunks rank close vs far on the dense path.
     """
-    v = np.zeros(768, dtype=np.float32)
+    v = np.zeros(1024, dtype=np.float32)
     v[0] = float(np.cos(angle_rad))
     v[1] = float(np.sin(angle_rad))
     return v

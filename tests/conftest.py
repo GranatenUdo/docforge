@@ -98,13 +98,13 @@ def fake_settings():
 class FakeEmbedder:
     """Deterministic stand-in for docforge.processors.embedder.Embedder.
 
-    Returns fixed vectors without loading the 300M sentence-transformers
-    model. Dimensions match EmbeddingGemma-300M (768) so pgvector columns
-    defined as vector(768) accept the output in integration tests.
+    Returns fixed vectors without loading the model. Dimensions match
+    Qwen-4B MRL (1024) so pgvector columns defined as vector(1024) accept
+    the output in integration tests.
     """
 
     model_name = "fake/embedder"
-    dimensions = 768
+    dimensions = 1024
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -114,10 +114,10 @@ class FakeEmbedder:
         return cls()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return [[0.0] * 767 + [float(i + 1) / 1000.0] for i, _ in enumerate(texts)]
+        return [[0.0] * 1023 + [float(i + 1) / 1000.0] for i, _ in enumerate(texts)]
 
     def embed_query(self, text: str) -> list[float]:
-        return [0.0] * 767 + [0.001]
+        return [0.0] * 1023 + [0.001]
 
     async def aembed(self, texts: list[str]) -> list[list[float]]:
         return self.embed(texts)
