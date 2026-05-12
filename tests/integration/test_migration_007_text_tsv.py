@@ -56,7 +56,7 @@ async def test_text_tsv_auto_populates_on_insert(pg_url):
             RETURNING id
             """
         )
-        vec = np.zeros(768, dtype=np.float32)
+        vec = np.zeros(1024, dtype=np.float32)
         await conn.execute(
             """
             INSERT INTO chunks (source_id, chunk_index, text, embedding, section_title)

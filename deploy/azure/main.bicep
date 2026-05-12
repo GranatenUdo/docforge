@@ -124,13 +124,38 @@ param denseWeight string = '1.0'
 @description('Per-retriever multiplier on the sparse path RRF contribution. Default 1.0 = classic RRF. Bruch et al. 2023 (ACM TOIS) shows weight tuning is dataset-specific — adjust via bicepparam per deployment, not by changing this default.')
 param sparseWeight string = '1.0'
 
+@description('Optional suffix appended to the managed environment name + Container App names. Lets a new Workload-Profiles environment coexist with an existing Consumption-only one during a migration. Leave empty for legacy single-env deployments.')
+param nameSuffix string = ''
+
+@description('Workload profile name for the search-api Container App. Only relevant when enableWorkloadProfiles=true. "Consumption" stays on the consumption-style profile within the WP env.')
+param searchApiWorkloadProfileName string = 'Consumption'
+
+@description('Workload profile name for the embedder Container App. Only relevant when enableWorkloadProfiles=true. Set "gpu-nc8as-t4" for Tesla T4 GPU; "Consumption" for CPU-only.')
+param embedderWorkloadProfileName string = 'Consumption'
+
+@description('vCPUs allocated to the embedder Container App. GPU workload profiles require the full SKU vCPU count (NC8as_T4 = 8). Consumption-profile callers use fractional cpu (json("2.0")) via the conditional below.')
+@minValue(1)
+@maxValue(16)
+param embedderCpu int = 2
+
+@description('Memory (Gi) allocated to the embedder Container App. GPU workload profiles require the full SKU memory (NC8as_T4 = 56). Consumption-profile callers typically use 4.')
+@minValue(1)
+@maxValue(64)
+param embedderMemoryGi int = 4
+
+@description('When true, the managed environment is provisioned as a Workload-Profiles env (with a workloadProfiles array). When false (default), it stays Consumption-only — preserves backward compatibility for OSS / non-CCL deployments.')
+param enableWorkloadProfiles bool = false
+
+@description('When true, adds the gpu-nc8as-t4 workload profile to the env. Only honored when enableWorkloadProfiles=true.')
+param enableGpuProfile bool = false
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
 var postgresServerName = '${namePrefix}-pg'
 var logAnalyticsName = '${namePrefix}-law'
-var containerAppsEnvName = '${namePrefix}-env'
-var containerAppName = '${namePrefix}-search-api'
+var containerAppsEnvName = '${namePrefix}-env${nameSuffix}'
+var containerAppName = '${namePrefix}-search-api${nameSuffix}'
 
 // ─── Key Vault ──────────────────────────────────────────────────────────
 
@@ -283,19 +308,42 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 
 // ─── Container Apps managed environment ────────────────────────────────
 
+var workloadProfilesArray = enableGpuProfile ? [
+  {
+    name: 'Consumption'
+    workloadProfileType: 'Consumption'
+  }
+  {
+    // Verified via pre-flight probe (2026-05-12): serverless GPU profiles
+    // do NOT accept minimumCount or maximumCount — Azure errors with
+    // WorkloadProfilePropertyNotSupported. Scale is governed by the
+    // Container App's scale rule (concurrentRequests + minReplicas/maxReplicas).
+    name: 'gpu-nc8as-t4'
+    workloadProfileType: 'Consumption-GPU-NC8as-T4'
+  }
+] : [
+  {
+    name: 'Consumption'
+    workloadProfileType: 'Consumption'
+  }
+]
+
 resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerAppsEnvName
   location: location
   tags: tags
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKey
+  properties: union(
+    {
+      appLogsConfiguration: {
+        destination: 'log-analytics'
+        logAnalyticsConfiguration: {
+          customerId: logAnalytics.properties.customerId
+          sharedKey: logAnalytics.listKeys().primarySharedKey
+        }
       }
-    }
-  }
+    },
+    enableWorkloadProfiles ? { workloadProfiles: workloadProfilesArray } : {}
+  )
 }
 
 // ─── Container App ──────────────────────────────────────────────────────
@@ -423,6 +471,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
   properties: {
     managedEnvironmentId: containerAppsEnv.id
+    workloadProfileName: enableWorkloadProfiles ? searchApiWorkloadProfileName : null
     configuration: {
       ingress: {
         external: true
@@ -471,7 +520,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 // ─── Embedder Container App ─────────────────────────────────────────────
 
-var embedderAppName = '${namePrefix}-embedder'
+var embedderAppName = '${namePrefix}-embedder${nameSuffix}'
 var hasRealEmbedderImage = !empty(embedderImage)
 var defaultEmbedderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 var effectiveEmbedderImage = hasRealEmbedderImage ? embedderImage : defaultEmbedderImage
@@ -519,6 +568,7 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
   properties: {
     managedEnvironmentId: containerAppsEnv.id
+    workloadProfileName: enableWorkloadProfiles ? embedderWorkloadProfileName : null
     configuration: {
       ingress: {
         external: true
@@ -540,8 +590,11 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'docforge-embedder'
           image: effectiveEmbedderImage
           resources: {
-            cpu: json('2.0')
-            memory: '4Gi'
+            // GPU profile requires integer CPU equal to the full SKU vCPU count;
+            // Consumption profile uses fractional CPU via json(). Branch on the
+            // active workload profile name.
+            cpu: (enableWorkloadProfiles && embedderWorkloadProfileName == 'gpu-nc8as-t4') ? embedderCpu : json('2.0')
+            memory: (enableWorkloadProfiles && embedderWorkloadProfileName == 'gpu-nc8as-t4') ? '${embedderMemoryGi}Gi' : '4Gi'
           }
           env: hasRealEmbedderImage ? embedderRealEnv : []
           probes: embedderProbes

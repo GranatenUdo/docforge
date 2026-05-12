@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     hf_token: SecretStr = SecretStr("")
 
     # Embedding model
-    embedding_model: str = "google/embeddinggemma-300m"
-    embedding_dimensions: int = 768
+    embedding_model: str = "Qwen/Qwen3-Embedding-4B"
+    embedding_dimensions: int = 1024
     chunk_max_tokens: int = 500
 
     # Sources config

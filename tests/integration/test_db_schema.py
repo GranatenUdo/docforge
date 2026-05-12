@@ -30,7 +30,7 @@ async def test_init_db_creates_schema_and_pgvector(pg_url):
             RETURNING id
             """
         )
-        vec = np.zeros(768, dtype=np.float32)
+        vec = np.zeros(1024, dtype=np.float32)
         vec[0] = 1.0
         await conn.execute(
             """
@@ -44,7 +44,7 @@ async def test_init_db_creates_schema_and_pgvector(pg_url):
             "SELECT embedding FROM chunks WHERE source_id = $1", source_id
         )
         assert returned is not None
-        assert len(returned) == 768
+        assert len(returned) == 1024
     finally:
         await conn.close()
 

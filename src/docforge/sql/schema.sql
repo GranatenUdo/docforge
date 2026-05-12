@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     source_id UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     chunk_index INT NOT NULL,
     text TEXT NOT NULL,
-    embedding vector(768),
+    embedding vector(1024),
     section_title TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );

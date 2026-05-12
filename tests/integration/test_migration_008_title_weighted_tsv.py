@@ -44,7 +44,7 @@ async def test_text_tsv_includes_weighted_title(pg_url):
             RETURNING id
             """
         )
-        vec = np.zeros(768, dtype=np.float32)
+        vec = np.zeros(1024, dtype=np.float32)
         await conn.execute(
             """
             INSERT INTO chunks (source_id, chunk_index, text, embedding,
@@ -92,7 +92,7 @@ async def test_backfill_join_logic(pg_url):
             RETURNING id
             """
         )
-        vec = np.zeros(768, dtype=np.float32)
+        vec = np.zeros(1024, dtype=np.float32)
         # Insert with explicit empty title (simulating pre-backfill state)
         await conn.execute(
             """

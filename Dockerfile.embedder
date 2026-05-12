@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir "."
 
 # Pre-download the embedding model. HF_TOKEN comes from a BuildKit
 # secret mount and never lands in any image layer.
-ARG EMBEDDING_MODEL=google/embeddinggemma-300m
+ARG EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B
 RUN --mount=type=secret,id=hf_token,uid=0,gid=0 \
     HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)" \
     HF_HOME=/app/.cache/huggingface \
