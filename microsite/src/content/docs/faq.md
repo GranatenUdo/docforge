@@ -9,7 +9,7 @@ Check that the database is running: `docker compose up -d db`. Verify `DATABASE_
 
 ### "HF_TOKEN required" or model download fails
 
-The embedding model `google/embeddinggemma-300m` is gated on Hugging Face. Create a token at <https://huggingface.co/settings/tokens>, accept the model license at <https://huggingface.co/google/embeddinggemma-300m>, and set `HF_TOKEN=hf_...` in `.env`.
+The default embedding model `Qwen/Qwen3-Embedding-4B` is Apache 2.0 and publicly accessible — no token required. If you have configured a gated model, create a token at <https://huggingface.co/settings/tokens>, accept the model license on the model page, and set `HF_TOKEN=hf_...` in `.env`.
 
 ### "No results found" after ingest
 
@@ -17,7 +17,7 @@ Run `docforge status` to confirm sources and chunks exist. If counts are zero, c
 
 ### First ingest / first container start is very slow
 
-The first run downloads the 300M embedding model (~1.2 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, the cache is at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download:
+The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, the cache is at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download:
 
 ```bash
 docker run -v docforge-hf-cache:/app/.cache/huggingface ...
@@ -44,7 +44,7 @@ docforge ingest --purge-orphans --confirm # actually delete
 
 ### Can I use a different embedding model?
 
-Set `embedding_model` in `docforge.yml`. Anything `sentence-transformers` can load works, but the schema has a hard-coded `vector(768)` dimension — changing to a differently-sized model requires a migration (`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(N)`) and a full re-embed.
+Set `embedding_model` in `docforge.yml`. Anything `sentence-transformers` can load works, but the schema has a hard-coded `vector(1024)` dimension — changing to a differently-sized model requires a migration (`ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(N)`) and a full re-embed.
 
 ### How do I know if retrieval quality is good enough?
 

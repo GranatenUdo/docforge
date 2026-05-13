@@ -43,7 +43,7 @@ docforge is the narrow, focused option in this landscape: minimal footprint, MCP
 - You need SSO / SCIM / RBAC → out of scope; docforge authenticates but doesn't authorize per-resource.
 - Your corpus is very large (>100K pages/chunks) → dense-only retrieval without hybrid starts to degrade; on the [roadmap](ROADMAP.md).
 - You need near-real-time updates → ingest is batch; no webhook-driven continuous sync yet.
-- You need multilingual search evaluated → EmbeddingGemma is multilingual, but docforge has no eval coverage on non-English corpora yet.
+- You need multilingual search evaluated → Qwen3-Embedding-4B is multilingual, but docforge has no eval coverage on non-English corpora yet.
 
 For the full trust model, accepted risks, and assumptions docforge makes about its operating environment, see [`docs/threat-model.md`](docs/threat-model.md).
 
@@ -52,7 +52,7 @@ For the full trust model, accepted risks, and assumptions docforge makes about i
 **Prerequisites:**
 - Python 3.12+
 - Docker (for the local Postgres + pgvector container)
-- A [Hugging Face token](https://huggingface.co/settings/tokens) with access to the gated [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) model. Accept the model license on the model page first.
+- A [Hugging Face token](https://huggingface.co/settings/tokens) (for private/gated models; not required for Qwen3-Embedding-4B which is Apache 2.0 and publicly accessible).
 
 ```bash
 pip install docforge-cli
@@ -72,7 +72,7 @@ docforge serve
 ## How It Works
 
 1. **Configure** your Confluence URL, page IDs, and local git repo paths in `sources.yml`.
-2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (768-dim).
+2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (1024-dim).
 3. **Serve** exposes an MCP server that AI assistants query automatically.
 
 When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution.
@@ -95,11 +95,11 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ## Deploy to your infrastructure
 
-For team-wide use, deploy the search API to Azure (~$90/month at default SKUs with embedder always-on for production; ~$55/month with the default scale-to-zero embedder):
+For team-wide use, deploy the search API to Azure (~€900/month at default SKUs with the Qwen3-Embedding-4B GPU embedder on a workload-profile environment):
 
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
-- Container App running the embedder service (EmbeddingGemma-300M, model baked into the image).
+- Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image) on a GPU workload profile (NC8as_T4).
 - Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
@@ -140,14 +140,14 @@ With `--auth azure`, `user_name` is bound to your Entra JWT subject — you can'
 
 ## Self-hosting / forking
 
-The embedder image bakes the EmbeddingGemma-300M model at build time,
-which requires a HuggingFace access token. Forks and adopters need to:
+The embedder image bakes the Qwen3-Embedding-4B model at build time.
+The model is Apache 2.0 and publicly accessible — no Hugging Face gate.
+Forks and adopters need to:
 
-1. Get an HF token at https://huggingface.co/settings/tokens.
-2. Accept the EmbeddingGemma license at
-   https://huggingface.co/google/embeddinggemma-300m.
-3. Add a repo secret `HF_TOKEN` under
-   `Settings → Secrets and variables → Actions`.
+1. Optionally get an HF token at https://huggingface.co/settings/tokens
+   (not required for Qwen3-Embedding-4B, but needed if you swap to a gated model).
+2. Add a repo secret `HF_TOKEN` under
+   `Settings → Secrets and variables → Actions` if you use a gated model.
 
 The CI workflow forwards the secret to BuildKit via
 `--mount=type=secret,id=hf_token`; the token never enters any image
@@ -163,7 +163,7 @@ embedder/search API mismatch loud (`HTTP 503` with a clear log line)
 rather than silent. Upgrade procedure:
 
 1. **Pick the new model.** Note its output dimensionality `D` (e.g.
-   `768` for EmbeddingGemma, `1024` for many newer models).
+   `1024` for Qwen3-Embedding-4B, `768` for many older models).
 
 2. **Update config.** Set `embedding_model: <new>` and
    `embedding_dimensions: D` in the search API's deployment config
@@ -212,11 +212,11 @@ sources, swapping embedding models, and where to file issues — lives on the
 
 ### "HF_TOKEN required" or model download fails
 
-The embedding model `google/embeddinggemma-300m` requires a Hugging Face token with access to the gated model. Create one at https://huggingface.co/settings/tokens, accept the model license at https://huggingface.co/google/embeddinggemma-300m, and set `HF_TOKEN=hf_...` in `.env`.
+The default embedding model `Qwen/Qwen3-Embedding-4B` is Apache 2.0 and publicly accessible — no Hugging Face token required. If you have swapped to a gated model, create a token at https://huggingface.co/settings/tokens, accept the model license on the model page, and set `HF_TOKEN=hf_...` in `.env`.
 
 ### First ingest / first container start is very slow
 
-The first run downloads the 300M embedding model (~1.2 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`.
+The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`. In the GPU-backed hosted deployment the model loads into VRAM in 2-3 minutes; the API runs with `minReplicas: 2` so there is no scale-to-zero cold start in normal operation.
 
 ### "Cannot connect to PostgreSQL"
 
@@ -229,18 +229,17 @@ MIT. See [LICENSE](LICENSE).
 ## License compatibility
 
 docforge is MIT-licensed; the default embedding model,
-[EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m), is
-distributed under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms),
-which restrict harmful use and building products that compete with Gemma. Swap
-to a permissively-licensed alternative via `embedding_model` in `docforge.yml`
-if those constraints don't fit your use case (see
+[Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B), is
+distributed under the Apache 2.0 license — fully permissive, no usage restrictions.
+Swap to a different model via `embedding_model` in `docforge.yml`
+if needed (see
 [microsite FAQ — Can I use a different embedding model?](https://GranatenUdo.github.io/docforge/faq/#can-i-use-a-different-embedding-model)).
 
 ## Credits
 
 docforge stands on open shoulders:
 
-- [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) — open-weights embedding model under the Gemma license.
+- [Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) — open-weights embedding model under Apache 2.0.
 - [pgvector](https://github.com/pgvector/pgvector) — vector similarity for Postgres.
 - [FastMCP](https://github.com/PrefectHQ/fastmcp) — MCP server framework.
 - [FastAPI](https://fastapi.tiangolo.com/), [Typer](https://typer.tiangolo.com/), [asyncpg](https://magicstack.github.io/asyncpg/), [sentence-transformers](https://www.sbert.net/) — core infrastructure.
