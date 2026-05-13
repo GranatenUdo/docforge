@@ -500,3 +500,175 @@ class TestFp16Loading:
         assert captured["model_kwargs"] == {"torch_dtype": "float16"}, (
             "from_settings did not propagate settings.embedding_fp16 -> Embedder.fp16"
         )
+
+
+class TestBatchSizeCap:
+    """Verify Embedder.embed splits oversized batches into smaller encode calls.
+
+    Guards the v0.7.3 OOM fix: the T4 GPU's 16 GiB VRAM accommodates Qwen-4B
+    in FP16 (~7 GiB) plus activations for ~25-30 chunks per encode call. Beyond
+    that, PyTorch OOMs. The cap splits internally so callers can pass arbitrary
+    lists up to MAX_BATCH_SIZE.
+    """
+
+    def test_small_batch_calls_encode_once(self, monkeypatch):
+        """When len(texts) <= batch_size, encode is called exactly once."""
+        import sys
+
+        from docforge.processors.embedder import Embedder
+
+        encode_calls: list[list[str]] = []
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 1024
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                encode_calls.append(list(texts))
+                return np.zeros((len(texts), 1024), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        emb = Embedder(
+            model_name="Qwen/Qwen3-Embedding-4B",
+            expected_dimensions=1024,
+            batch_size=32,
+        )
+        emb.embed(["a", "b", "c"])  # 3 < 32
+
+        assert len(encode_calls) == 1, (
+            f"expected 1 encode call for 3-element batch, got {len(encode_calls)}"
+        )
+        assert encode_calls[0] == ["a", "b", "c"]
+
+    def test_oversized_batch_splits_into_internal_batches(self, monkeypatch):
+        """When len(texts) > batch_size, encode is called multiple times with sub-lists.
+
+        Concatenated output preserves input order and length.
+        """
+        import sys
+
+        from docforge.processors.embedder import Embedder
+
+        encode_calls: list[list[str]] = []
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 4
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                lst = list(texts)
+                encode_calls.append(lst)
+                # Return a (n, 4) vector where each row encodes the text's first char
+                return np.array(
+                    [[float(ord(t[0])), 0.0, 0.0, 0.0] for t in lst],
+                    dtype=np.float32,
+                )
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        emb = Embedder(
+            model_name="m",
+            expected_dimensions=4,
+            batch_size=3,
+        )
+        # 7 texts, batch_size 3 -> expect 3 encode calls (sizes 3, 3, 1)
+        texts = ["a", "b", "c", "d", "e", "f", "g"]
+        out = emb.embed(texts)
+
+        assert len(encode_calls) == 3, (
+            f"expected 3 encode calls, got {len(encode_calls)}: {encode_calls}"
+        )
+        assert [len(c) for c in encode_calls] == [3, 3, 1]
+        assert encode_calls[0] == ["a", "b", "c"]
+        assert encode_calls[1] == ["d", "e", "f"]
+        assert encode_calls[2] == ["g"]
+        # 7 vectors out, each 4-dim, ordered same as input
+        assert len(out) == 7
+        assert out[0][0] == float(ord("a"))
+        assert out[6][0] == float(ord("g"))
+
+    def test_from_settings_forwards_embedding_batch_size(self, monkeypatch):
+        import sys
+
+        from docforge.config import Settings
+        from docforge.processors.embedder import Embedder
+
+        captured_batch_size: list[int] = []
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 1024
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                lst = list(texts)
+                # Verify batches never exceed embedder's configured batch_size by
+                # asserting at encode time. The fake just records lengths.
+                captured_batch_size.append(len(lst))
+                return np.zeros((len(lst), 1024), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        settings = Settings(
+            embedding_model="Qwen/Qwen3-Embedding-4B",
+            embedding_dimensions=1024,
+            embedding_batch_size=5,
+        )
+        emb = Embedder.from_settings(settings)
+        # 12 texts at batch_size=5 should split 5+5+2
+        emb.embed(["t" + str(i) for i in range(12)])
+        assert captured_batch_size == [5, 5, 2], (
+            f"from_settings did not propagate embedding_batch_size: "
+            f"got call sizes {captured_batch_size}"
+        )

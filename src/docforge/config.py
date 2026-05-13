@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # ample headroom for activation memory. CPU-only deployments should
     # flip this to False (FP16 on CPU is slow on most boxes; FP32 wins).
     embedding_fp16: bool = True
+    # Maximum number of texts passed to a single SentenceTransformer.encode()
+    # call. Larger batches use less Python overhead but more GPU VRAM for
+    # activations. The default 32 was tuned for Qwen-4B + Tesla T4 (16 GiB
+    # VRAM); accommodates ~500-token chunks without OOM. Raise on bigger
+    # GPUs (A100/H100); lower if you hit OOM on smaller hardware.
+    embedding_batch_size: int = 32
     chunk_max_tokens: int = 500
 
     # Sources config

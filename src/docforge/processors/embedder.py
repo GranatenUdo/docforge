@@ -54,12 +54,15 @@ class Embedder:
         hf_token: str = "",
         expected_dimensions: int | None = None,
         fp16: bool = True,
+        batch_size: int = 32,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
         # Use provided token, fall back to environment variable
         if not hf_token:
             hf_token = os.environ.get("HF_TOKEN", "")
+
+        self._batch_size = batch_size
 
         try:
             logger.info("Loading embedding model: %s (fp16=%s)", model_name, fp16)
@@ -140,6 +143,7 @@ class Embedder:
             hf_token=settings.hf_token.get_secret_value(),
             expected_dimensions=settings.embedding_dimensions,
             fp16=settings.embedding_fp16,
+            batch_size=settings.embedding_batch_size,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -147,9 +151,15 @@ class Embedder:
 
         Returns a list of float vectors, one per input text.
 
+        Internally chunks the input into batches of `self._batch_size` before
+        calling SentenceTransformer.encode. This caps GPU activation memory
+        per call, which is the difference between fitting in a T4's 16 GiB
+        VRAM and OOMing on large sources.
+
         Raises:
             ValueError: when len(texts) exceeds MAX_BATCH_SIZE. Callers that
-                need to embed more than that should chunk before calling.
+                need to embed more than that should chunk before calling
+                embed().
         """
         if not texts:
             return []
@@ -159,8 +169,12 @@ class Embedder:
                 f"chunk into smaller batches before calling embed()"
             )
 
-        embeddings = self._model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
-        return embeddings.tolist()
+        result: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            sub = texts[start : start + self._batch_size]
+            embeddings = self._model.encode(sub, show_progress_bar=False, normalize_embeddings=True)
+            result.extend(embeddings.tolist())
+        return result
 
     def embed_query(self, query: str) -> list[float]:
         """Generate embedding for a single search query.
