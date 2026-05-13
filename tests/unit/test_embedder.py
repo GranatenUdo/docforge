@@ -30,7 +30,7 @@ class TestEmbedderInit:
         with patch("sentence_transformers.SentenceTransformer", return_value=fake) as mock_st:
             from docforge.processors.embedder import Embedder
 
-            emb = Embedder("primary/model", hf_token="tok")
+            emb = Embedder("primary/model", hf_token="tok", fp16=False)
 
         assert emb.model_name == "primary/model"
         assert emb.dimensions == 768
@@ -68,7 +68,7 @@ class TestEmbedderInit:
         with patch("sentence_transformers.SentenceTransformer", return_value=fake) as mock_st:
             from docforge.processors.embedder import Embedder
 
-            Embedder("some/model", hf_token="")
+            Embedder("some/model", hf_token="", fp16=False)
 
         mock_st.assert_called_once_with("some/model", token="env_tok_123", truncate_dim=None)
 
@@ -78,7 +78,7 @@ class TestEmbedderInit:
         with patch("sentence_transformers.SentenceTransformer", return_value=fake) as mock_st:
             from docforge.processors.embedder import Embedder
 
-            Embedder("open/model", hf_token="")
+            Embedder("open/model", hf_token="", fp16=False)
 
         mock_st.assert_called_once_with("open/model", token=None, truncate_dim=None)
 
@@ -234,7 +234,7 @@ class TestQwenMigration:
         captured = {}
 
         class FakeST:
-            def __init__(self, name, token=None, truncate_dim=None):
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
                 captured["name"] = name
                 captured["truncate_dim"] = truncate_dim
                 self.prompts = {}
@@ -273,7 +273,7 @@ class TestQwenMigration:
         captured_kwargs = []
 
         class FakeSTQwen:
-            def __init__(self, name, token=None, truncate_dim=None):
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
                 self._dim = truncate_dim or 2560
                 # Qwen models expose a 'query' prompt template
                 self.prompts = {
@@ -353,4 +353,150 @@ class TestQwenMigration:
         emb.embed_query("q")
         assert "prompt_name" not in captured_kwargs[0], (
             f"prompt_name was passed to a legacy model: {captured_kwargs}"
+        )
+
+
+class TestFp16Loading:
+    """Verify Embedder constructor + from_settings handle fp16 flag correctly.
+
+    These tests guard the GPU-OOM fix from regression. If the model_kwargs
+    plumbing breaks, the embedder will silently load FP32 again and OOM
+    under load on T4 hardware. See spec
+    docs/superpowers/specs/2026-05-13-ingest-completion-design.md
+    """
+
+    def test_fp16_true_forwards_model_kwargs(self, monkeypatch):
+        import sys
+
+        from docforge.processors.embedder import Embedder
+
+        captured: dict = {}
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                captured["model_kwargs"] = model_kwargs
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 1024
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                n = len(texts) if isinstance(texts, list) else 1
+                return np.zeros((n, 1024), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        Embedder(
+            model_name="Qwen/Qwen3-Embedding-4B",
+            expected_dimensions=1024,
+            fp16=True,
+        )
+
+        assert captured["model_kwargs"] == {"torch_dtype": "float16"}, (
+            f"fp16=True did not forward model_kwargs correctly: {captured}"
+        )
+
+    def test_fp16_false_omits_model_kwargs(self, monkeypatch):
+        import sys
+
+        from docforge.processors.embedder import Embedder
+
+        captured: dict = {}
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                captured["model_kwargs"] = model_kwargs
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 384
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                return np.zeros((1, 384), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        Embedder(
+            model_name="legacy/model",
+            expected_dimensions=384,
+            fp16=False,
+        )
+
+        assert captured["model_kwargs"] is None, (
+            f"fp16=False unexpectedly forwarded model_kwargs={captured['model_kwargs']!r}"
+        )
+
+    def test_from_settings_forwards_embedding_fp16(self, monkeypatch):
+        import sys
+
+        from docforge.config import Settings
+        from docforge.processors.embedder import Embedder
+
+        captured: dict = {}
+
+        class FakeST:
+            def __init__(self, name, token=None, truncate_dim=None, model_kwargs=None):
+                captured["model_kwargs"] = model_kwargs
+                self.prompts: dict = {}
+
+            def get_embedding_dimension(self):
+                return 1024
+
+            def encode(self, texts, **kwargs):
+                import numpy as np
+
+                return np.zeros((1, 1024), dtype=np.float32)
+
+            @property
+            def tokenizer(self):
+                class T:
+                    def encode(self, s, add_special_tokens=False):
+                        return s.split()
+
+                return T()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            type("M", (), {"SentenceTransformer": FakeST})(),
+        )
+
+        settings = Settings(
+            embedding_model="Qwen/Qwen3-Embedding-4B",
+            embedding_dimensions=1024,
+            embedding_fp16=True,
+        )
+
+        Embedder.from_settings(settings)
+
+        assert captured["model_kwargs"] == {"torch_dtype": "float16"}, (
+            "from_settings did not propagate settings.embedding_fp16 -> Embedder.fp16"
         )

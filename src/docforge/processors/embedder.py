@@ -53,6 +53,7 @@ class Embedder:
         model_name: str = "Qwen/Qwen3-Embedding-4B",
         hf_token: str = "",
         expected_dimensions: int | None = None,
+        fp16: bool = True,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
@@ -61,12 +62,20 @@ class Embedder:
             hf_token = os.environ.get("HF_TOKEN", "")
 
         try:
-            logger.info("Loading embedding model: %s", model_name)
-            self._model = SentenceTransformer(
-                model_name,
-                token=hf_token or None,
-                truncate_dim=expected_dimensions,
-            )
+            logger.info("Loading embedding model: %s (fp16=%s)", model_name, fp16)
+            st_kwargs: dict = {
+                "token": hf_token or None,
+                "truncate_dim": expected_dimensions,
+            }
+            if fp16:
+                # Qwen3-Embedding-4B model card recommends FP16 for production
+                # inference. Halves VRAM footprint so the T4's 16 GiB
+                # accommodates the model plus realistic activation memory.
+                # Sentence-transformers forwards model_kwargs to
+                # transformers.AutoModel.from_pretrained(); the string
+                # "float16" is the documented form.
+                st_kwargs["model_kwargs"] = {"torch_dtype": "float16"}
+            self._model = SentenceTransformer(model_name, **st_kwargs)
             self.model_name = model_name
             self.dimensions = self._model.get_embedding_dimension()
             logger.info("Model loaded: %s (%d dimensions)", self.model_name, self.dimensions)
@@ -130,6 +139,7 @@ class Embedder:
             settings.embedding_model,
             hf_token=settings.hf_token.get_secret_value(),
             expected_dimensions=settings.embedding_dimensions,
+            fp16=settings.embedding_fp16,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -197,7 +207,12 @@ class RemoteEmbedder:
         url: str,
         token: str,
         expected_dimensions: int,
-        timeout_seconds: float = 5.0,
+        # 5s was tuned for the small Gemma-300M embedder where every call
+        # is sub-second. With Qwen-4B on a Tesla T4, cold connections + larger
+        # batches push p99 past 5s. Default bumped to 60s; the retry loop
+        # still bounds total wait to ~120s on the slow path. Callers can
+        # override via the constructor if a stricter SLA is needed.
+        timeout_seconds: float = 60.0,
     ) -> None:
         self._url = url.rstrip("/")
         self._token = token
