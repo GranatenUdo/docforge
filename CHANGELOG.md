@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-13
+
+### Fixed
+
+- **Embedder OOM under load on Tesla T4 GPU.** `Embedder` now loads Qwen3-Embedding-4B in FP16 by default. Halves VRAM footprint (~14.2 GiB FP32 → ~7.2 GiB FP16 on the T4's 16 GiB), eliminating `torch.OutOfMemoryError` on batches above ~10 chunks. Qwen3 model card officially recommends FP16 for production inference.
+- **CUDA driver mismatch in embedder image.** `Dockerfile.embedder` now pre-installs `torch==2.5.1+cu124` from PyTorch's cu124 index. Without this pin, pip resolved a torch with CUDA 13 nvidia wheels which silently fell back to CPU on Azure Container Apps T4 nodes (host driver 12.4).
+- **`RemoteEmbedder` default timeout was too tight for Qwen-4B inference under cold connections.** Bumped from 5s → 60s. The retry loop still bounds total wait to ~120s.
+
+### Added
+
+- `Settings.embedding_fp16: bool = True` — controls the FP16 default. CPU-only deployments can flip to False via env `EMBEDDING_FP16=false` or `docforge.yml`. GPU deployments should leave at True.
+
+### Notes for operators
+
+- CCL production deployment: redeploy `docforge-embedder` from the new image. No schema migration; no search-api rebuild required (search-api on v0.7.0 continues to function — it benefits from the bundled 60s timeout the next time it's rebuilt for other reasons).
+- See dw-docforge `docs/superpowers/specs/2026-05-13-ingest-completion-design.md` for the full cutover procedure.
+
 ## [0.7.0] - 2026-05-12
 
 ### Changed
