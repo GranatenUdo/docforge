@@ -12,7 +12,7 @@ docforge is a CLI tool that forges searchable context from Confluence and git re
 - **CLI**: Typer
 - **API**: FastAPI (for hosted deployment)
 - **Database**: PostgreSQL + pgvector
-- **Embeddings**: EmbeddingGemma-300M (768-dim, Apache 2.0)
+- **Embeddings**: Qwen3-Embedding-4B (1024-dim, Apache 2.0)
 - **MCP**: FastMCP
 - **Config**: pydantic-settings + YAML
 

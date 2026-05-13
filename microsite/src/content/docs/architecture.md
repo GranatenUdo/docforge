@@ -21,7 +21,7 @@ Each source gets a stable identifier (`confluence_page_id` or file path) and a S
 1. **Deduplicate.** Compare `content_hash` against what's stored. Matching hashes skip re-processing.
 2. **Parse.** BeautifulSoup splits HTML into semantic sections (`<h1>`, `<h2>`, paragraphs, code blocks). Confluence macros are handled where meaningful.
 3. **Chunk.** Token-aware splitter (default 500 tokens). Respects section boundaries; splits paragraphs only when a section exceeds the limit. Section titles are prepended to each chunk for context.
-4. **Embed.** Sentence-transformers loads [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Gemma license, 768-dim). Falls back to `all-MiniLM-L6-v2` (384-dim) if the primary load fails.
+4. **Embed.** Sentence-transformers loads [Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) (Apache 2.0, 1024-dim). Falls back to `all-MiniLM-L6-v2` (384-dim) if the primary load fails.
 5. **Store.** `sources` (metadata + hash) and `chunks` (text + embedding + HNSW index) tables in Postgres. `ON DELETE CASCADE` keeps `chunks` consistent with `sources`.
 
 Per-source errors are isolated: one bad Confluence page does not abort the run; a summary lists failures at the end.
@@ -29,7 +29,7 @@ Per-source errors are isolated: one bad Confluence page does not abort the run; 
 ### 3. Storage — Postgres + pgvector
 
 - `sources` table: metadata (type, URL, title, tags, `content_hash`, `last_crawled_at`, status).
-- `chunks` table: text, section title, 768-dim `embedding`, foreign key to source.
+- `chunks` table: text, section title, 1024-dim `embedding`, foreign key to source.
 - HNSW index on `embedding` for cosine-similarity search (`vector_cosine_ops`).
 
 The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus under ~50K chunks.
@@ -39,7 +39,7 @@ The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus un
 Two surfaces, one in-process (CLI) and one hosted (multi-user team deployment):
 
 - **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process.
-- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); cold-start is ~5–10 s with the baked model weights (`Dockerfile.embedder` bakes EmbeddingGemma at build time, so there is no runtime download). The embedder defaults to `embedderMinReplicas=0` (scale-to-zero); set it to `1` for production to keep the model warm.
+- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); the GPU-backed Qwen3-Embedding-4B embedder loads the ~10 GB model into VRAM in 2-3 minutes — run with `minReplicas: 2` to avoid cold starts in production.
 
 Both surfaces expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
 

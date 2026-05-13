@@ -20,7 +20,7 @@ docforge ingest
 docforge serve
 ```
 
-That's the whole thing. `ingest` crawls Confluence via the REST v2 API, crawls local git repos for `README.md` / `CLAUDE.md` / `docs/**/*.md`, chunks the content to ~500 tokens, embeds with [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) (Gemma license, 768-dim, small enough to run on CPU), and stores vectors in Postgres with pgvector. `serve` exposes a single MCP tool — `search_documentation` — that any MCP-capable assistant can call.
+That's the whole thing. `ingest` crawls Confluence via the REST v2 API, crawls local git repos for `README.md` / `CLAUDE.md` / `docs/**/*.md`, chunks the content to ~500 tokens, embeds with [Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) (Apache 2.0, 1024-dim), and stores vectors in Postgres with pgvector. `serve` exposes a single MCP tool — `search_documentation` — that any MCP-capable assistant can call.
 
 When the assistant needs team context, the tool fires, the top chunks come back with source attribution, and the assistant cites real documents instead of inventing plausible ones.
 
@@ -44,7 +44,7 @@ If you need fifty connectors, chat UI for non-developers, or per-document ACLs e
 
 **Postgres + pgvector, not a dedicated vector DB.** Teams already know how to back up, monitor, and restore Postgres. Adding a new database is operational tax that buys little at this scale. pgvector's HNSW index handles tens of thousands of chunks comfortably; a full team deployment on Azure (six resources, default SKUs) runs ~$35/month in West Europe — see [deployment](/docforge/deployment/).
 
-**EmbeddingGemma-300M.** Open weights under the Gemma license, 768-dim, strong on the MTEB Code benchmark relative to its size. Runs on CPU. No API dependency, no per-query cost, no data leaving your infrastructure. The Hugging Face gate is the one supply-chain dependency; we cache the weights into a Docker volume so ingest is not network-dependent after first load.
+**Qwen3-Embedding-4B.** Open weights under Apache 2.0, 1024-dim, strong on the MTEB benchmark (68.x baseline). Runs on a T4 GPU in the hosted deployment; locally runnable on CPU for small corpora. No API dependency, no per-query cost, no data leaving your infrastructure. Apache 2.0 means zero license friction for commercial use.
 
 **MCP-first, not vendor-specific.** MCP is the protocol where the assistant ecosystem is consolidating. Claude Code speaks MCP natively. Cursor speaks MCP. Copilot is adding MCP support for actions. Continue.dev leans on MCP servers for `@Docs`-style workflows. Building to the protocol once gets you every current and future assistant rather than chasing each vendor's feature API.
 
@@ -76,16 +76,16 @@ docforge init my-project && cd my-project
 
 docker compose up -d db
 docforge init-db
-docforge ingest               # first run pulls the ~1.2GB embedding model
+docforge ingest               # first run pulls the ~10GB Qwen3-Embedding-4B model
 docforge search "how do we handle retries"
 docforge serve                # MCP on stdio — point your assistant at it
 ```
 
-For team use, host `docforge serve --api` on Azure Container Apps or equivalent with Entra auth; ballpark cost for a full six-resource deployment is ~$35/month at default SKUs. See the [Deploy to Azure](/docforge/deployment/) guide.
+For team use, host `docforge serve --api` on Azure Container Apps or equivalent with Entra auth; ballpark cost for a full deployment with GPU embedder is ~€900/month. See the [Deploy to Azure](/docforge/deployment/) guide.
 
 ## Credits and what's next
 
-docforge stands on open shoulders: [EmbeddingGemma](https://huggingface.co/google/embeddinggemma-300m), [pgvector](https://github.com/pgvector/pgvector), [FastMCP](https://github.com/PrefectHQ/fastmcp), FastAPI, Typer, asyncpg, sentence-transformers. The MCP spec team and the broader MCP ecosystem made building this easy.
+docforge stands on open shoulders: [Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B), [pgvector](https://github.com/pgvector/pgvector), [FastMCP](https://github.com/PrefectHQ/fastmcp), FastAPI, Typer, asyncpg, sentence-transformers. The MCP spec team and the broader MCP ecosystem made building this easy.
 
 Next up: hybrid retrieval, chunk overlap, MCP identity via session (getting `user_name` / `team_name` off the per-call tool signature). Being considered: per-source ACLs, Confluence Data Center auth hardening, incremental `updatedSince` ingest.
 

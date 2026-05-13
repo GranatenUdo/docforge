@@ -7,7 +7,7 @@ description: Five-minute quick start for docforge.
 
 - Python 3.12+
 - Docker (for the local Postgres + pgvector container)
-- A [Hugging Face token](https://huggingface.co/settings/tokens) with access to the gated [EmbeddingGemma-300M](https://huggingface.co/google/embeddinggemma-300m) model
+- A [Hugging Face token](https://huggingface.co/settings/tokens) (optional — not required for the default [Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) model which is Apache 2.0 and publicly accessible)
 
 ## Install and initialize
 
@@ -42,7 +42,7 @@ docforge init-db
 docforge ingest
 ```
 
-First ingest downloads the ~1.2 GB EmbeddingGemma model into `~/.cache/huggingface/`. Subsequent runs are fast — `content_hash` deduplication skips unchanged sources.
+First ingest downloads the ~10 GB Qwen3-Embedding-4B model into `~/.cache/huggingface/`. Subsequent runs are fast — `content_hash` deduplication skips unchanged sources.
 
 ## Serve to your AI assistant
 
