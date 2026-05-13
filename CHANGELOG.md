@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-13
+
+### Fixed
+
+- **Embedder OOM on sources with >25-30 chunks.** v0.7.2's FP16 fix raised the per-call ceiling but sources with 50+ chunks (Confluence release-note pages, git_repos with many markdown files) still tripped CUDA OOM. `Embedder.embed` now splits the input into batches of `Settings.embedding_batch_size` (default 32) before calling `SentenceTransformer.encode`. Activation memory per call is now bounded regardless of input size.
+
+### Added
+
+- `Settings.embedding_batch_size: int = 32` — internal cap on per-encode batch size. Configurable via env `EMBEDDING_BATCH_SIZE` or `docforge.yml`. Raise on bigger GPUs (A100/H100); lower if you hit OOM on smaller hardware.
+
 ## [0.7.2] - 2026-05-13
 
 ### Fixed
