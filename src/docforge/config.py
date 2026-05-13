@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # Embedding model
     embedding_model: str = "Qwen/Qwen3-Embedding-4B"
     embedding_dimensions: int = 1024
+    # FP16 inference. Qwen3-Embedding-4B model card officially recommends
+    # this for production GPU deployments — halves VRAM footprint
+    # (~14 GiB FP32 -> ~7 GiB FP16 on the Tesla T4's 16 GiB), leaving
+    # ample headroom for activation memory. CPU-only deployments should
+    # flip this to False (FP16 on CPU is slow on most boxes; FP32 wins).
+    embedding_fp16: bool = True
     chunk_max_tokens: int = 500
 
     # Sources config
