@@ -15,6 +15,7 @@ def _settings(url: str = "", token: str = "") -> SimpleNamespace:
         embedding_model="test/model",
         embedding_dimensions=768,
         embedding_fp16=False,
+        embedding_batch_size=32,
         hf_token=SimpleNamespace(get_secret_value=lambda: ""),
         embedder_url=url,
         embedder_token=SimpleNamespace(get_secret_value=lambda: token),
