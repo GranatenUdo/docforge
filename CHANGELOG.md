@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-15
+
+### Fixed
+
+- **CUDA cache accumulation between encode batches.** `Embedder.embed` now calls `torch.cuda.empty_cache()` after each inner batch. Without this, PyTorch's activation buffers from prior sub-batches stay resident; large sources (e.g., a 100-chunk file at `batch_size=8` → 13 inner encodes) accumulate cache until later batches OOM despite each individual batch being tiny. Diagnosed via `nvidia-smi` on the running embedder: idle GPU memory was 15.4 GiB / 16 GiB even with no inference in flight.
+- **FP16 partial-load workaround.** Empirically, the `model_kwargs={"torch_dtype": "float16"}` path doesn't reach every submodule for sentence-transformers + Qwen3 + Matryoshka (Dense/projection layers can stay FP32, doubling effective model VRAM). `Embedder.__init__` now also calls `self._model = self._model.half()` post-init when `fp16=True`, as belt-and-suspenders FP16 enforcement.
+
 ## [0.7.3] - 2026-05-13
 
 ### Fixed
