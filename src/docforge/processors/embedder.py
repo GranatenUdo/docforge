@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import os
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 import httpx
+
+
+def _detect_cuda() -> bool:
+    """Probe whether a CUDA-capable torch is importable and a device is present.
+
+    Called once at Embedder construction; the result is cached on the instance.
+    Used by `embed()` to decide whether to release the CUDA cache between
+    batches. Driver-query cost (~5 ms) doesn't belong on the /embed hot path.
+    """
+    try:
+        import torch
+
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
 
 if TYPE_CHECKING:
     from docforge.config import Settings
@@ -63,6 +80,7 @@ class Embedder:
             hf_token = os.environ.get("HF_TOKEN", "")
 
         self._batch_size = batch_size
+        self._cuda_available = _detect_cuda()
 
         try:
             logger.info("Loading embedding model: %s (fp16=%s)", model_name, fp16)
@@ -79,20 +97,14 @@ class Embedder:
                 # "float16" is the documented form.
                 st_kwargs["model_kwargs"] = {"torch_dtype": "float16"}
             self._model = SentenceTransformer(model_name, **st_kwargs)
-            if fp16:
+            if fp16 and self._cuda_available:
                 # Belt-and-suspenders FP16 enforcement. Empirically, the
                 # model_kwargs path above doesn't always reach every submodule
                 # for sentence-transformers + Qwen3 + Matryoshka (Dense /
                 # projection layers can stay FP32). nvidia-smi on a running
                 # replica showed ~14 GiB GPU usage at idle — FP32 model size,
                 # not FP16. Force-cast post-init covers that gap.
-                try:
-                    import torch
-
-                    if torch.cuda.is_available():
-                        self._model = self._model.half()
-                except Exception:
-                    logger.warning("Could not force model.half() — keeping default dtype")
+                self._model = self._model.half()
             self.model_name = model_name
             self.dimensions = self._model.get_embedding_dimension()
             logger.info("Model loaded: %s (%d dimensions)", self.model_name, self.dimensions)
@@ -183,26 +195,21 @@ class Embedder:
                 f"chunk into smaller batches before calling embed()"
             )
 
-        try:
-            import torch
-
-            cuda_available = torch.cuda.is_available()
-        except Exception:
-            cuda_available = False
-
         result: list[list[float]] = []
-        for start in range(0, len(texts), self._batch_size):
-            sub = texts[start : start + self._batch_size]
-            embeddings = self._model.encode(sub, show_progress_bar=False, normalize_embeddings=True)
+        for i, sub in enumerate(itertools.batched(texts, self._batch_size)):
+            embeddings = self._model.encode(
+                list(sub), show_progress_bar=False, normalize_embeddings=True
+            )
             result.extend(embeddings.tolist())
-            if cuda_available:
-                # Release PyTorch's CUDA cache between batches. Without this,
-                # cached activation buffers from prior sub-batches stay
-                # resident, and large sources (e.g., a 100-chunk file with
-                # batch_size=8 -> 13 inner encodes) accumulate cache until
-                # the next inner call OOMs on a 600 MiB allocation. Calling
-                # empty_cache() forces PyTorch to return free blocks to the
-                # CUDA driver. Cheap when there's nothing to release.
+            # Release PyTorch's CUDA cache between batches. Without this,
+            # cached activation buffers from prior sub-batches stay resident,
+            # and large sources (e.g., a 100-chunk file with batch_size=8 -> 13
+            # inner encodes) accumulate cache until the next inner call OOMs.
+            # Skip the first iteration — cache is empty then, so the call is a
+            # no-op that still pays the CUDA driver round-trip.
+            if self._cuda_available and i > 0:
+                import torch
+
                 torch.cuda.empty_cache()
         return result
 
