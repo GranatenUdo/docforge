@@ -420,9 +420,12 @@ class TestSearchPhaseLogging:
             messages = [r.getMessage() for r in caplog.records]
             phase_lines = [m for m in messages if "search_phases" in m]
             assert phase_lines, f"expected a 'search_phases' log line; got messages: {messages}"
-            line = phase_lines[0]
+            # After the perform_search extraction, embed/db timings come from the
+            # helper and t_total_ms comes from the route handler — across two
+            # search_phases lines. The keys must collectively be present.
+            combined = " ".join(phase_lines)
             for key in ("t_embed_ms=", "t_db_ms=", "t_total_ms="):
-                assert key in line, f"missing {key} in: {line}"
+                assert key in combined, f"missing {key} across phase lines: {phase_lines}"
         finally:
             app.dependency_overrides.clear()
 
