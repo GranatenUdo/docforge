@@ -172,6 +172,27 @@ class SearchRequest(BaseModel):
     team_name: str | None = None
     area_name: str | None = None
     limit: int = Field(5, ge=1, le=50)
+    debug: bool = Field(
+        False,
+        description=(
+            "When true, response includes per-result dense_rank/sparse_rank/rrf_score "
+            "plus envelope-level weights and k. Off by default so the public API "
+            "surface is unchanged for normal callers."
+        ),
+    )
+
+
+class SearchResultDebug(BaseModel):
+    """Per-result diagnostic info — populated only when SearchRequest.debug=true."""
+    dense_rank: int | None
+    sparse_rank: int | None
+    rrf_score: float
+
+
+class SearchDebugEnvelope(BaseModel):
+    """Envelope-level diagnostic info — populated only when SearchRequest.debug=true."""
+    weights: dict[str, float]
+    k: int
 
 
 class SearchResult(BaseModel):
@@ -181,12 +202,14 @@ class SearchResult(BaseModel):
     source_url: str
     source_tags: list[str]
     similarity: float
+    debug: SearchResultDebug | None = None
 
 
 class SearchResponse(BaseModel):
     results: list[SearchResult]
     query: str
     count: int
+    debug: SearchDebugEnvelope | None = None
 
 
 @app.get("/health")
@@ -333,6 +356,31 @@ async def search(
         user_oid=user.oid if user else None,
         request_ms=t_total_ms,
     )
+
+    if req.debug:
+        results = [
+            SearchResult(
+                text=row["text"],
+                section_title=row["section_title"],
+                source_title=row["source_title"],
+                source_url=row["source_url"],
+                source_tags=list(row["source_tags"] or []),
+                similarity=float(row["similarity"]),
+                debug=SearchResultDebug(
+                    dense_rank=row["dense_rank"],
+                    sparse_rank=row["sparse_rank"],
+                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
+                ),
+            )
+            for row in rows
+        ]
+        envelope_debug = SearchDebugEnvelope(
+            weights={"dense": settings.dense_weight, "sparse": settings.sparse_weight},
+            k=req.limit,
+        )
+        return SearchResponse(
+            results=results, query=req.query, count=len(results), debug=envelope_debug
+        )
 
     results = [
         SearchResult(

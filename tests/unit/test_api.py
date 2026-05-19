@@ -508,3 +508,96 @@ class TestLifespanLoggingConfig:
         assert final_level == logging.INFO, (
             f"lifespan must reconfigure root logger to INFO; got {final_level}"
         )
+
+
+class TestSearchDebugMode:
+    @pytest.mark.asyncio
+    async def test_debug_false_default_omits_debug_fields(self):
+        """When debug is not requested, response has no debug block on the
+        envelope and no debug field on each result. Backward compatible."""
+        from tests.conftest import FakeEmbedder
+        rows = [
+            {
+                "text": "Platform owns orgs.",
+                "section_title": "Platform",
+                "source_title": "Doc A",
+                "source_url": "https://wiki/a",
+                "source_tags": ["platform"],
+                "similarity": 0.95,
+                "dense_rank": 1,
+                "sparse_rank": 2,
+            }
+        ]
+        pool = CapturingPool(rows)
+
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = fake_settings
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={"query": "q", "user_name": "u", "team_name": "t", "limit": 5},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Pydantic v2 includes None fields in serialization by default;
+        # assert the values are None (not that keys are absent) so the
+        # public API surface remains backward-compatible for clients that
+        # ignore unknown null fields.
+        assert body.get("debug") is None
+        assert body["results"][0].get("debug") is None
+
+    @pytest.mark.asyncio
+    async def test_debug_true_includes_per_result_and_envelope_debug(self):
+        """With debug=true, each result has dense_rank/sparse_rank/rrf_score
+        and the envelope has weights + k."""
+        from tests.conftest import FakeEmbedder
+        rows = [
+            {
+                "text": "Platform owns orgs.",
+                "section_title": "Platform",
+                "source_title": "Doc A",
+                "source_url": "https://wiki/a",
+                "source_tags": ["platform"],
+                "similarity": 0.038,
+                "dense_rank": 4,
+                "sparse_rank": 1,
+            }
+        ]
+        pool = CapturingPool(rows)
+
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = fake_settings
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 5,
+                        "debug": True,
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Per-result debug — assert non-null and check nested fields
+        r0 = body["results"][0]
+        assert r0["debug"] is not None
+        assert r0["debug"]["dense_rank"] == 4
+        assert r0["debug"]["sparse_rank"] == 1
+        assert r0["debug"]["rrf_score"] == pytest.approx(0.038)
+        # Envelope debug — assert non-null and check nested fields
+        assert body["debug"] is not None
+        assert body["debug"]["weights"]["dense"] == fake_settings().dense_weight
+        assert body["debug"]["weights"]["sparse"] == fake_settings().sparse_weight
+        assert body["debug"]["k"] == 5
