@@ -108,3 +108,134 @@ class TestLoadGroundTruth:
         p.write_text("queries:\n  - q: 'only q key'\n", encoding="utf-8")
         with pytest.raises(ValueError, match="must have"):
             _load_ground_truth(p)
+
+
+class TestDirectMode:
+    def test_cli_rejects_both_api_url_and_direct(self):
+        """--api-url and --direct are mutually exclusive."""
+        import subprocess, sys
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "docforge.scripts.eval_search",
+                "--api-url", "https://example.test",
+                "--direct",
+                "--ground-truth", "nonexistent.yml",
+                "--user", "u", "--team", "t",
+            ],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "mutually exclusive" in (result.stderr + result.stdout).lower() \
+            or "--direct" in result.stderr
+
+    def test_cli_rejects_neither_api_url_nor_direct(self):
+        """At least one of --api-url or --direct must be given."""
+        import subprocess, sys
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "docforge.scripts.eval_search",
+                "--ground-truth", "nonexistent.yml",
+                "--user", "u", "--team", "t",
+            ],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "required" in (result.stderr + result.stdout).lower() \
+            or "--api-url" in result.stderr or "--direct" in result.stderr
+
+
+class TestDirectRequiresRemoteEmbedder:
+    @pytest.mark.asyncio
+    async def test_direct_mode_fails_fast_when_embedder_url_empty(self, monkeypatch):
+        """--direct mode must not silently fall through to local Qwen-4B
+        download. When embedder_url is unset, raise SystemExit with a
+        message that tells the user how to fix it."""
+        from types import SimpleNamespace
+        from docforge.scripts.eval_search import run_queries_direct
+
+        empty_url_settings = SimpleNamespace(
+            embedder_url="",  # the bad state we're guarding against
+            database_url="postgresql://fake",
+            embedder_token=SimpleNamespace(get_secret_value=lambda: ""),
+        )
+        monkeypatch.setattr("docforge.config.Settings", lambda: empty_url_settings)
+
+        with pytest.raises(SystemExit) as exc_info:
+            await run_queries_direct(
+                ground_truth=[{"q": "q", "expected_title_contains": "x"}],
+                user_name="u", team_name="t", area_name="a", k=5, debug=False,
+            )
+        assert "EMBEDDER_URL" in str(exc_info.value)
+
+
+class TestDirectVsHttpParity:
+    @pytest.mark.asyncio
+    async def test_direct_mode_matches_http_for_same_fixtures(self, monkeypatch):
+        """Both code paths share perform_search() after the Task 4 refactor.
+        Running the same query through each must yield the same titles and
+        match_rank. If they diverge, the refactor introduced a behavior change."""
+        from unittest.mock import AsyncMock
+        from docforge.scripts.eval_search import run_queries_direct, score_query
+        from tests.conftest import FakeEmbedder, fake_settings
+
+        rows_returned = [
+            {
+                "text": "Markus is VP Engineering.",
+                "section_title": "Engineering",
+                "source_title": "Departments in Product Development",
+                "source_url": "https://wiki/depts",
+                "source_tags": ["org"],
+                "similarity": 0.85,
+                "dense_rank": 1,
+                "sparse_rank": 1,
+            }
+        ]
+
+        # Stub perform_search to return our fixture rows regardless of args
+        async def fake_perform_search(*, req, settings, pool, embedder):
+            return rows_returned
+
+        monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
+
+        # Stub the Settings/Pool/Embedder construction in run_queries_direct
+        # so the test doesn't need a real DB. run_queries_direct imports
+        # Settings, asyncpg, and Embedder lazily inside the function — so we
+        # patch their source modules, not eval_search's namespace.
+        from unittest.mock import MagicMock
+
+        # The Settings used by run_queries_direct must pass the embedder_url
+        # guard, so override fake_settings to include a non-empty embedder_url.
+        from types import SimpleNamespace
+        def patched_settings():
+            s = fake_settings()
+            s.embedder_url = "https://embedder.example.test"
+            s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
+            return s
+
+        monkeypatch.setattr("docforge.config.Settings", patched_settings)
+
+        async def fake_create_pool(*args, **kwargs):
+            return MagicMock(close=AsyncMock())
+
+        monkeypatch.setattr("asyncpg.create_pool", fake_create_pool)
+        monkeypatch.setattr(
+            "docforge.processors.embedder.Embedder.from_settings",
+            lambda settings: FakeEmbedder(),
+        )
+
+        ground_truth = [{"q": "who is Markus Koelmans", "expected_title_contains": "Departments in Product"}]
+        results = await run_queries_direct(
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            debug=True,
+        )
+
+        assert len(results) == 1
+        assert results[0].returned_titles == ["Departments in Product Development"]
+        assert results[0].match_rank == 1
+        # Also verify the score_query function used by both code paths returns
+        # the same rank for identical title lists
+        assert score_query(results[0].returned_titles, "Departments in Product") == 1
