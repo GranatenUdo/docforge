@@ -357,31 +357,6 @@ async def search(
         request_ms=t_total_ms,
     )
 
-    if req.debug:
-        results = [
-            SearchResult(
-                text=row["text"],
-                section_title=row["section_title"],
-                source_title=row["source_title"],
-                source_url=row["source_url"],
-                source_tags=list(row["source_tags"] or []),
-                similarity=float(row["similarity"]),
-                debug=SearchResultDebug(
-                    dense_rank=row["dense_rank"],
-                    sparse_rank=row["sparse_rank"],
-                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
-                ),
-            )
-            for row in rows
-        ]
-        envelope_debug = SearchDebugEnvelope(
-            weights={"dense": settings.dense_weight, "sparse": settings.sparse_weight},
-            k=req.limit,
-        )
-        return SearchResponse(
-            results=results, query=req.query, count=len(results), debug=envelope_debug
-        )
-
     results = [
         SearchResult(
             text=row["text"],
@@ -390,11 +365,29 @@ async def search(
             source_url=row["source_url"],
             source_tags=list(row["source_tags"] or []),
             similarity=float(row["similarity"]),
+            debug=(
+                SearchResultDebug(
+                    dense_rank=row["dense_rank"],
+                    sparse_rank=row["sparse_rank"],
+                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
+                )
+                if req.debug
+                else None
+            ),
         )
         for row in rows
     ]
-
-    return SearchResponse(results=results, query=req.query, count=len(results))
+    envelope_debug = (
+        SearchDebugEnvelope(
+            weights={"dense": settings.dense_weight, "sparse": settings.sparse_weight},
+            k=req.limit,
+        )
+        if req.debug
+        else None
+    )
+    return SearchResponse(
+        results=results, query=req.query, count=len(results), debug=envelope_debug
+    )
 
 
 @app.get("/sources")

@@ -98,6 +98,12 @@ def make_auth_provider(name: AuthName | str) -> AuthProvider:
     raise ValueError(f"Unknown auth provider: {name!r}.")
 
 
+# Read timeout (seconds) for remote /search calls. Long enough to cover an
+# Azure Container Apps cold start (~22s observed); short enough that a stuck
+# upstream surfaces a clear error instead of hanging the MCP session.
+_READ_TIMEOUT_S = 30.0
+
+
 class RemoteBackend:
     """Proxy to a remote docforge search-api over HTTP."""
 
@@ -122,7 +128,9 @@ class RemoteBackend:
             # entire 30s window before the user sees an error.
             self._client = httpx.AsyncClient(
                 transport=self._transport,
-                timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0),
+                timeout=httpx.Timeout(
+                    connect=10.0, read=_READ_TIMEOUT_S, write=10.0, pool=5.0
+                ),
             )
         return self._client
 
@@ -173,7 +181,7 @@ class RemoteBackend:
                 return f"Could not reach remote API at {self._url}."
             except httpx.ReadTimeout:
                 return (
-                    f"DocForge /search timed out after 30s "
+                    f"DocForge /search timed out after {int(_READ_TIMEOUT_S)}s "
                     f"(Container App may be cold-starting; retry in 30s)."
                 )
             except httpx.HTTPError as e:
@@ -199,9 +207,8 @@ class RemoteBackend:
             if isinstance(second, httpx.Response):
                 return f"Remote API error ({second.status_code}). Try again in a moment."
             return second  # already-formatted error string
-        # Non-5xx error or non-Response — return as-is
-        if isinstance(first, httpx.Response):
-            return f"Remote API returned {first.status_code}: {first.text[:200]}"
+        # _attempt only returns Response for 200 or 5xx; both handled above.
+        # Anything else is already a formatted error string.
         return first
 
     async def search(self, *, query: str, limit: int = 5) -> str:

@@ -170,6 +170,10 @@ async def run_queries_direct(
         embedder = await asyncio.to_thread(Embedder.from_settings, settings)
         try:
             results: list[QueryResult] = []
+            # Sequential, not asyncio.gather: per-query latencies in query_log
+            # stay uncontaminated by self-contention, and we don't risk
+            # overwhelming the single-replica embedder sidecar with 79 parallel
+            # embed calls while live users are also hitting it.
             for entry in ground_truth:
                 q: str = entry["q"]
                 expected: str = entry["expected_title_contains"]
@@ -219,11 +223,13 @@ def format_report(results: list[QueryResult], summary: dict[str, float | int], k
             ):
                 marker = "  <-- MATCH" if r.match_rank == i else ""
                 if has_debug:
-                    dr = r.returned_dense_ranks[i - 1]
-                    sr = r.returned_sparse_ranks[i - 1]
-                    dr_s = f"d#{dr}" if dr is not None else "d#-"
-                    sr_s = f"s#{sr}" if sr is not None else "s#-"
-                    lines.append(f"    {i}. [{score:.4f}] ({dr_s} {sr_s}) {title}{marker}")
+                    dense_rank = r.returned_dense_ranks[i - 1]
+                    sparse_rank = r.returned_sparse_ranks[i - 1]
+                    dense_marker = f"d#{dense_rank}" if dense_rank is not None else "d#-"
+                    sparse_marker = f"s#{sparse_rank}" if sparse_rank is not None else "s#-"
+                    lines.append(
+                        f"    {i}. [{score:.4f}] ({dense_marker} {sparse_marker}) {title}{marker}"
+                    )
                 else:
                     lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
         else:
