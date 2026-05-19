@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-19
+
+### Added
+
+- **Split httpx timeouts + one retry on 5xx in `RemoteBackend`.** Replaces the single 30s timeout with `connect=10s, read=30s, write=10s, pool=5s` and retries once on 5xx with a 2-second backoff. Failed calls return clear error strings (e.g., `"DocForge /search timed out after 30s"`) instead of hanging the MCP session indefinitely.
+- **15s timeout on Azure token mint.** `AzureAuth.headers()` wraps `DefaultAzureCredential.get_token` in a 15-second `asyncio.wait_for`. Token-mint stalls from corrupted credential caches now surface as `TimeoutError` rather than blocking forever.
+- **`/search` debug mode.** New optional `debug: bool` request field. When true, the response includes per-result `dense_rank`, `sparse_rank`, `rrf_score` plus an envelope-level `debug` block carrying `weights` and `k`. Default behavior is unchanged for callers that don't opt in.
+- **`docforge.scripts.eval_search --direct` mode.** Bypasses the HTTP API and calls `perform_search()` directly against the configured Postgres + Embedder. Mutually exclusive with `--api-url`. Hard-fails if `embedder_url` is unset to prevent accidental local Qwen-4B download. Use cases: local sweep without operating the Container App, identical-rank parity testing.
+- **Inline rank info in `eval_search --debug` output.** Per-result `(d#N s#M)` rank info displayed inline, making per-query failure-mode categorization tractable.
+
+### Changed
+
+- `api.search` refactored to delegate to a new `perform_search()` helper that is also called by `eval_search --direct`. SQL now projects `dense_rank` and `sparse_rank` from the inner CTEs. No behavior change at default request shape; opens the door to debug-mode rank introspection and direct-mode eval runs.
+
 ## [0.7.4] - 2026-05-15
 
 ### Fixed
