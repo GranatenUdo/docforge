@@ -6,7 +6,7 @@ Used by `docforge serve --remote-api $URL --auth ...`. See the
 
 from __future__ import annotations
 
-import asyncio  # noqa: F401  # used by Tasks 2 & 3 (retry, token-mint timeout)
+import asyncio
 import os
 from enum import Enum
 from typing import Protocol
@@ -142,6 +142,11 @@ class RemoteBackend:
     ) -> httpx.Response | str:
         """Perform an HTTP request with auth and uniform error handling.
 
+        Retries once on 5xx with a 2-second backoff — cold-start 502/503 from
+        Azure Container Apps ingress is the dominant transient failure. 4xx
+        responses and timeouts are NOT retried: 4xx is caller-fault, and a
+        timeout has already burned the configured budget.
+
         Returns the Response on 2xx; an already-formatted error string otherwise.
         """
         try:
@@ -150,20 +155,44 @@ class RemoteBackend:
             return f"Auth provider error: {e}"
 
         client = await self._ensure_client()
-        try:
-            resp = await client.request(method, f"{self._url}{path}", json=json, headers=headers)
-        except httpx.ConnectError:
-            return f"Could not reach remote API at {self._url}."
-        except httpx.HTTPError as e:
-            return f"Remote API error: {e}"
 
-        if resp.status_code == 401:
-            return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
-        if 500 <= resp.status_code < 600:
-            return f"Remote API error ({resp.status_code}). Try again in a moment."
-        if resp.status_code != 200:
-            return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
-        return resp
+        async def _attempt() -> httpx.Response | str:
+            try:
+                resp = await client.request(method, f"{self._url}{path}", json=json, headers=headers)
+            except httpx.ConnectError:
+                return f"Could not reach remote API at {self._url}."
+            except httpx.ReadTimeout:
+                return (
+                    f"DocForge /search timed out after 30s "
+                    f"(Container App may be cold-starting; retry in 30s)."
+                )
+            except httpx.HTTPError as e:
+                return f"Remote API error: {e}"
+
+            if resp.status_code == 401:
+                return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
+            if 500 <= resp.status_code < 600:
+                return resp  # caller decides: retry or surface
+            if resp.status_code != 200:
+                return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
+            return resp
+
+        first = await _attempt()
+        if isinstance(first, httpx.Response) and first.status_code == 200:
+            return first
+        if isinstance(first, httpx.Response) and 500 <= first.status_code < 600:
+            # 5xx: backoff briefly, then retry once
+            await asyncio.sleep(2.0)
+            second = await _attempt()
+            if isinstance(second, httpx.Response) and second.status_code == 200:
+                return second
+            if isinstance(second, httpx.Response):
+                return f"Remote API error ({second.status_code}). Try again in a moment."
+            return second  # already-formatted error string
+        # Non-5xx error or non-Response — return as-is
+        if isinstance(first, httpx.Response):
+            return f"Remote API returned {first.status_code}: {first.text[:200]}"
+        return first
 
     async def search(self, *, query: str, limit: int = 5) -> str:
         """Search the remote API and return Markdown-formatted results."""

@@ -319,3 +319,93 @@ async def test_ensure_client_uses_split_timeouts():
         assert timeout.pool == 5.0
     finally:
         await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_request_retries_once_on_5xx_then_succeeds(monkeypatch):
+    """A transient 503 from a cold-starting Container App should be retried
+    exactly once with a short backoff. Second response succeeds → caller gets
+    the success response, not the 503 error string."""
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return httpx.Response(503, text="cold start in progress")
+        return httpx.Response(200, json={"results": [], "query": "q", "count": 0})
+
+    transport = httpx.MockTransport(handler)
+    backend = RemoteBackend(url="https://example.test", auth=NoneAuth(), transport=transport)
+
+    # Skip the 2s backoff for test speed. monkeypatch auto-restores.
+    async def fast_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", fast_sleep)
+
+    try:
+        result = await backend._request("POST", "/search", json={"query": "q"})
+    finally:
+        await backend.aclose()
+
+    assert call_count["n"] == 2, f"expected exactly 2 calls (1 retry), got {call_count['n']}"
+    assert isinstance(result, httpx.Response), f"expected Response, got {type(result).__name__}: {result}"
+    assert result.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_request_does_not_retry_on_5xx_when_second_call_also_fails(monkeypatch):
+    """If both attempts fail, return the error string after the second attempt
+    (do not retry indefinitely)."""
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(502, text="bad gateway")
+
+    transport = httpx.MockTransport(handler)
+    backend = RemoteBackend(url="https://example.test", auth=NoneAuth(), transport=transport)
+
+    async def fast_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", fast_sleep)
+
+    try:
+        result = await backend._request("POST", "/search", json={"query": "q"})
+    finally:
+        await backend.aclose()
+
+    assert call_count["n"] == 2, f"expected exactly 2 calls (1 retry), got {call_count['n']}"
+    assert isinstance(result, str)
+    assert "502" in result
+
+
+@pytest.mark.asyncio
+async def test_request_does_not_retry_on_4xx():
+    """4xx errors are caller-fault — auth, validation, etc. — and must fail
+    immediately. Retrying is wasted work and would double the latency for
+    every misconfigured client."""
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(401, text="unauthorized")
+
+    transport = httpx.MockTransport(handler)
+    backend = RemoteBackend(url="https://example.test", auth=NoneAuth(), transport=transport)
+
+    try:
+        result = await backend._request("POST", "/search", json={"query": "q"})
+    finally:
+        await backend.aclose()
+
+    assert call_count["n"] == 1, "401 must not be retried"
+    assert isinstance(result, str)
+    assert "Auth failed" in result
