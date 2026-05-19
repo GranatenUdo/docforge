@@ -301,3 +301,21 @@ def test_run_remote_mcp_constructs_components(monkeypatch):
     assert "search_documentation" in constructed["tools"]
     assert "list_sources" in constructed["tools"]
     assert constructed["ran"] is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_uses_split_timeouts():
+    """RemoteBackend should configure connect/read/write/pool timeouts separately
+    so a connect stall fails fast at 10s without blocking the 30s read budget."""
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
+    backend = RemoteBackend(url="https://example.test", auth=NoneAuth())
+    client = await backend._ensure_client()
+    try:
+        timeout = client.timeout
+        assert timeout.connect == 10.0
+        assert timeout.read == 30.0
+        assert timeout.write == 10.0
+        assert timeout.pool == 5.0
+    finally:
+        await backend.aclose()

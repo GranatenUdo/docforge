@@ -6,6 +6,7 @@ Used by `docforge serve --remote-api $URL --auth ...`. See the
 
 from __future__ import annotations
 
+import asyncio  # noqa: F401  # used by Tasks 2 & 3 (retry, token-mint timeout)
 import os
 from enum import Enum
 from typing import Protocol
@@ -104,7 +105,15 @@ class RemoteBackend:
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(transport=self._transport, timeout=30.0)
+            # Split timeouts let a connect stall (DNS, TCP, TLS) fail at 10s
+            # without consuming the 30s read budget — needed because Azure
+            # Container Apps cold-start can take ~22s of read time once
+            # connected. Without this split, a hung connect would burn the
+            # entire 30s window before the user sees an error.
+            self._client = httpx.AsyncClient(
+                transport=self._transport,
+                timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0),
+            )
         return self._client
 
     async def aclose(self) -> None:
