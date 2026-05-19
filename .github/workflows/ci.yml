@@ -81,7 +81,7 @@ jobs:
           echo "${{ secrets.ACR_PASSWORD }}" | docker login -u "${{ secrets.ACR_USERNAME }}" --password-stdin "${{ secrets.ACR_LOGIN_SERVER }}"
       - name: Build embedder image
         if: steps.check.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.embedder
