@@ -322,7 +322,6 @@ async def search(
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     t_total_ms = int((time.perf_counter() - start) * 1000)
-    logger.info("search_phases query_len=%d t_total_ms=%d", len(req.query), t_total_ms)
 
     effective_user_name = user.preferred_username if user else (req.user_name or "anonymous")
     await log_query(

@@ -386,8 +386,9 @@ def test_search_request_accepts_full_body_for_backwards_compat():
 class TestSearchPhaseLogging:
     @pytest.mark.asyncio
     async def test_search_logs_phase_latencies(self, caplog):
-        """Every /search call emits a 'search_phases' log line with
-        t_embed_ms, t_db_ms, t_total_ms — needed for production p95 diagnosis."""
+        """Each /search call emits exactly one 'search_phases' log line with
+        embed and db timings; t_total_ms is persisted to query_log.request_ms
+        (NOT logged as a separate line — it's a DB metric, not an ops metric)."""
         import logging
 
         caplog.set_level(logging.INFO, logger="docforge.api")
@@ -419,13 +420,33 @@ class TestSearchPhaseLogging:
 
             messages = [r.getMessage() for r in caplog.records]
             phase_lines = [m for m in messages if "search_phases" in m]
-            assert phase_lines, f"expected a 'search_phases' log line; got messages: {messages}"
-            # After the perform_search extraction, embed/db timings come from the
-            # helper and t_total_ms comes from the route handler — across two
-            # search_phases lines. The keys must collectively be present.
-            combined = " ".join(phase_lines)
-            for key in ("t_embed_ms=", "t_db_ms=", "t_total_ms="):
-                assert key in combined, f"missing {key} across phase lines: {phase_lines}"
+            assert len(phase_lines) == 1, (
+                f"expected exactly 1 'search_phases' line, got {len(phase_lines)}: {phase_lines}"
+            )
+            line = phase_lines[0]
+            assert "t_embed_ms=" in line, f"missing t_embed_ms in phase line: {line}"
+            assert "t_db_ms=" in line, f"missing t_db_ms in phase line: {line}"
+            assert "t_total_ms=" not in line, (
+                "t_total_ms should be persisted to query_log.request_ms, "
+                f"not logged as a separate field: {line}"
+            )
+
+            # t_total_ms is persisted to query_log via log_query's request_ms.
+            # query_log.INSERT positional args (from query_log.py):
+            #   $1=user_name, $2=team_name, $3=area_name, $4=query,
+            #   $5=result_count, $6=user_oid, $7=request_ms
+            # So request_ms is the LAST positional arg (args[6]).
+            query_log_inserts = [
+                (q, args) for q, args in pool.executes if "INSERT INTO query_log" in q
+            ]
+            assert len(query_log_inserts) == 1, (
+                f"expected exactly 1 query_log INSERT, got {len(query_log_inserts)}"
+            )
+            args = query_log_inserts[0][1]
+            request_ms_value = args[-1]
+            assert isinstance(request_ms_value, int) and request_ms_value >= 0, (
+                f"expected request_ms to be a non-negative int, got {request_ms_value!r}"
+            )
         finally:
             app.dependency_overrides.clear()
 
