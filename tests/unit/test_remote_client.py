@@ -412,3 +412,41 @@ async def test_request_does_not_retry_on_4xx():
     assert call_count["n"] == 1, "401 must not be retried"
     assert isinstance(result, str)
     assert "Auth failed" in result
+
+
+@pytest.mark.asyncio
+async def test_azure_auth_token_mint_times_out_after_15s(monkeypatch):
+    """If DefaultAzureCredential.get_token hangs (corrupted cache, network
+    stall during MSAL discovery, etc.), AzureAuth.headers() must raise a
+    TimeoutError after 15 seconds rather than hanging the entire MCP
+    session indefinitely."""
+    import asyncio
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
+
+    async def hangs_forever(_scope: str):
+        await asyncio.Future()  # never resolves; wait_for will time it out
+        return MagicMock(token="never-returned")
+
+    fake_credential = MagicMock()
+    fake_credential.get_token = hangs_forever
+
+    fake_aio_module = MagicMock()
+    fake_aio_module.DefaultAzureCredential = MagicMock(return_value=fake_credential)
+    monkeypatch.setitem(sys.modules, "azure.identity.aio", fake_aio_module)
+
+    # Speed up the test — patch wait_for so the 15s budget becomes ~0.05s
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(awaitable, timeout):
+        return await original_wait_for(awaitable, timeout=0.05)
+
+    monkeypatch.setattr("docforge.remote_client.asyncio.wait_for", fast_wait_for)
+
+    from docforge.remote_client import AzureAuth
+
+    auth = AzureAuth()
+    with pytest.raises(asyncio.TimeoutError):
+        await auth.headers()

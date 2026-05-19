@@ -69,7 +69,17 @@ class AzureAuth:
         self._credential = DefaultAzureCredential()
 
     async def headers(self) -> dict[str, str]:
-        token = await self._credential.get_token(f"{self._audience}/.default")
+        # DefaultAzureCredential walks several credential providers (env,
+        # managed identity, CLI, VS Code, etc.); if any one stalls — e.g.,
+        # a corrupted CLI token cache or a network glitch during MSAL
+        # discovery — the get_token coroutine can hang indefinitely. 15s
+        # is well past the cold-network worst case (~3s for CLI cache load)
+        # but short enough that the user sees a clear error instead of
+        # an apparently-hung MCP session.
+        token = await asyncio.wait_for(
+            self._credential.get_token(f"{self._audience}/.default"),
+            timeout=15.0,
+        )
         return {"Authorization": f"Bearer {token.token}"}
 
 
