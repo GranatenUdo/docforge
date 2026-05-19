@@ -288,3 +288,26 @@ class TestDirectVsHttpParity:
         # Sanity check: both produced the expected match at rank 1
         assert h.returned_titles == ["Departments in Product Development"]
         assert h.match_rank == 1
+
+
+class TestFormatReportDebug:
+    def test_debug_ranks_appear_in_report(self):
+        from docforge.scripts.eval_search import QueryResult, format_report, summarize
+
+        results = [
+            QueryResult(
+                query="who is in cloudcl",
+                expected_substring="Team Cloud Customer Lifecycle",
+                returned_titles=[
+                    "Application Catalog - Team CloudCL",
+                    "Team Cloud Customer Lifecycle ♻",
+                ],
+                returned_scores=[0.04, 0.038],
+                match_rank=2,
+                returned_dense_ranks=[1, 4],
+                returned_sparse_ranks=[3, 1],
+            )
+        ]
+        report = format_report(results, summarize(results, k=5), k=5)
+        assert "d#1 s#3" in report
+        assert "d#4 s#1" in report

@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -31,6 +31,10 @@ class QueryResult:
     returned_titles: list[str]
     returned_scores: list[float]
     match_rank: int | None  # 1-based; None if not in top-k
+    # Per-rank debug info — populated only in --direct --debug mode. Same length
+    # as returned_titles when populated; empty list otherwise.
+    returned_dense_ranks: list[int | None] = field(default_factory=list)
+    returned_sparse_ranks: list[int | None] = field(default_factory=list)
 
 
 def score_query(returned_titles: list[str], expected_substring: str) -> int | None:
@@ -180,6 +184,8 @@ async def run_queries_direct(
                 rows = await perform_search(req=req, settings=settings, pool=pool, embedder=embedder)
                 titles = [r["source_title"] for r in rows]
                 scores = [float(r["similarity"]) for r in rows]
+                dense_ranks = [r["dense_rank"] for r in rows] if debug else []
+                sparse_ranks = [r["sparse_rank"] for r in rows] if debug else []
                 results.append(
                     QueryResult(
                         query=q,
@@ -187,6 +193,8 @@ async def run_queries_direct(
                         returned_titles=titles,
                         returned_scores=scores,
                         match_rank=score_query(titles, expected),
+                        returned_dense_ranks=dense_ranks,
+                        returned_sparse_ranks=sparse_ranks,
                     )
                 )
             return results
@@ -205,11 +213,19 @@ def format_report(results: list[QueryResult], summary: dict[str, float | int], k
         lines.append(f"  Expected: contains {r.expected_substring!r}")
         if r.returned_titles:
             lines.append(f"  Top {len(r.returned_titles)}:")
+            has_debug = bool(r.returned_dense_ranks) and bool(r.returned_sparse_ranks)
             for i, (title, score) in enumerate(
                 zip(r.returned_titles, r.returned_scores, strict=False), start=1
             ):
                 marker = "  <-- MATCH" if r.match_rank == i else ""
-                lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
+                if has_debug:
+                    dr = r.returned_dense_ranks[i - 1]
+                    sr = r.returned_sparse_ranks[i - 1]
+                    dr_s = f"d#{dr}" if dr is not None else "d#-"
+                    sr_s = f"s#{sr}" if sr is not None else "s#-"
+                    lines.append(f"    {i}. [{score:.4f}] ({dr_s} {sr_s}) {title}{marker}")
+                else:
+                    lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
         else:
             lines.append("  Top: (no results)")
         if r.match_rank is not None and r.match_rank <= k:
