@@ -9,6 +9,20 @@ import httpx
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_sleep(monkeypatch):
+    """Replace asyncio.sleep with a no-op for every test in this file.
+
+    The retry logic added in Task 2 (remote_client._request) calls
+    asyncio.sleep(2.0) between attempts on 5xx. Real sleeps in unit tests
+    just slow CI down. Tests that explicitly want to assert backoff
+    behavior can still inspect call_count on the MockTransport handler.
+    """
+    async def _fast(_delay):
+        return None
+    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", _fast)
+
+
 @pytest.mark.asyncio
 async def test_none_auth_returns_empty_headers():
     from docforge.remote_client import NoneAuth
@@ -322,7 +336,7 @@ async def test_ensure_client_uses_split_timeouts():
 
 
 @pytest.mark.asyncio
-async def test_request_retries_once_on_5xx_then_succeeds(monkeypatch):
+async def test_request_retries_once_on_5xx_then_succeeds():
     """A transient 503 from a cold-starting Container App should be retried
     exactly once with a short backoff. Second response succeeds → caller gets
     the success response, not the 503 error string."""
@@ -339,12 +353,6 @@ async def test_request_retries_once_on_5xx_then_succeeds(monkeypatch):
     transport = httpx.MockTransport(handler)
     backend = RemoteBackend(url="https://example.test", auth=NoneAuth(), transport=transport)
 
-    # Skip the 2s backoff for test speed. monkeypatch auto-restores.
-    async def fast_sleep(_delay):
-        return None
-
-    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", fast_sleep)
-
     try:
         result = await backend._request("POST", "/search", json={"query": "q"})
     finally:
@@ -356,7 +364,7 @@ async def test_request_retries_once_on_5xx_then_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_request_does_not_retry_on_5xx_when_second_call_also_fails(monkeypatch):
+async def test_request_does_not_retry_on_5xx_when_second_call_also_fails():
     """If both attempts fail, return the error string after the second attempt
     (do not retry indefinitely)."""
     from docforge.remote_client import NoneAuth, RemoteBackend
@@ -369,11 +377,6 @@ async def test_request_does_not_retry_on_5xx_when_second_call_also_fails(monkeyp
 
     transport = httpx.MockTransport(handler)
     backend = RemoteBackend(url="https://example.test", auth=NoneAuth(), transport=transport)
-
-    async def fast_sleep(_delay):
-        return None
-
-    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", fast_sleep)
 
     try:
         result = await backend._request("POST", "/search", json={"query": "q"})
