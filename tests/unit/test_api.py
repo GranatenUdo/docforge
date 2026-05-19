@@ -443,6 +443,13 @@ class TestSearchPhaseLogging:
                 f"expected exactly 1 query_log INSERT, got {len(query_log_inserts)}"
             )
             args = query_log_inserts[0][1]
+            # Pin the INSERT parameter count so a future query_log refactor that
+            # appends a new positional arg fails loudly here instead of silently
+            # picking up the wrong column from args[-1].
+            assert len(args) == 7, (
+                f"query_log INSERT param count changed (expected 7, got {len(args)}); "
+                f"re-verify request_ms position before updating this test"
+            )
             request_ms_value = args[-1]
             assert isinstance(request_ms_value, int) and request_ms_value >= 0, (
                 f"expected request_ms to be a non-negative int, got {request_ms_value!r}"

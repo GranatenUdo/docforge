@@ -205,13 +205,12 @@ async def perform_search(
     settings: Settings,
     pool: asyncpg.Pool,
     embedder: EmbedderProtocol,
-) -> list[dict[str, Any]]:
+) -> list[asyncpg.Record]:
     """Embed query, run the hybrid-retrieval SQL, return rows.
 
     This is the pure search path — no FastAPI types, no auth, no query logging.
     Used by the /search endpoint AND by eval_search.py --direct mode so both
-    paths exercise identical SQL + ranking. Returns asyncpg Records (dict-like)
-    so the caller can shape them as it needs.
+    paths exercise identical SQL + ranking.
     """
     t_embed_start = time.perf_counter()
     try:
