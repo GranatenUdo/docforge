@@ -171,41 +171,76 @@ class TestDirectRequiresRemoteEmbedder:
 class TestDirectVsHttpParity:
     @pytest.mark.asyncio
     async def test_direct_mode_matches_http_for_same_fixtures(self, monkeypatch):
-        """Both code paths share perform_search() after the Task 4 refactor.
-        Running the same query through each must yield the same titles and
-        match_rank. If they diverge, the refactor introduced a behavior change."""
-        from unittest.mock import AsyncMock
-        from docforge.scripts.eval_search import run_queries_direct, score_query
+        """Both code paths must produce identical QueryResults on the same
+        row payload. After Task 4's refactor /search and run_queries_direct
+        share perform_search; the only places they could diverge are in the
+        row -> QueryResult adaptation logic on each side. This test catches
+        any future drift between them by running both paths and asserting
+        their QueryResult lists are equal."""
+        import httpx
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from docforge.scripts.eval_search import run_queries, run_queries_direct
         from tests.conftest import FakeEmbedder, fake_settings
 
-        rows_returned = [
-            {
-                "text": "Markus is VP Engineering.",
-                "section_title": "Engineering",
-                "source_title": "Departments in Product Development",
-                "source_url": "https://wiki/depts",
-                "source_tags": ["org"],
-                "similarity": 0.85,
-                "dense_rank": 1,
-                "sparse_rank": 1,
-            }
+        # Fixed payload that both paths must surface identically.
+        row = {
+            "text": "Markus is VP Engineering.",
+            "section_title": "Engineering",
+            "source_title": "Departments in Product Development",
+            "source_url": "https://wiki/depts",
+            "source_tags": ["org"],
+            "similarity": 0.85,
+            "dense_rank": 1,
+            "sparse_rank": 1,
+        }
+        ground_truth = [
+            {"q": "who is Markus Koelmans", "expected_title_contains": "Departments in Product"}
         ]
 
-        # Stub perform_search to return our fixture rows regardless of args
+        # --- HTTP path setup: MockTransport returns the same row from /search ---
+        def http_handler(request: httpx.Request) -> httpx.Response:
+            # /search response envelope matches the FastAPI shape
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "text": row["text"],
+                            "section_title": row["section_title"],
+                            "source_title": row["source_title"],
+                            "source_url": row["source_url"],
+                            "source_tags": row["source_tags"],
+                            "similarity": row["similarity"],
+                        }
+                    ],
+                    "query": ground_truth[0]["q"],
+                    "count": 1,
+                },
+            )
+
+        mock_transport = httpx.MockTransport(http_handler)
+
+        # run_queries constructs httpx.AsyncClient(timeout=30.0) without a transport
+        # argument. Patch the constructor to inject our MockTransport for every
+        # client built inside run_queries.
+        original_async_client = httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):
+            kwargs["transport"] = mock_transport
+            return original_async_client(*args, **kwargs)
+
+        monkeypatch.setattr("httpx.AsyncClient", patched_async_client)
+
+        # --- Direct path setup: stub perform_search to return the same row ---
         async def fake_perform_search(*, req, settings, pool, embedder):
-            return rows_returned
+            return [row]
 
         monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
 
-        # Stub the Settings/Pool/Embedder construction in run_queries_direct
-        # so the test doesn't need a real DB. run_queries_direct imports
-        # Settings, asyncpg, and Embedder lazily inside the function — so we
-        # patch their source modules, not eval_search's namespace.
-        from unittest.mock import MagicMock
-
-        # The Settings used by run_queries_direct must pass the embedder_url
-        # guard, so override fake_settings to include a non-empty embedder_url.
-        from types import SimpleNamespace
+        # Settings/Pool/Embedder construction in run_queries_direct — patch the
+        # source modules since run_queries_direct imports them lazily.
         def patched_settings():
             s = fake_settings()
             s.embedder_url = "https://embedder.example.test"
@@ -223,19 +258,33 @@ class TestDirectVsHttpParity:
             lambda settings: FakeEmbedder(),
         )
 
-        ground_truth = [{"q": "who is Markus Koelmans", "expected_title_contains": "Departments in Product"}]
-        results = await run_queries_direct(
+        # --- Run BOTH paths ---
+        http_results = await run_queries(
+            api_url="https://example.test",
             ground_truth=ground_truth,
             user_name="u",
             team_name="t",
             area_name="a",
             k=5,
-            debug=True,
+            audience=None,
+        )
+        direct_results = await run_queries_direct(
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            debug=False,
         )
 
-        assert len(results) == 1
-        assert results[0].returned_titles == ["Departments in Product Development"]
-        assert results[0].match_rank == 1
-        # Also verify the score_query function used by both code paths returns
-        # the same rank for identical title lists
-        assert score_query(results[0].returned_titles, "Departments in Product") == 1
+        # --- Assert parity across the full QueryResult shape ---
+        assert len(http_results) == len(direct_results) == 1
+        h, d = http_results[0], direct_results[0]
+        assert h.query == d.query
+        assert h.expected_substring == d.expected_substring
+        assert h.returned_titles == d.returned_titles
+        assert h.returned_scores == d.returned_scores
+        assert h.match_rank == d.match_rank
+        # Sanity check: both produced the expected match at rank 1
+        assert h.returned_titles == ["Departments in Product Development"]
+        assert h.match_rank == 1
