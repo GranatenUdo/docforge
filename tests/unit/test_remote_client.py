@@ -359,7 +359,9 @@ async def test_request_retries_once_on_5xx_then_succeeds():
         await backend.aclose()
 
     assert call_count["n"] == 2, f"expected exactly 2 calls (1 retry), got {call_count['n']}"
-    assert isinstance(result, httpx.Response), f"expected Response, got {type(result).__name__}: {result}"
+    assert isinstance(result, httpx.Response), (
+        f"expected Response, got {type(result).__name__}: {result}"
+    )
     assert result.status_code == 200
 
 

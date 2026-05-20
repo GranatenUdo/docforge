@@ -141,7 +141,8 @@ async def run_queries_direct(
     Returns the same QueryResult shape as run_queries so format_report can
     consume either."""
     import asyncpg
-    from docforge.api import perform_search, SearchRequest
+
+    from docforge.api import SearchRequest, perform_search
     from docforge.config import Settings
     from docforge.db import _init_connection
     from docforge.processors.embedder import Embedder
@@ -185,7 +186,9 @@ async def run_queries_direct(
                     limit=k,
                     debug=debug,
                 )
-                rows = await perform_search(req=req, settings=settings, pool=pool, embedder=embedder)
+                rows = await perform_search(
+                    req=req, settings=settings, pool=pool, embedder=embedder
+                )
                 titles = [r["source_title"] for r in rows]
                 scores = [float(r["similarity"]) for r in rows]
                 dense_ranks = [r["dense_rank"] for r in rows] if debug else []

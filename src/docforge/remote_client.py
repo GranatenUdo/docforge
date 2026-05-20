@@ -176,7 +176,9 @@ class RemoteBackend:
 
         async def _attempt() -> httpx.Response | str:
             try:
-                resp = await client.request(method, f"{self._url}{path}", json=json, headers=headers)
+                resp = await client.request(
+                    method, f"{self._url}{path}", json=json, headers=headers
+                )
             except httpx.ConnectError:
                 return f"Could not reach remote API at {self._url}."
             except httpx.ReadTimeout:

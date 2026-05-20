@@ -113,7 +113,8 @@ class TestLoadGroundTruth:
 class TestDirectMode:
     def test_cli_rejects_both_api_url_and_direct(self):
         """--api-url and --direct are mutually exclusive."""
-        import subprocess, sys
+        import subprocess
+        import sys
         result = subprocess.run(
             [
                 sys.executable, "-m", "docforge.scripts.eval_search",
@@ -130,7 +131,8 @@ class TestDirectMode:
 
     def test_cli_rejects_neither_api_url_nor_direct(self):
         """At least one of --api-url or --direct must be given."""
-        import subprocess, sys
+        import subprocess
+        import sys
         result = subprocess.run(
             [
                 sys.executable, "-m", "docforge.scripts.eval_search",
@@ -151,6 +153,7 @@ class TestDirectRequiresRemoteEmbedder:
         download. When embedder_url is unset, raise SystemExit with a
         message that tells the user how to fix it."""
         from types import SimpleNamespace
+
         from docforge.scripts.eval_search import run_queries_direct
 
         empty_url_settings = SimpleNamespace(
@@ -177,9 +180,10 @@ class TestDirectVsHttpParity:
         row -> QueryResult adaptation logic on each side. This test catches
         any future drift between them by running both paths and asserting
         their QueryResult lists are equal."""
-        import httpx
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
+
+        import httpx
 
         from docforge.scripts.eval_search import run_queries, run_queries_direct
         from tests.conftest import FakeEmbedder, fake_settings
