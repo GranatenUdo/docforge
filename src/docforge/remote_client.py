@@ -128,9 +128,7 @@ class RemoteBackend:
             # entire 30s window before the user sees an error.
             self._client = httpx.AsyncClient(
                 transport=self._transport,
-                timeout=httpx.Timeout(
-                    connect=10.0, read=_READ_TIMEOUT_S, write=10.0, pool=5.0
-                ),
+                timeout=httpx.Timeout(connect=10.0, read=_READ_TIMEOUT_S, write=10.0, pool=5.0),
             )
         return self._client
 

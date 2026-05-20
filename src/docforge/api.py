@@ -184,6 +184,7 @@ class SearchRequest(BaseModel):
 
 class SearchResultDebug(BaseModel):
     """Per-result diagnostic info — populated only when SearchRequest.debug=true."""
+
     dense_rank: int | None
     sparse_rank: int | None
     rrf_score: float
@@ -191,6 +192,7 @@ class SearchResultDebug(BaseModel):
 
 class SearchDebugEnvelope(BaseModel):
     """Envelope-level diagnostic info — populated only when SearchRequest.debug=true."""
+
     weights: dict[str, float]
     k: int
 

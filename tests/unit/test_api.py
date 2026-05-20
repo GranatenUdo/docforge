@@ -516,6 +516,7 @@ class TestSearchDebugMode:
         """When debug is not requested, response has no debug block on the
         envelope and no debug field on each result. Backward compatible."""
         from tests.conftest import FakeEmbedder
+
         rows = [
             {
                 "text": "Platform owns orgs.",
@@ -556,6 +557,7 @@ class TestSearchDebugMode:
         """With debug=true, each result has dense_rank/sparse_rank/rrf_score
         and the envelope has weights + k."""
         from tests.conftest import FakeEmbedder
+
         rows = [
             {
                 "text": "Platform owns orgs.",

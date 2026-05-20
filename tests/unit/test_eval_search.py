@@ -115,35 +115,57 @@ class TestDirectMode:
         """--api-url and --direct are mutually exclusive."""
         import subprocess
         import sys
+
         result = subprocess.run(
             [
-                sys.executable, "-m", "docforge.scripts.eval_search",
-                "--api-url", "https://example.test",
+                sys.executable,
+                "-m",
+                "docforge.scripts.eval_search",
+                "--api-url",
+                "https://example.test",
                 "--direct",
-                "--ground-truth", "nonexistent.yml",
-                "--user", "u", "--team", "t",
+                "--ground-truth",
+                "nonexistent.yml",
+                "--user",
+                "u",
+                "--team",
+                "t",
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode != 0
-        assert "mutually exclusive" in (result.stderr + result.stdout).lower() \
+        assert (
+            "mutually exclusive" in (result.stderr + result.stdout).lower()
             or "--direct" in result.stderr
+        )
 
     def test_cli_rejects_neither_api_url_nor_direct(self):
         """At least one of --api-url or --direct must be given."""
         import subprocess
         import sys
+
         result = subprocess.run(
             [
-                sys.executable, "-m", "docforge.scripts.eval_search",
-                "--ground-truth", "nonexistent.yml",
-                "--user", "u", "--team", "t",
+                sys.executable,
+                "-m",
+                "docforge.scripts.eval_search",
+                "--ground-truth",
+                "nonexistent.yml",
+                "--user",
+                "u",
+                "--team",
+                "t",
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode != 0
-        assert "required" in (result.stderr + result.stdout).lower() \
-            or "--api-url" in result.stderr or "--direct" in result.stderr
+        assert (
+            "required" in (result.stderr + result.stdout).lower()
+            or "--api-url" in result.stderr
+            or "--direct" in result.stderr
+        )
 
 
 class TestDirectRequiresRemoteEmbedder:
@@ -166,7 +188,11 @@ class TestDirectRequiresRemoteEmbedder:
         with pytest.raises(SystemExit) as exc_info:
             await run_queries_direct(
                 ground_truth=[{"q": "q", "expected_title_contains": "x"}],
-                user_name="u", team_name="t", area_name="a", k=5, debug=False,
+                user_name="u",
+                team_name="t",
+                area_name="a",
+                k=5,
+                debug=False,
             )
         assert "EMBEDDER_URL" in str(exc_info.value)
 

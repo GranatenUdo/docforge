@@ -18,8 +18,10 @@ def _no_backoff_sleep(monkeypatch):
     just slow CI down. Tests that explicitly want to assert backoff
     behavior can still inspect call_count on the MockTransport handler.
     """
+
     async def _fast(_delay):
         return None
+
     monkeypatch.setattr("docforge.remote_client.asyncio.sleep", _fast)
 
 
