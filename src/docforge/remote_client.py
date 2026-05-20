@@ -6,6 +6,7 @@ Used by `docforge serve --remote-api $URL --auth ...`. See the
 
 from __future__ import annotations
 
+import asyncio
 import os
 from enum import Enum
 from typing import Protocol
@@ -68,7 +69,17 @@ class AzureAuth:
         self._credential = DefaultAzureCredential()
 
     async def headers(self) -> dict[str, str]:
-        token = await self._credential.get_token(f"{self._audience}/.default")
+        # DefaultAzureCredential walks several credential providers (env,
+        # managed identity, CLI, VS Code, etc.); if any one stalls — e.g.,
+        # a corrupted CLI token cache or a network glitch during MSAL
+        # discovery — the get_token coroutine can hang indefinitely. 15s
+        # is well past the cold-network worst case (~3s for CLI cache load)
+        # but short enough that the user sees a clear error instead of
+        # an apparently-hung MCP session.
+        token = await asyncio.wait_for(
+            self._credential.get_token(f"{self._audience}/.default"),
+            timeout=15.0,
+        )
         return {"Authorization": f"Bearer {token.token}"}
 
 
@@ -85,6 +96,12 @@ def make_auth_provider(name: AuthName | str) -> AuthProvider:
     if name is AuthName.azure:
         return AzureAuth()
     raise ValueError(f"Unknown auth provider: {name!r}.")
+
+
+# Read timeout (seconds) for remote /search calls. Long enough to cover an
+# Azure Container Apps cold start (~22s observed); short enough that a stuck
+# upstream surfaces a clear error instead of hanging the MCP session.
+_READ_TIMEOUT_S = 30.0
 
 
 class RemoteBackend:
@@ -104,7 +121,15 @@ class RemoteBackend:
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(transport=self._transport, timeout=30.0)
+            # Split timeouts let a connect stall (DNS, TCP, TLS) fail at 10s
+            # without consuming the 30s read budget — needed because Azure
+            # Container Apps cold-start can take ~22s of read time once
+            # connected. Without this split, a hung connect would burn the
+            # entire 30s window before the user sees an error.
+            self._client = httpx.AsyncClient(
+                transport=self._transport,
+                timeout=httpx.Timeout(connect=10.0, read=_READ_TIMEOUT_S, write=10.0, pool=5.0),
+            )
         return self._client
 
     async def aclose(self) -> None:
@@ -133,6 +158,11 @@ class RemoteBackend:
     ) -> httpx.Response | str:
         """Perform an HTTP request with auth and uniform error handling.
 
+        Retries once on 5xx with a 2-second backoff — cold-start 502/503 from
+        Azure Container Apps ingress is the dominant transient failure. 4xx
+        responses and timeouts are NOT retried: 4xx is caller-fault, and a
+        timeout has already burned the configured budget.
+
         Returns the Response on 2xx; an already-formatted error string otherwise.
         """
         try:
@@ -141,20 +171,45 @@ class RemoteBackend:
             return f"Auth provider error: {e}"
 
         client = await self._ensure_client()
-        try:
-            resp = await client.request(method, f"{self._url}{path}", json=json, headers=headers)
-        except httpx.ConnectError:
-            return f"Could not reach remote API at {self._url}."
-        except httpx.HTTPError as e:
-            return f"Remote API error: {e}"
 
-        if resp.status_code == 401:
-            return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
-        if 500 <= resp.status_code < 600:
-            return f"Remote API error ({resp.status_code}). Try again in a moment."
-        if resp.status_code != 200:
-            return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
-        return resp
+        async def _attempt() -> httpx.Response | str:
+            try:
+                resp = await client.request(
+                    method, f"{self._url}{path}", json=json, headers=headers
+                )
+            except httpx.ConnectError:
+                return f"Could not reach remote API at {self._url}."
+            except httpx.ReadTimeout:
+                return (
+                    f"DocForge /search timed out after {int(_READ_TIMEOUT_S)}s "
+                    f"(Container App may be cold-starting; retry in 30s)."
+                )
+            except httpx.HTTPError as e:
+                return f"Remote API error: {e}"
+
+            if resp.status_code == 401:
+                return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
+            if 500 <= resp.status_code < 600:
+                return resp  # caller decides: retry or surface
+            if resp.status_code != 200:
+                return f"Remote API returned {resp.status_code}: {resp.text[:200]}"
+            return resp
+
+        first = await _attempt()
+        if isinstance(first, httpx.Response) and first.status_code == 200:
+            return first
+        if isinstance(first, httpx.Response) and 500 <= first.status_code < 600:
+            # 5xx: backoff briefly, then retry once
+            await asyncio.sleep(2.0)
+            second = await _attempt()
+            if isinstance(second, httpx.Response) and second.status_code == 200:
+                return second
+            if isinstance(second, httpx.Response):
+                return f"Remote API error ({second.status_code}). Try again in a moment."
+            return second  # already-formatted error string
+        # _attempt only returns Response for 200 or 5xx; both handled above.
+        # Anything else is already a formatted error string.
+        return first
 
     async def search(self, *, query: str, limit: int = 5) -> str:
         """Search the remote API and return Markdown-formatted results."""

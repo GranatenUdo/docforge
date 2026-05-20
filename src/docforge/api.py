@@ -172,6 +172,29 @@ class SearchRequest(BaseModel):
     team_name: str | None = None
     area_name: str | None = None
     limit: int = Field(5, ge=1, le=50)
+    debug: bool = Field(
+        False,
+        description=(
+            "When true, response includes per-result dense_rank/sparse_rank/rrf_score "
+            "plus envelope-level weights and k. Off by default so the public API "
+            "surface is unchanged for normal callers."
+        ),
+    )
+
+
+class SearchResultDebug(BaseModel):
+    """Per-result diagnostic info — populated only when SearchRequest.debug=true."""
+
+    dense_rank: int | None
+    sparse_rank: int | None
+    rrf_score: float
+
+
+class SearchDebugEnvelope(BaseModel):
+    """Envelope-level diagnostic info — populated only when SearchRequest.debug=true."""
+
+    weights: dict[str, float]
+    k: int
 
 
 class SearchResult(BaseModel):
@@ -181,12 +204,14 @@ class SearchResult(BaseModel):
     source_url: str
     source_tags: list[str]
     similarity: float
+    debug: SearchResultDebug | None = None
 
 
 class SearchResponse(BaseModel):
     results: list[SearchResult]
     query: str
     count: int
+    debug: SearchDebugEnvelope | None = None
 
 
 @app.get("/health")
@@ -197,6 +222,108 @@ async def health(request: Request) -> dict[str, Any]:
         "status": "ok",
         "model": embedder.model_name if embedder else "not loaded",
     }
+
+
+async def perform_search(
+    *,
+    req: SearchRequest,
+    settings: Settings,
+    pool: asyncpg.Pool,
+    embedder: EmbedderProtocol,
+) -> list[asyncpg.Record]:
+    """Embed query, run the hybrid-retrieval SQL, return rows.
+
+    This is the pure search path — no FastAPI types, no auth, no query logging.
+    Used by the /search endpoint AND by eval_search.py --direct mode so both
+    paths exercise identical SQL + ranking.
+    """
+    t_embed_start = time.perf_counter()
+    try:
+        query_vector = await embedder.aembed_query(req.query)
+    except Exception as e:
+        logger.error("Embedding failed: %s", e)
+        raise RuntimeError("Failed to embed query") from e
+    t_embed_ms = int((time.perf_counter() - t_embed_start) * 1000)
+
+    user_tags = [t for t in (req.team_name, req.area_name) if t]
+
+    t_db_start = time.perf_counter()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
+                 dense AS (
+                     SELECT id, source_id, text, section_title,
+                            ROW_NUMBER() OVER (ORDER BY dist) AS rank
+                     FROM (
+                         SELECT c.id, c.source_id, c.text, c.section_title,
+                                c.embedding <=> $1::vector AS dist
+                         FROM chunks c JOIN sources s ON c.source_id = s.id
+                         WHERE s.status = 'active'
+                         ORDER BY c.embedding <=> $1::vector
+                         LIMIT $3
+                     ) AS t
+                 ),
+                 sparse AS (
+                     SELECT id, source_id, text, section_title,
+                            ROW_NUMBER() OVER (ORDER BY rk DESC) AS rank
+                     FROM (
+                         SELECT c.id, c.source_id, c.text, c.section_title,
+                                ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) AS rk
+                         FROM chunks c JOIN sources s ON c.source_id = s.id
+                         WHERE s.status = 'active'
+                           AND c.text_tsv @@ (SELECT q FROM q_tsq)
+                         ORDER BY ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) DESC
+                         LIMIT $3
+                     ) AS t
+                 ),
+                 fused AS (
+                     SELECT COALESCE(d.id, sp.id) AS id,
+                            COALESCE(d.source_id, sp.source_id) AS source_id,
+                            COALESCE(d.text, sp.text) AS text,
+                            COALESCE(d.section_title, sp.section_title) AS section_title,
+                            d.rank AS dense_rank,
+                            sp.rank AS sparse_rank,
+                            COALESCE($10::float / ($9 + d.rank), 0)
+                              + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
+                     FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
+                 )
+            SELECT f.text, f.section_title,
+                   s.title AS source_title, s.url AS source_url, s.tags AS source_tags,
+                   f.dense_rank, f.sparse_rank,
+                   f.rrf AS similarity,
+                   f.rrf * (1
+                            + $4::float * cardinality(
+                                ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
+                              )
+                            + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
+                   ) AS boosted_score
+            FROM fused f JOIN sources s ON f.source_id = s.id
+            ORDER BY boosted_score DESC
+            LIMIT $7
+            """,
+            np.array(query_vector, dtype=np.float32),
+            req.query,
+            settings.hybrid_pool_size,
+            settings.tag_match_weight,
+            user_tags,
+            settings.org_tag_weight,
+            req.limit,
+            settings.fts_language,
+            settings.rrf_k,
+            settings.dense_weight,
+            settings.sparse_weight,
+        )
+    t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
+
+    logger.info(
+        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d rows=%d",
+        len(req.query),
+        t_embed_ms,
+        t_db_ms,
+        len(rows),
+    )
+    return rows
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -210,97 +337,15 @@ async def search(
     """Search indexed documentation by semantic similarity."""
     start = time.perf_counter()
 
-    t_embed_start = time.perf_counter()
     try:
-        query_vector = await embedder.aembed_query(req.query)
-    except Exception as e:
-        logger.error("Embedding failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to embed query")
-    t_embed_ms = int((time.perf_counter() - t_embed_start) * 1000)
-
-    user_tags = [t for t in (req.team_name, req.area_name) if t]
-
-    t_db_start = time.perf_counter()
-    try:
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
-                     dense AS (
-                         SELECT id, source_id, text, section_title,
-                                ROW_NUMBER() OVER (ORDER BY dist) AS rank
-                         FROM (
-                             SELECT c.id, c.source_id, c.text, c.section_title,
-                                    c.embedding <=> $1::vector AS dist
-                             FROM chunks c JOIN sources s ON c.source_id = s.id
-                             WHERE s.status = 'active'
-                             ORDER BY c.embedding <=> $1::vector
-                             LIMIT $3
-                         ) AS t
-                     ),
-                     sparse AS (
-                         SELECT id, source_id, text, section_title,
-                                ROW_NUMBER() OVER (ORDER BY rk DESC) AS rank
-                         FROM (
-                             SELECT c.id, c.source_id, c.text, c.section_title,
-                                    ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) AS rk
-                             FROM chunks c JOIN sources s ON c.source_id = s.id
-                             WHERE s.status = 'active'
-                               AND c.text_tsv @@ (SELECT q FROM q_tsq)
-                             ORDER BY ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) DESC
-                             LIMIT $3
-                         ) AS t
-                     ),
-                     fused AS (
-                         SELECT COALESCE(d.id, sp.id) AS id,
-                                COALESCE(d.source_id, sp.source_id) AS source_id,
-                                COALESCE(d.text, sp.text) AS text,
-                                COALESCE(d.section_title, sp.section_title) AS section_title,
-                                COALESCE($10::float / ($9 + d.rank), 0)
-                                  + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
-                         FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
-                     )
-                SELECT f.text, f.section_title,
-                       s.title AS source_title, s.url AS source_url, s.tags AS source_tags,
-                       f.rrf AS similarity,
-                       f.rrf * (1
-                                + $4::float * cardinality(
-                                    ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
-                                  )
-                                + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
-                       ) AS boosted_score
-                FROM fused f JOIN sources s ON f.source_id = s.id
-                ORDER BY boosted_score DESC
-                LIMIT $7
-                """,
-                np.array(query_vector, dtype=np.float32),  # $1
-                req.query,  # $2
-                settings.hybrid_pool_size,  # $3
-                settings.tag_match_weight,  # $4
-                user_tags,  # $5
-                settings.org_tag_weight,  # $6
-                req.limit,  # $7
-                settings.fts_language,  # $8
-                settings.rrf_k,  # $9
-                settings.dense_weight,  # $10
-                settings.sparse_weight,  # $11
-            )
+        rows = await perform_search(req=req, settings=settings, pool=pool, embedder=embedder)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error("Database error during search: %s", e)
         raise HTTPException(status_code=503, detail="Database unavailable")
-    t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
     t_total_ms = int((time.perf_counter() - start) * 1000)
-    logger.info(
-        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d t_total_ms=%d rows=%d",
-        len(req.query),
-        t_embed_ms,
-        t_db_ms,
-        t_total_ms,
-        len(rows),
-    )
-
-    request_ms = t_total_ms
 
     effective_user_name = user.preferred_username if user else (req.user_name or "anonymous")
     await log_query(
@@ -311,7 +356,7 @@ async def search(
         req.query,
         len(rows),
         user_oid=user.oid if user else None,
-        request_ms=request_ms,
+        request_ms=t_total_ms,
     )
 
     results = [
@@ -322,11 +367,29 @@ async def search(
             source_url=row["source_url"],
             source_tags=list(row["source_tags"] or []),
             similarity=float(row["similarity"]),
+            debug=(
+                SearchResultDebug(
+                    dense_rank=row["dense_rank"],
+                    sparse_rank=row["sparse_rank"],
+                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
+                )
+                if req.debug
+                else None
+            ),
         )
         for row in rows
     ]
-
-    return SearchResponse(results=results, query=req.query, count=len(results))
+    envelope_debug = (
+        SearchDebugEnvelope(
+            weights={"dense": settings.dense_weight, "sparse": settings.sparse_weight},
+            k=req.limit,
+        )
+        if req.debug
+        else None
+    )
+    return SearchResponse(
+        results=results, query=req.query, count=len(results), debug=envelope_debug
+    )
 
 
 @app.get("/sources")

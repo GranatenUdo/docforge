@@ -108,3 +108,236 @@ class TestLoadGroundTruth:
         p.write_text("queries:\n  - q: 'only q key'\n", encoding="utf-8")
         with pytest.raises(ValueError, match="must have"):
             _load_ground_truth(p)
+
+
+class TestDirectMode:
+    def test_cli_rejects_both_api_url_and_direct(self):
+        """--api-url and --direct are mutually exclusive."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "docforge.scripts.eval_search",
+                "--api-url",
+                "https://example.test",
+                "--direct",
+                "--ground-truth",
+                "nonexistent.yml",
+                "--user",
+                "u",
+                "--team",
+                "t",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert (
+            "mutually exclusive" in (result.stderr + result.stdout).lower()
+            or "--direct" in result.stderr
+        )
+
+    def test_cli_rejects_neither_api_url_nor_direct(self):
+        """At least one of --api-url or --direct must be given."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "docforge.scripts.eval_search",
+                "--ground-truth",
+                "nonexistent.yml",
+                "--user",
+                "u",
+                "--team",
+                "t",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert (
+            "required" in (result.stderr + result.stdout).lower()
+            or "--api-url" in result.stderr
+            or "--direct" in result.stderr
+        )
+
+
+class TestDirectRequiresRemoteEmbedder:
+    @pytest.mark.asyncio
+    async def test_direct_mode_fails_fast_when_embedder_url_empty(self, monkeypatch):
+        """--direct mode must not silently fall through to local Qwen-4B
+        download. When embedder_url is unset, raise SystemExit with a
+        message that tells the user how to fix it."""
+        from types import SimpleNamespace
+
+        from docforge.scripts.eval_search import run_queries_direct
+
+        empty_url_settings = SimpleNamespace(
+            embedder_url="",  # the bad state we're guarding against
+            database_url="postgresql://fake",
+            embedder_token=SimpleNamespace(get_secret_value=lambda: ""),
+        )
+        monkeypatch.setattr("docforge.config.Settings", lambda: empty_url_settings)
+
+        with pytest.raises(SystemExit) as exc_info:
+            await run_queries_direct(
+                ground_truth=[{"q": "q", "expected_title_contains": "x"}],
+                user_name="u",
+                team_name="t",
+                area_name="a",
+                k=5,
+                debug=False,
+            )
+        assert "EMBEDDER_URL" in str(exc_info.value)
+
+
+class TestDirectVsHttpParity:
+    @pytest.mark.asyncio
+    async def test_direct_mode_matches_http_for_same_fixtures(self, monkeypatch):
+        """Both code paths must produce identical QueryResults on the same
+        row payload. After Task 4's refactor /search and run_queries_direct
+        share perform_search; the only places they could diverge are in the
+        row -> QueryResult adaptation logic on each side. This test catches
+        any future drift between them by running both paths and asserting
+        their QueryResult lists are equal."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        import httpx
+
+        from docforge.scripts.eval_search import run_queries, run_queries_direct
+        from tests.conftest import FakeEmbedder, fake_settings
+
+        # Fixed payload that both paths must surface identically.
+        row = {
+            "text": "Markus is VP Engineering.",
+            "section_title": "Engineering",
+            "source_title": "Departments in Product Development",
+            "source_url": "https://wiki/depts",
+            "source_tags": ["org"],
+            "similarity": 0.85,
+            "dense_rank": 1,
+            "sparse_rank": 1,
+        }
+        ground_truth = [
+            {"q": "who is Markus Koelmans", "expected_title_contains": "Departments in Product"}
+        ]
+
+        # --- HTTP path setup: MockTransport returns the same row from /search ---
+        def http_handler(request: httpx.Request) -> httpx.Response:
+            # /search response envelope matches the FastAPI shape
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "text": row["text"],
+                            "section_title": row["section_title"],
+                            "source_title": row["source_title"],
+                            "source_url": row["source_url"],
+                            "source_tags": row["source_tags"],
+                            "similarity": row["similarity"],
+                        }
+                    ],
+                    "query": ground_truth[0]["q"],
+                    "count": 1,
+                },
+            )
+
+        mock_transport = httpx.MockTransport(http_handler)
+
+        # run_queries constructs httpx.AsyncClient(timeout=30.0) without a transport
+        # argument. Patch the constructor to inject our MockTransport for every
+        # client built inside run_queries.
+        original_async_client = httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):
+            kwargs["transport"] = mock_transport
+            return original_async_client(*args, **kwargs)
+
+        monkeypatch.setattr("httpx.AsyncClient", patched_async_client)
+
+        # --- Direct path setup: stub perform_search to return the same row ---
+        async def fake_perform_search(*, req, settings, pool, embedder):
+            return [row]
+
+        monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
+
+        # Settings/Pool/Embedder construction in run_queries_direct — patch the
+        # source modules since run_queries_direct imports them lazily.
+        def patched_settings():
+            s = fake_settings()
+            s.embedder_url = "https://embedder.example.test"
+            s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
+            return s
+
+        monkeypatch.setattr("docforge.config.Settings", patched_settings)
+
+        async def fake_create_pool(*args, **kwargs):
+            return MagicMock(close=AsyncMock())
+
+        monkeypatch.setattr("asyncpg.create_pool", fake_create_pool)
+        monkeypatch.setattr(
+            "docforge.processors.embedder.Embedder.from_settings",
+            lambda settings: FakeEmbedder(),
+        )
+
+        # --- Run BOTH paths ---
+        http_results = await run_queries(
+            api_url="https://example.test",
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            audience=None,
+        )
+        direct_results = await run_queries_direct(
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            debug=False,
+        )
+
+        # --- Assert parity across the full QueryResult shape ---
+        assert len(http_results) == len(direct_results) == 1
+        h, d = http_results[0], direct_results[0]
+        assert h.query == d.query
+        assert h.expected_substring == d.expected_substring
+        assert h.returned_titles == d.returned_titles
+        assert h.returned_scores == d.returned_scores
+        assert h.match_rank == d.match_rank
+        # Sanity check: both produced the expected match at rank 1
+        assert h.returned_titles == ["Departments in Product Development"]
+        assert h.match_rank == 1
+
+
+class TestFormatReportDebug:
+    def test_debug_ranks_appear_in_report(self):
+        from docforge.scripts.eval_search import QueryResult, format_report, summarize
+
+        results = [
+            QueryResult(
+                query="who is in cloudcl",
+                expected_substring="Team Cloud Customer Lifecycle",
+                returned_titles=[
+                    "Application Catalog - Team CloudCL",
+                    "Team Cloud Customer Lifecycle ♻",
+                ],
+                returned_scores=[0.04, 0.038],
+                match_rank=2,
+                returned_dense_ranks=[1, 4],
+                returned_sparse_ranks=[3, 1],
+            )
+        ]
+        report = format_report(results, summarize(results, k=5), k=5)
+        assert "d#1 s#3" in report
+        assert "d#4 s#1" in report

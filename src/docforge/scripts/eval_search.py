@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -31,6 +31,10 @@ class QueryResult:
     returned_titles: list[str]
     returned_scores: list[float]
     match_rank: int | None  # 1-based; None if not in top-k
+    # Per-rank debug info — populated only in --direct --debug mode. Same length
+    # as returned_titles when populated; empty list otherwise.
+    returned_dense_ranks: list[int | None] = field(default_factory=list)
+    returned_sparse_ranks: list[int | None] = field(default_factory=list)
 
 
 def score_query(returned_titles: list[str], expected_substring: str) -> int | None:
@@ -122,6 +126,92 @@ async def run_queries(
     return results
 
 
+async def run_queries_direct(
+    ground_truth: list[dict],
+    user_name: str,
+    team_name: str,
+    area_name: str | None,
+    k: int,
+    debug: bool = False,
+) -> list[QueryResult]:
+    """Run each query against docforge.api.perform_search directly (no HTTP).
+
+    Reads Settings from local env/yml, opens an asyncpg pool, constructs an
+    Embedder via the factory, then calls perform_search() for each query.
+    Returns the same QueryResult shape as run_queries so format_report can
+    consume either."""
+    import asyncpg
+
+    from docforge.api import SearchRequest, perform_search
+    from docforge.config import Settings
+    from docforge.db import _init_connection
+    from docforge.processors.embedder import Embedder
+
+    settings = Settings()
+    # --direct mode is meant for production-DB investigation work; it requires
+    # the remote embedder sidecar so the eval uses the SAME embeddings the
+    # live API uses. Falling through to the in-process Embedder would download
+    # Qwen-4B 4B locally (~7 GiB FP16 RAM, ~10min first-run model download)
+    # AND produce embeddings that may differ from prod (different FP precision,
+    # different hardware). Hard-fail with a clear message instead.
+    if not settings.embedder_url:
+        raise SystemExit(
+            "eval_search --direct requires settings.embedder_url to be set. "
+            "Without it, this command would download Qwen-4B 4B locally. "
+            "Set EMBEDDER_URL + EMBEDDER_TOKEN in rag/.env, or export them "
+            "in the current shell before re-running."
+        )
+    pool = await asyncpg.create_pool(
+        settings.database_url,
+        min_size=1,
+        max_size=4,
+        init=_init_connection,
+    )
+    try:
+        embedder = await asyncio.to_thread(Embedder.from_settings, settings)
+        try:
+            results: list[QueryResult] = []
+            # Sequential, not asyncio.gather: per-query latencies in query_log
+            # stay uncontaminated by self-contention, and we don't risk
+            # overwhelming the single-replica embedder sidecar with 79 parallel
+            # embed calls while live users are also hitting it.
+            for entry in ground_truth:
+                q: str = entry["q"]
+                expected: str = entry["expected_title_contains"]
+                req = SearchRequest(
+                    query=q,
+                    user_name=user_name,
+                    team_name=team_name,
+                    area_name=area_name,
+                    limit=k,
+                    debug=debug,
+                )
+                rows = await perform_search(
+                    req=req, settings=settings, pool=pool, embedder=embedder
+                )
+                titles = [r["source_title"] for r in rows]
+                scores = [float(r["similarity"]) for r in rows]
+                dense_ranks = [r["dense_rank"] for r in rows] if debug else []
+                sparse_ranks = [r["sparse_rank"] for r in rows] if debug else []
+                results.append(
+                    QueryResult(
+                        query=q,
+                        expected_substring=expected,
+                        returned_titles=titles,
+                        returned_scores=scores,
+                        match_rank=score_query(titles, expected),
+                        returned_dense_ranks=dense_ranks,
+                        returned_sparse_ranks=sparse_ranks,
+                    )
+                )
+            return results
+        finally:
+            if hasattr(embedder, "aclose"):
+                await embedder.aclose()
+    finally:
+        await pool.close()
+
+
 def format_report(results: list[QueryResult], summary: dict[str, float | int], k: int) -> str:
     """Per-query detail + summary. Human-readable stdout."""
     lines: list[str] = []
@@ -130,11 +220,21 @@ def format_report(results: list[QueryResult], summary: dict[str, float | int], k
         lines.append(f"  Expected: contains {r.expected_substring!r}")
         if r.returned_titles:
             lines.append(f"  Top {len(r.returned_titles)}:")
+            has_debug = bool(r.returned_dense_ranks) and bool(r.returned_sparse_ranks)
             for i, (title, score) in enumerate(
                 zip(r.returned_titles, r.returned_scores, strict=False), start=1
             ):
                 marker = "  <-- MATCH" if r.match_rank == i else ""
-                lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
+                if has_debug:
+                    dense_rank = r.returned_dense_ranks[i - 1]
+                    sparse_rank = r.returned_sparse_ranks[i - 1]
+                    dense_marker = f"d#{dense_rank}" if dense_rank is not None else "d#-"
+                    sparse_marker = f"s#{sparse_rank}" if sparse_rank is not None else "s#-"
+                    lines.append(
+                        f"    {i}. [{score:.4f}] ({dense_marker} {sparse_marker}) {title}{marker}"
+                    )
+                else:
+                    lines.append(f"    {i}. [{score:.2f}] {title}{marker}")
         else:
             lines.append("  Top: (no results)")
         if r.match_rank is not None and r.match_rank <= k:
@@ -182,14 +282,35 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument(
-        "--api-url", required=True, help="Base URL of the search API (no trailing slash)"
+    src_group = parser.add_mutually_exclusive_group(required=True)
+    src_group.add_argument(
+        "--api-url",
+        help="Base URL of the search API (no trailing slash). Mutually exclusive with --direct.",
+    )
+    src_group.add_argument(
+        "--direct",
+        action="store_true",
+        help=(
+            "Bypass the HTTP API and call docforge.api.perform_search directly "
+            "against the configured Postgres + Embedder. Reads connection info "
+            "from the local docforge.yml / .env. Mutually exclusive with --api-url."
+        ),
     )
     parser.add_argument("--ground-truth", required=True, type=Path, help="Path to ground_truth.yml")
     parser.add_argument("--user", required=True, help="Your identity — forwarded as user_name")
     parser.add_argument("--team", required=True, help="Your team tag — forwarded as team_name")
     parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "Request debug fields (dense_rank, sparse_rank, rrf_score) on each "
+            "result and dump them per query. Direct mode passes debug=true to "
+            "perform_search; HTTP mode is unaffected (debug data not exposed "
+            "via run_queries)."
+        ),
+    )
     parser.add_argument(
         "--audience",
         default=None,
@@ -206,17 +327,29 @@ def main() -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    results = asyncio.run(
-        run_queries(
-            api_url=args.api_url.rstrip("/"),
-            ground_truth=ground_truth,
-            user_name=args.user,
-            team_name=args.team,
-            area_name=args.area,
-            k=args.k,
-            audience=args.audience,
+    if args.direct:
+        results = asyncio.run(
+            run_queries_direct(
+                ground_truth=ground_truth,
+                user_name=args.user,
+                team_name=args.team,
+                area_name=args.area,
+                k=args.k,
+                debug=args.debug,
+            )
         )
-    )
+    else:
+        results = asyncio.run(
+            run_queries(
+                api_url=args.api_url.rstrip("/"),
+                ground_truth=ground_truth,
+                user_name=args.user,
+                team_name=args.team,
+                area_name=args.area,
+                k=args.k,
+                audience=args.audience,
+            )
+        )
     summary = summarize(results, args.k)
     print(format_report(results, summary, args.k))
     return 0

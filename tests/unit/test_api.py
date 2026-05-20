@@ -386,8 +386,9 @@ def test_search_request_accepts_full_body_for_backwards_compat():
 class TestSearchPhaseLogging:
     @pytest.mark.asyncio
     async def test_search_logs_phase_latencies(self, caplog):
-        """Every /search call emits a 'search_phases' log line with
-        t_embed_ms, t_db_ms, t_total_ms — needed for production p95 diagnosis."""
+        """Each /search call emits exactly one 'search_phases' log line with
+        embed and db timings; t_total_ms is persisted to query_log.request_ms
+        (NOT logged as a separate line — it's a DB metric, not an ops metric)."""
         import logging
 
         caplog.set_level(logging.INFO, logger="docforge.api")
@@ -419,10 +420,40 @@ class TestSearchPhaseLogging:
 
             messages = [r.getMessage() for r in caplog.records]
             phase_lines = [m for m in messages if "search_phases" in m]
-            assert phase_lines, f"expected a 'search_phases' log line; got messages: {messages}"
+            assert len(phase_lines) == 1, (
+                f"expected exactly 1 'search_phases' line, got {len(phase_lines)}: {phase_lines}"
+            )
             line = phase_lines[0]
-            for key in ("t_embed_ms=", "t_db_ms=", "t_total_ms="):
-                assert key in line, f"missing {key} in: {line}"
+            assert "t_embed_ms=" in line, f"missing t_embed_ms in phase line: {line}"
+            assert "t_db_ms=" in line, f"missing t_db_ms in phase line: {line}"
+            assert "t_total_ms=" not in line, (
+                "t_total_ms should be persisted to query_log.request_ms, "
+                f"not logged as a separate field: {line}"
+            )
+
+            # t_total_ms is persisted to query_log via log_query's request_ms.
+            # query_log.INSERT positional args (from query_log.py):
+            #   $1=user_name, $2=team_name, $3=area_name, $4=query,
+            #   $5=result_count, $6=user_oid, $7=request_ms
+            # So request_ms is the LAST positional arg (args[6]).
+            query_log_inserts = [
+                (q, args) for q, args in pool.executes if "INSERT INTO query_log" in q
+            ]
+            assert len(query_log_inserts) == 1, (
+                f"expected exactly 1 query_log INSERT, got {len(query_log_inserts)}"
+            )
+            args = query_log_inserts[0][1]
+            # Pin the INSERT parameter count so a future query_log refactor that
+            # appends a new positional arg fails loudly here instead of silently
+            # picking up the wrong column from args[-1].
+            assert len(args) == 7, (
+                f"query_log INSERT param count changed (expected 7, got {len(args)}); "
+                f"re-verify request_ms position before updating this test"
+            )
+            request_ms_value = args[-1]
+            assert isinstance(request_ms_value, int) and request_ms_value >= 0, (
+                f"expected request_ms to be a non-negative int, got {request_ms_value!r}"
+            )
         finally:
             app.dependency_overrides.clear()
 
@@ -477,3 +508,98 @@ class TestLifespanLoggingConfig:
         assert final_level == logging.INFO, (
             f"lifespan must reconfigure root logger to INFO; got {final_level}"
         )
+
+
+class TestSearchDebugMode:
+    @pytest.mark.asyncio
+    async def test_debug_false_default_omits_debug_fields(self):
+        """When debug is not requested, response has no debug block on the
+        envelope and no debug field on each result. Backward compatible."""
+        from tests.conftest import FakeEmbedder
+
+        rows = [
+            {
+                "text": "Platform owns orgs.",
+                "section_title": "Platform",
+                "source_title": "Doc A",
+                "source_url": "https://wiki/a",
+                "source_tags": ["platform"],
+                "similarity": 0.95,
+                "dense_rank": 1,
+                "sparse_rank": 2,
+            }
+        ]
+        pool = CapturingPool(rows)
+
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = fake_settings
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={"query": "q", "user_name": "u", "team_name": "t", "limit": 5},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Pydantic v2 includes None fields in serialization by default;
+        # assert the values are None (not that keys are absent) so the
+        # public API surface remains backward-compatible for clients that
+        # ignore unknown null fields.
+        assert body.get("debug") is None
+        assert body["results"][0].get("debug") is None
+
+    @pytest.mark.asyncio
+    async def test_debug_true_includes_per_result_and_envelope_debug(self):
+        """With debug=true, each result has dense_rank/sparse_rank/rrf_score
+        and the envelope has weights + k."""
+        from tests.conftest import FakeEmbedder
+
+        rows = [
+            {
+                "text": "Platform owns orgs.",
+                "section_title": "Platform",
+                "source_title": "Doc A",
+                "source_url": "https://wiki/a",
+                "source_tags": ["platform"],
+                "similarity": 0.038,
+                "dense_rank": 4,
+                "sparse_rank": 1,
+            }
+        ]
+        pool = CapturingPool(rows)
+
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: pool
+        app.dependency_overrides[get_settings] = fake_settings
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={
+                        "query": "q",
+                        "user_name": "u",
+                        "team_name": "t",
+                        "limit": 5,
+                        "debug": True,
+                    },
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Per-result debug — assert non-null and check nested fields
+        r0 = body["results"][0]
+        assert r0["debug"] is not None
+        assert r0["debug"]["dense_rank"] == 4
+        assert r0["debug"]["sparse_rank"] == 1
+        assert r0["debug"]["rrf_score"] == pytest.approx(0.038)
+        # Envelope debug — assert non-null and check nested fields
+        assert body["debug"] is not None
+        assert body["debug"]["weights"]["dense"] == fake_settings().dense_weight
+        assert body["debug"]["weights"]["sparse"] == fake_settings().sparse_weight
+        assert body["debug"]["k"] == 5
