@@ -9,6 +9,7 @@ client whose transport is our mock.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -173,9 +174,6 @@ async def test_retries_on_timeout(mock_confluence, monkeypatch):
     page = await crawl_page("1", base_url="https://x", email="a", api_token="t")
     assert page.title == "OK"
     assert call_count["n"] == 2
-
-
-from datetime import datetime, timedelta, timezone
 
 
 @pytest.mark.asyncio
