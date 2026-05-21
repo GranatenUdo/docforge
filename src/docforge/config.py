@@ -95,6 +95,19 @@ class Settings(BaseSettings):
     dense_weight: float = 1.0
     sparse_weight: float = 1.0
 
+    # Sources-hygiene rules — see 2026-05-20-sources-hygiene-design.md.
+    # legacy_path_substring: when not None, files whose path (case-insensitive)
+    # contains this substring get a "[LEGACY] " title prefix. Used to deprioritize
+    # legacy-service docs (e.g. CIS.BackgroundProcessService/_legacy-components-descriptions/)
+    # without removing them from the index.
+    legacy_path_substring: str | None = "legacy"
+
+    # stale_threshold_months: when not None, Confluence pages whose
+    # version.createdAt is older than this many months get a "[STALE YYYY] "
+    # title prefix. Mostly forward-looking — at the default 36mo threshold
+    # the 2026-05-20 corpus has few pages crossing the line.
+    stale_threshold_months: int | None = 36
+
     # Default identity (used as CLI flag defaults when set via env/yml)
     default_user_name: str = ""
     default_team_name: str = ""

@@ -26,6 +26,8 @@ class CrawledFile:
 def crawl_repo(
     repo_path: str,
     include_patterns: list[str] | None = None,
+    *,
+    legacy_path_substring: str | None = "legacy",
 ) -> list[CrawledFile]:
     """Read documentation files from a local git repository.
 
@@ -33,6 +35,9 @@ def crawl_repo(
         repo_path: Absolute path to the repo root (e.g., "E:/MyRepo").
         include_patterns: Glob patterns for files to include.
                           Defaults to ["README.md", "CLAUDE.md", "docs/**/*.md"].
+        legacy_path_substring: When not None/empty, files whose path (case-insensitive)
+                               contains this substring get a "[LEGACY] " title prefix.
+                               Defaults to "legacy". Set to None to disable.
     """
     if include_patterns is None:
         include_patterns = ["README.md", "CLAUDE.md", "docs/**/*.md"]
@@ -41,6 +46,8 @@ def crawl_repo(
     if not root.is_dir():
         logger.warning("Repo path does not exist: %s", repo_path)
         return []
+
+    legacy_needle = (legacy_path_substring or "").lower() or None
 
     results: list[CrawledFile] = []
     seen: set[Path] = set()
@@ -63,12 +70,17 @@ def crawl_repo(
                 continue
 
             relative = file_path.relative_to(root)
+            relative_posix = relative.as_posix()
             content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+            title = relative_posix
+            if legacy_needle is not None and legacy_needle in relative_posix.lower():
+                title = f"[LEGACY] {title}"
 
             results.append(
                 CrawledFile(
-                    file_path=str(relative),
-                    title=str(relative),
+                    file_path=relative_posix,
+                    title=title,
                     content=content,
                     content_hash=content_hash,
                     repo_path=str(root),

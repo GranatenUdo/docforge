@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-21
+
+### Added
+
+- **`legacy_path_substring` setting (default `"legacy"`).** Files whose path (case-insensitive) contains this substring get a `[LEGACY] ` title prefix during git ingest. Signals to downstream consumers — both AI assistants and FTS tokenizers — that the content describes a deprecated component. Set to `None` to disable. Implemented in `crawlers/git.py`. **NB: when this lands, all existing git titles change shape (POSIX paths, optional prefix). Deployments upgrading from <0.7.6 must truncate `sources` + `chunks` and re-ingest, OR run `docforge ingest --purge-orphans --confirm` to clean orphaned rows from the previous Windows-style identifiers.**
+- **`stale_threshold_months` setting (default `36`).** Confluence pages whose `version.createdAt` is older than this many months get a `[STALE YYYY] ` title prefix. Mostly forward-looking — at the default threshold a 2026 corpus has very few pages crossing the line. Set to `None` to disable. Implemented in `crawlers/confluence.py` via a pure `_apply_stale_prefix` helper applied inside `crawl_page` itself (kwarg-driven, mirroring `crawl_repo`'s `legacy_path_substring`).
+- **`CrawledPage.last_modified: datetime` field.** Extracted from Confluence v2 API `version.createdAt`. Missing/unparseable values fall back to `datetime.now(timezone.utc)` with a debug/warning log line (page treated as fresh, prefix not applied).
+
+### Changed
+
+- **Git crawler titles are POSIX-normalized.** Previously, on Windows ingest, titles contained mixed `/` (repo boundary) and `\` (in-repo path) separators — a Windows-ingest artifact that also degraded Postgres FTS tokenization. The `relative.as_posix()` fix means titles like `cloud-proxy/docs/aot-benchmarks.md` everywhere, regardless of ingest host OS. **This is a breaking change for `_git_source_identifier` shape on Windows-ingested deployments — see the migration note in the `legacy_path_substring` bullet above.**
+- **`_ingest_git_source` signature gained `settings: Settings` as a 2nd positional argument** (mirroring `_ingest_confluence_source`). Internal-only; the only caller (`ingest_all`) was updated.
+- **`lint.py` no longer double-normalizes paths.** Dropped two `.replace("\\", "/")` calls that became no-ops after the crawler's POSIX guarantee.
+
 ## [0.7.5] - 2026-05-19
 
 ### Added

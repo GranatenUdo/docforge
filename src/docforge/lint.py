@@ -56,10 +56,10 @@ _COMPILED_BANNED_RULES = [(name, re.compile(pat), msg) for name, pat, msg in BAN
 def lint_repo(repo_root: Path) -> LintReport:
     """Walk the repo's doc surface and scan for banned-content patterns. Read-only."""
     files = crawl_repo(str(repo_root))
-    scanned = [f.file_path.replace("\\", "/") for f in files]
+    scanned = [f.file_path for f in files]
     findings: list[LintFinding] = []
     for f in files:
-        rel = f.file_path.replace("\\", "/")
+        rel = f.file_path
         for lineno, line in enumerate(f.content.splitlines(), start=1):
             for rule_name, pattern, message in _COMPILED_BANNED_RULES:
                 if pattern.search(line):
