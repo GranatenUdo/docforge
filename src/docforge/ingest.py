@@ -119,6 +119,7 @@ async def _ingest_confluence_source(
         base_url=settings.confluence_base_url,
         email=settings.confluence_email,
         api_token=settings.confluence_api_token.get_secret_value(),
+        stale_threshold_months=settings.stale_threshold_months,
     )
 
     existing_hash = await _get_existing_hash(pool, source.page_id)

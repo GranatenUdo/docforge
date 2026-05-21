@@ -173,3 +173,121 @@ async def test_retries_on_timeout(mock_confluence, monkeypatch):
     page = await crawl_page("1", base_url="https://x", email="a", api_token="t")
     assert page.title == "OK"
     assert call_count["n"] == 2
+
+
+from datetime import datetime, timedelta, timezone
+
+
+@pytest.mark.asyncio
+async def test_last_modified_parsed_from_version_created_at(mock_confluence):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "title": "Stale Page",
+                "version": {"number": 3, "createdAt": "2022-01-15T10:30:00Z"},
+                "spaceId": "ORG",
+                "body": {"storage": {"value": "<p>old</p>"}},
+            },
+        )
+
+    mock_confluence(handler)
+
+    page = await crawl_page("1", base_url="https://x", email="a", api_token="t")
+
+    assert page.last_modified == datetime(2022, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_missing_version_created_at_defaults_to_now(mock_confluence):
+    """If the API response omits version.createdAt, treat the page as fresh (now)
+    so the [STALE] rule never fires for it."""
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "title": "Versionless",
+                "version": {"number": 1},
+                "spaceId": "ORG",
+                "body": {"storage": {"value": "<p>ok</p>"}},
+            },
+        )
+
+    mock_confluence(handler)
+
+    before = datetime.now(timezone.utc)
+    page = await crawl_page("1", base_url="https://x", email="a", api_token="t")
+    after = datetime.now(timezone.utc)
+
+    # last_modified falls in [before, after] since the fallback used now()
+    assert before <= page.last_modified <= after
+
+
+@pytest.mark.asyncio
+async def test_stale_prefix_applied_when_old(mock_confluence):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "title": "Departments in Product Development",
+                "version": {"number": 3, "createdAt": "2022-01-15T10:30:00Z"},
+                "spaceId": "ORG",
+                "body": {"storage": {"value": "<p>old</p>"}},
+            },
+        )
+
+    mock_confluence(handler)
+    page = await crawl_page(
+        "1", base_url="https://x", email="a", api_token="t",
+        stale_threshold_months=36,
+    )
+    assert page.title == "[STALE 2022] Departments in Product Development"
+
+
+@pytest.mark.asyncio
+async def test_stale_prefix_not_applied_when_fresh(mock_confluence):
+    fresh_iso = (
+        (datetime.now(timezone.utc) - timedelta(days=30))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "title": "Fresh Page",
+                "version": {"number": 1, "createdAt": fresh_iso},
+                "spaceId": "ORG",
+                "body": {"storage": {"value": "<p>new</p>"}},
+            },
+        )
+
+    mock_confluence(handler)
+    page = await crawl_page(
+        "1", base_url="https://x", email="a", api_token="t",
+        stale_threshold_months=36,
+    )
+    assert not page.title.startswith("[STALE")
+    assert page.title == "Fresh Page"
+
+
+@pytest.mark.asyncio
+async def test_stale_prefix_disabled_via_none(mock_confluence):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "title": "Ancient Page",
+                "version": {"number": 1, "createdAt": "1999-01-01T00:00:00Z"},
+                "spaceId": "ORG",
+                "body": {"storage": {"value": "<p>old</p>"}},
+            },
+        )
+
+    mock_confluence(handler)
+    page = await crawl_page(
+        "1", base_url="https://x", email="a", api_token="t",
+        stale_threshold_months=None,
+    )
+    assert page.title == "Ancient Page"

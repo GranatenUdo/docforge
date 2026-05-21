@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
@@ -24,6 +25,25 @@ class CrawledPage:
     content_hash: str
     version: int
     url: str
+    last_modified: datetime  # version.createdAt from the v2 API; falls back to now() if missing
+
+
+def _apply_stale_prefix(
+    title: str,
+    last_modified: datetime,
+    threshold_months: int | None,
+) -> str:
+    """Return title with '[STALE YYYY] ' prefix if last_modified is older than
+    threshold_months. Pure function. ~30 days/month is fine for staleness."""
+    if threshold_months is None:
+        return title
+    now = datetime.now(timezone.utc)
+    if last_modified.tzinfo is None:
+        last_modified = last_modified.replace(tzinfo=timezone.utc)
+    threshold_days = threshold_months * 30
+    if (now - last_modified).days > threshold_days:
+        return f"[STALE {last_modified.year}] {title}"
+    return title
 
 
 async def crawl_page(
@@ -32,8 +52,14 @@ async def crawl_page(
     base_url: str,
     email: str,
     api_token: str,
+    stale_threshold_months: int | None = 36,
 ) -> CrawledPage:
-    """Fetch a Confluence page via REST API v2 and return its content."""
+    """Fetch a Confluence page via REST API v2 and return its content.
+
+    When `stale_threshold_months` is not None and the page's version.createdAt
+    is older than that many months, the returned title is prefixed with
+    `[STALE YYYY] `. Pass `None` to disable the prefix.
+    """
     api_url = f"{base_url}/wiki/api/v2/pages/{page_id}"
     params = {"body-format": "storage"}
     auth = httpx.BasicAuth(email, api_token)
@@ -44,8 +70,32 @@ async def crawl_page(
     data = response.json()
     html_content = data.get("body", {}).get("storage", {}).get("value", "")
     title = data.get("title", "")
-    version = data.get("version", {}).get("number", 0)
+    version_block = data.get("version", {})
+    version = version_block.get("number", 0)
     space_id = data.get("spaceId", "")
+
+    # Confluence v2 API returns ISO 8601 (e.g. "2024-03-15T10:30:00.000Z"). Python 3.12+
+    # datetime.fromisoformat accepts the Z suffix directly.
+    last_modified_raw = version_block.get("createdAt")
+    if last_modified_raw:
+        try:
+            last_modified = datetime.fromisoformat(last_modified_raw)
+            if last_modified.tzinfo is None:
+                last_modified = last_modified.replace(tzinfo=timezone.utc)
+        except ValueError as e:
+            logger.warning(
+                "Could not parse version.createdAt=%r for page %s: %s; treating as now()",
+                last_modified_raw, page_id, e,
+            )
+            last_modified = datetime.now(timezone.utc)
+    else:
+        logger.debug(
+            "Confluence page %s response missing version.createdAt; treating as now()",
+            page_id,
+        )
+        last_modified = datetime.now(timezone.utc)
+
+    title = _apply_stale_prefix(title, last_modified, stale_threshold_months)
 
     content_hash = hashlib.sha256(html_content.encode()).hexdigest()
     page_url = f"{base_url}/wiki/spaces/{space_id}/pages/{page_id}"
@@ -58,6 +108,7 @@ async def crawl_page(
         content_hash=content_hash,
         version=version,
         url=page_url,
+        last_modified=last_modified,
     )
 
 
