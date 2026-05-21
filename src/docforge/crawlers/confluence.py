@@ -85,7 +85,9 @@ async def crawl_page(
         except ValueError as e:
             logger.warning(
                 "Could not parse version.createdAt=%r for page %s: %s; treating as now()",
-                last_modified_raw, page_id, e,
+                last_modified_raw,
+                page_id,
+                e,
             )
             last_modified = datetime.now(timezone.utc)
     else:

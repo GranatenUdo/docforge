@@ -200,6 +200,7 @@ async def test_last_modified_parsed_from_version_created_at(mock_confluence):
 async def test_missing_version_created_at_defaults_to_now(mock_confluence):
     """If the API response omits version.createdAt, treat the page as fresh (now)
     so the [STALE] rule never fires for it."""
+
     def handler(request):
         return httpx.Response(
             200,
@@ -236,7 +237,10 @@ async def test_stale_prefix_applied_when_old(mock_confluence):
 
     mock_confluence(handler)
     page = await crawl_page(
-        "1", base_url="https://x", email="a", api_token="t",
+        "1",
+        base_url="https://x",
+        email="a",
+        api_token="t",
         stale_threshold_months=36,
     )
     assert page.title == "[STALE 2022] Departments in Product Development"
@@ -244,11 +248,7 @@ async def test_stale_prefix_applied_when_old(mock_confluence):
 
 @pytest.mark.asyncio
 async def test_stale_prefix_not_applied_when_fresh(mock_confluence):
-    fresh_iso = (
-        (datetime.now(timezone.utc) - timedelta(days=30))
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    fresh_iso = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
 
     def handler(request):
         return httpx.Response(
@@ -263,7 +263,10 @@ async def test_stale_prefix_not_applied_when_fresh(mock_confluence):
 
     mock_confluence(handler)
     page = await crawl_page(
-        "1", base_url="https://x", email="a", api_token="t",
+        "1",
+        base_url="https://x",
+        email="a",
+        api_token="t",
         stale_threshold_months=36,
     )
     assert not page.title.startswith("[STALE")
@@ -285,7 +288,10 @@ async def test_stale_prefix_disabled_via_none(mock_confluence):
 
     mock_confluence(handler)
     page = await crawl_page(
-        "1", base_url="https://x", email="a", api_token="t",
+        "1",
+        base_url="https://x",
+        email="a",
+        api_token="t",
         stale_threshold_months=None,
     )
     assert page.title == "Ancient Page"
