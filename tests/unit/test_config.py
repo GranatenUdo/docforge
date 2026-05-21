@@ -292,3 +292,34 @@ def test_embedder_defaults_match_qwen_migration():
     s = Settings()
     assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
     assert s.embedding_dimensions == 1024
+
+
+def test_sources_hygiene_defaults():
+    """Defaults match the 2026-05-20 sources-hygiene spec."""
+    from docforge.config import Settings
+
+    s = Settings()
+    assert s.legacy_path_substring == "legacy"
+    assert s.stale_threshold_months == 36
+
+
+def test_sources_hygiene_overrides_via_env(monkeypatch):
+    """Both fields are pydantic-settings-overridable."""
+    from docforge.config import Settings
+
+    monkeypatch.setenv("LEGACY_PATH_SUBSTRING", "deprecated")
+    monkeypatch.setenv("STALE_THRESHOLD_MONTHS", "12")
+    s = Settings()
+    assert s.legacy_path_substring == "deprecated"
+    assert s.stale_threshold_months == 12
+
+
+def test_sources_hygiene_disabled_via_none():
+    """Setting to None disables the rule. Empty-string env-var behavior is
+    handled by the consumer (see test_disabled_via_empty_string_kwarg in
+    test_git_crawler.py)."""
+    from docforge.config import Settings
+
+    s = Settings(legacy_path_substring=None, stale_threshold_months=None)
+    assert s.legacy_path_substring is None
+    assert s.stale_threshold_months is None
