@@ -71,7 +71,9 @@ async def ingest_all(
                 await _ingest_confluence_source(source, settings, pool, embedder, tokenizer_fn)
                 current_identifiers.add(source.page_id)
             elif isinstance(source, GitRepoSourceConfig):
-                git_identifiers = await _ingest_git_source(source, pool, embedder, tokenizer_fn)
+                git_identifiers = await _ingest_git_source(
+                    source, settings, pool, embedder, tokenizer_fn
+                )
                 current_identifiers.update(git_identifiers)
             succeeded += 1
         except Exception:
@@ -189,6 +191,7 @@ async def _ingest_confluence_source(
 
 async def _ingest_git_source(
     source: GitRepoSourceConfig,
+    settings: Settings,
     pool: asyncpg.Pool,
     embedder: Embedder,
     tokenizer_fn: Callable[[str], int],
@@ -210,7 +213,11 @@ async def _ingest_git_source(
     if not Path(source.repo_path).is_dir():
         raise FileNotFoundError(f"Configured git repo path does not exist: {source.repo_path}")
 
-    files = crawl_repo(source.repo_path, source.include_patterns)
+    files = crawl_repo(
+        source.repo_path,
+        source.include_patterns,
+        legacy_path_substring=settings.legacy_path_substring,
+    )
     identifiers = [_git_source_identifier(source.repo_path, f.file_path) for f in files]
 
     for file in files:
