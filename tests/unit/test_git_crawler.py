@@ -23,8 +23,8 @@ class TestCrawlRepo:
 
         assert len(results) == 2
         titles = {r.title for r in results}
-        assert "docs\\arch.md" in titles or "docs/arch.md" in titles
-        assert "docs\\deploy.md" in titles or "docs/deploy.md" in titles
+        assert "docs/arch.md" in titles
+        assert "docs/deploy.md" in titles
 
     def test_skips_missing_files(self, tmp_path):
         results = crawl_repo(str(tmp_path), include_patterns=["README.md"])
