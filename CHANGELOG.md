@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-22
+
+### Fixed
+
+- **`chunks.title` now carries Rule 4's `[STALE YYYY] ` prefix on Confluence ingest.** In v0.7.6 the prefix was applied to `sources.title` (via `crawl_page` returning a prefixed `CrawledPage.title`) but the chunk-level INSERT in `_ingest_confluence_source` was still passing `source.title` — the unprefixed YAML config name — so the prefix never reached `chunks.title`, the column the search API surfaces. Surgical one-line fix at the chunks INSERT site (`source.title` → `page.title`). Git ingest (`_ingest_git_source`) was unaffected — it already passes `file.title` which correctly carries Rule 3's `[LEGACY]` prefix.
+
+### Notes for operators
+
+- **Re-ingest required to backfill.** Prod data created with v0.7.6 has `sources.title = "[STALE YYYY] …"` but `chunks.title = "…"` (no prefix). After upgrading to v0.7.7, re-run `docforge ingest` for any sources that were marked stale to backfill the prefix into chunks (the content_hash short-circuit will skip pages whose Confluence body hasn't changed — bump the threshold or force a re-ingest if you need every previously-stale source to refresh).
+
 ## [0.7.6] - 2026-05-21
 
 ### Added
