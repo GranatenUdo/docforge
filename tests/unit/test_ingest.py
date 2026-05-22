@@ -118,6 +118,74 @@ async def test_ingest_all_with_empty_sources_list(tmp_path, monkeypatch, fake_em
 
 
 @pytest.mark.asyncio
+async def test_ingest_confluence_propagates_stale_prefix_to_chunks(
+    tmp_path, monkeypatch, fake_embedder
+):
+    """Regression: Rule 4's `[STALE YYYY]` prefix lives on the CrawledPage's
+    title (set inside crawl_page when version.createdAt crosses the threshold).
+    The chunks INSERT must use page.title, not source.title (the unprefixed
+    YAML config name), so the prefix lands in chunks.title — the column the
+    search API returns.
+
+    See v0.7.7 CHANGELOG: in v0.7.6, sources.title got the prefix but
+    chunks.title did not, breaking downstream surfacing of staleness.
+    """
+    from datetime import datetime, timezone
+
+    from docforge.crawlers.confluence import CrawledPage
+
+    sources_file = tmp_path / "sources.yml"
+    # YAML title is unprefixed — only crawl_page adds [STALE …]
+    sources_file.write_text(
+        "sources:\n"
+        "  - type: confluence_page\n"
+        '    page_id: "12345"\n'
+        '    space_key: "ENG"\n'
+        '    title: "Diagnostic Data Adapter"\n'
+        "    tags: [platform]\n"
+    )
+
+    prefixed_title = "[STALE 2020] Diagnostic Data Adapter"
+
+    async def fake_crawl_page(page_id, **kwargs):
+        return CrawledPage(
+            page_id=page_id,
+            title=prefixed_title,
+            space_key="ENG",
+            html_content="<h1>X</h1><p>some body text.</p>",
+            content_hash="hash-abc",
+            version=1,
+            url="https://example.atlassian.net/wiki/spaces/ENG/pages/12345",
+            last_modified=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+
+    monkeypatch.setattr(ingest_mod, "crawl_page", fake_crawl_page)
+
+    conn = _Conn(existing_hash=None)
+
+    async def fake_get_pool(url, **kwargs):
+        return _FakePool(conn)
+
+    monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
+
+    from docforge.config import Settings
+
+    settings = Settings(sources_file=str(sources_file))
+
+    await ingest_all(settings)
+
+    assert conn.inserted_chunks, "expected at least one chunks INSERT"
+    # Chunk INSERT positional args: (source_id, chunk_index, text, embedding,
+    # section_title, title). Title is the LAST positional arg.
+    for chunk_args in conn.inserted_chunks:
+        assert chunk_args[-1] == prefixed_title, (
+            f"chunks.title arg was {chunk_args[-1]!r}; expected the prefixed "
+            f"page.title {prefixed_title!r}, not the unprefixed YAML "
+            f"source.title."
+        )
+
+
+@pytest.mark.asyncio
 async def test_ingest_git_source_inserts_chunks(tmp_path, monkeypatch, fake_embedder):
     repo = tmp_path / "repo"
     repo.mkdir()

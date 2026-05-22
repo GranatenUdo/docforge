@@ -184,7 +184,7 @@ async def _ingest_confluence_source(
                     chunk.text,
                     np.array(embedding, dtype=np.float32),
                     chunk.section_title,
-                    source.title,
+                    page.title,
                 )
 
     logger.info("Stored %d chunks for: %s", len(chunks), source.title)
