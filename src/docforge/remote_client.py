@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Protocol
 
@@ -76,9 +79,34 @@ class AzureAuth:
         # is well past the cold-network worst case (~3s for CLI cache load)
         # but short enough that the user sees a clear error instead of
         # an apparently-hung MCP session.
-        token = await asyncio.wait_for(
-            self._credential.get_token(f"{self._audience}/.default"),
-            timeout=15.0,
+        t0 = time.perf_counter()
+        print("docforge mcp: auth requesting token", file=sys.stderr, flush=True)
+        try:
+            token = await asyncio.wait_for(
+                self._credential.get_token(f"{self._audience}/.default"),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            print(
+                f"docforge mcp: auth TIMEOUT after {elapsed_ms}ms",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
+        except Exception as e:
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            print(
+                f"docforge mcp: auth FAILED after {elapsed_ms}ms: {type(e).__name__}",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        print(
+            f"docforge mcp: auth token acquired in {elapsed_ms}ms",
+            file=sys.stderr,
+            flush=True,
         )
         return {"Authorization": f"Bearer {token.token}"}
 
@@ -173,20 +201,51 @@ class RemoteBackend:
         client = await self._ensure_client()
 
         async def _attempt() -> httpx.Response | str:
+            t0 = time.perf_counter()
+            print(
+                f"docforge mcp: request {method} {path} start",
+                file=sys.stderr,
+                flush=True,
+            )
             try:
                 resp = await client.request(
                     method, f"{self._url}{path}", json=json, headers=headers
                 )
             except httpx.ConnectError:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                print(
+                    f"docforge mcp: request {method} {path} CONNECT_ERROR after {elapsed_ms}ms",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return f"Could not reach remote API at {self._url}."
             except httpx.ReadTimeout:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                print(
+                    f"docforge mcp: request {method} {path} READ_TIMEOUT after {elapsed_ms}ms",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return (
                     f"DocForge /search timed out after {int(_READ_TIMEOUT_S)}s "
                     f"(Container App may be cold-starting; retry in 30s)."
                 )
             except httpx.HTTPError as e:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                print(
+                    f"docforge mcp: request {method} {path} HTTP_ERROR after "
+                    f"{elapsed_ms}ms: {type(e).__name__}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return f"Remote API error: {e}"
 
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            print(
+                f"docforge mcp: request {method} {path} -> {resp.status_code} in {elapsed_ms}ms",
+                file=sys.stderr,
+                flush=True,
+            )
             if resp.status_code == 401:
                 return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
             if 500 <= resp.status_code < 600:
@@ -249,6 +308,58 @@ INSTRUCTIONS = (
 )
 
 
+# Hard outer bound on a single MCP tool call, in seconds. Sized to comfortably
+# cover the worst inner budget — Azure token mint (15s) + first httpx read
+# (30s) + retry backoff (2s) + second httpx read (30s) ≈ 77s but in practice
+# only one of token / read can hit its full budget. 60s leaves headroom for
+# scheduler slop while still guaranteeing the caller gets a clear error well
+# inside any client-side MCP timeout. If any inner coro fails to honor
+# cancellation (Azure SDK token refresh, FastMCP stdio, httpx pool), this
+# outer asyncio.timeout still fires and returns a diagnostic string.
+_TOOL_TIMEOUT_S = 60.0
+
+
+async def _run_tool_with_timeout(name: str, coro_fn: Callable[[], Awaitable[str]]) -> str:
+    """Wrap an MCP tool body in a hard outer timeout + stderr breadcrumbs.
+
+    `coro_fn` is a no-arg callable that returns a fresh coroutine each call.
+    We deliberately accept a factory (not an already-awaited coroutine) so
+    `asyncio.timeout()` can cancel a freshly-started task — passing an
+    already-created coroutine would mean we couldn't restart it on retry
+    and could leak references on cancellation.
+
+    On timeout the inner task is cancelled and we return a clear diagnostic
+    string instead of raising, since FastMCP tool handlers are expected to
+    return strings.
+    """
+    t0 = time.perf_counter()
+    print(f"docforge mcp: tool={name} start", file=sys.stderr, flush=True)
+    try:
+        async with asyncio.timeout(_TOOL_TIMEOUT_S):
+            result = await coro_fn()
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        print(
+            f"docforge mcp: tool={name} done in {elapsed_ms}ms",
+            file=sys.stderr,
+            flush=True,
+        )
+        return result
+    except asyncio.TimeoutError:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        print(
+            f"docforge mcp: tool={name} HIT SAFETY-NET TIMEOUT after {elapsed_ms}ms",
+            file=sys.stderr,
+            flush=True,
+        )
+        return (
+            f"docforge tool '{name}' hit the {int(_TOOL_TIMEOUT_S)}s safety-net timeout. "
+            "An inner call hung without honoring cancellation. "
+            "Check the MCP server stderr logs for the LAST PHASE REACHED. "
+            "Common causes: Azure auth credential cache corruption, "
+            "Container App cold start during 5xx retry, FastMCP stdio deadlock."
+        )
+
+
 def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> None:
     """Run an MCP server proxying tool calls to a remote docforge search-api."""
     auth = make_auth_provider(auth_name)
@@ -258,11 +369,17 @@ def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> No
     @mcp.tool()
     async def search_documentation(query: str, limit: int = 5) -> str:
         """Search across indexed documentation from Confluence pages and git repos."""
-        return await backend.search(query=query, limit=limit)
+        return await _run_tool_with_timeout(
+            "search_documentation",
+            lambda: backend.search(query=query, limit=limit),
+        )
 
     @mcp.tool()
     async def list_sources() -> str:
         """List all documentation sources currently indexed."""
-        return await backend.list_sources()
+        return await _run_tool_with_timeout(
+            "list_sources",
+            lambda: backend.list_sources(),
+        )
 
     mcp.run()
