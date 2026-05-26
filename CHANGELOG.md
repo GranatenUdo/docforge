@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-05-26
+
+### Fixed
+- Hybrid retrieval: sparse-leg tsquery now uses OR between tokens (was AND). Multi-keyword queries (5+ tokens, common with AI-coding-assistant clients) were getting ~0 hits from the sparse leg, causing RRF to collapse to dense-only. With OR, the sparse leg surfaces chunks with partial keyword matches and `ts_rank_cd` grades them by overlap + IDF.
+
 ## [0.7.7] - 2026-05-22
 
 ### Fixed

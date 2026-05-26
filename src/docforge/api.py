@@ -251,7 +251,10 @@ async def perform_search(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
+            WITH q_tsq AS (
+                     SELECT replace(websearch_to_tsquery($8::regconfig, $2::text)::text,
+                                    '&', '|')::tsquery AS q
+                 ),
                  dense AS (
                      SELECT id, source_id, text, section_title,
                             ROW_NUMBER() OVER (ORDER BY dist) AS rank
