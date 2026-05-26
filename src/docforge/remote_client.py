@@ -7,8 +7,8 @@ Used by `docforge serve --remote-api $URL --auth ...`. See the
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-import sys
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
@@ -16,6 +16,8 @@ from typing import Protocol
 
 import httpx
 from fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
 
 
 class AuthName(str, Enum):
@@ -80,34 +82,23 @@ class AzureAuth:
         # but short enough that the user sees a clear error instead of
         # an apparently-hung MCP session.
         t0 = time.perf_counter()
-        print("docforge mcp: auth requesting token", file=sys.stderr, flush=True)
+        logger.info("auth requesting token")
         try:
             token = await asyncio.wait_for(
                 self._credential.get_token(f"{self._audience}/.default"),
                 timeout=15.0,
             )
         except asyncio.TimeoutError:
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            print(
-                f"docforge mcp: auth TIMEOUT after {elapsed_ms}ms",
-                file=sys.stderr,
-                flush=True,
-            )
+            logger.warning("auth TIMEOUT after %dms", int((time.perf_counter() - t0) * 1000))
             raise
         except Exception as e:
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            print(
-                f"docforge mcp: auth FAILED after {elapsed_ms}ms: {type(e).__name__}",
-                file=sys.stderr,
-                flush=True,
+            logger.warning(
+                "auth FAILED after %dms: %s",
+                int((time.perf_counter() - t0) * 1000),
+                type(e).__name__,
             )
             raise
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        print(
-            f"docforge mcp: auth token acquired in {elapsed_ms}ms",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.info("auth token acquired in %dms", int((time.perf_counter() - t0) * 1000))
         return {"Authorization": f"Bearer {token.token}"}
 
 
@@ -202,49 +193,46 @@ class RemoteBackend:
 
         async def _attempt() -> httpx.Response | str:
             t0 = time.perf_counter()
-            print(
-                f"docforge mcp: request {method} {path} start",
-                file=sys.stderr,
-                flush=True,
-            )
+            logger.info("request %s %s start", method, path)
             try:
                 resp = await client.request(
                     method, f"{self._url}{path}", json=json, headers=headers
                 )
             except httpx.ConnectError:
-                elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                print(
-                    f"docforge mcp: request {method} {path} CONNECT_ERROR after {elapsed_ms}ms",
-                    file=sys.stderr,
-                    flush=True,
+                logger.warning(
+                    "request %s %s CONNECT_ERROR after %dms",
+                    method,
+                    path,
+                    int((time.perf_counter() - t0) * 1000),
                 )
                 return f"Could not reach remote API at {self._url}."
             except httpx.ReadTimeout:
-                elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                print(
-                    f"docforge mcp: request {method} {path} READ_TIMEOUT after {elapsed_ms}ms",
-                    file=sys.stderr,
-                    flush=True,
+                logger.warning(
+                    "request %s %s READ_TIMEOUT after %dms",
+                    method,
+                    path,
+                    int((time.perf_counter() - t0) * 1000),
                 )
                 return (
                     f"DocForge /search timed out after {int(_READ_TIMEOUT_S)}s "
                     f"(Container App may be cold-starting; retry in 30s)."
                 )
             except httpx.HTTPError as e:
-                elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                print(
-                    f"docforge mcp: request {method} {path} HTTP_ERROR after "
-                    f"{elapsed_ms}ms: {type(e).__name__}",
-                    file=sys.stderr,
-                    flush=True,
+                logger.warning(
+                    "request %s %s HTTP_ERROR after %dms: %s",
+                    method,
+                    path,
+                    int((time.perf_counter() - t0) * 1000),
+                    type(e).__name__,
                 )
                 return f"Remote API error: {e}"
 
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            print(
-                f"docforge mcp: request {method} {path} -> {resp.status_code} in {elapsed_ms}ms",
-                file=sys.stderr,
-                flush=True,
+            logger.info(
+                "request %s %s -> %d in %dms",
+                method,
+                path,
+                resp.status_code,
+                int((time.perf_counter() - t0) * 1000),
             )
             if resp.status_code == 401:
                 return "Auth failed (401). Check DOCFORGE_API_URL and the --auth provider."
@@ -320,7 +308,7 @@ _TOOL_TIMEOUT_S = 60.0
 
 
 async def _run_tool_with_timeout(name: str, coro_fn: Callable[[], Awaitable[str]]) -> str:
-    """Wrap an MCP tool body in a hard outer timeout + stderr breadcrumbs.
+    """Wrap an MCP tool body in a hard outer timeout + log breadcrumbs.
 
     `coro_fn` is a no-arg callable that returns a fresh coroutine each call.
     We deliberately accept a factory (not an already-awaited coroutine) so
@@ -333,23 +321,17 @@ async def _run_tool_with_timeout(name: str, coro_fn: Callable[[], Awaitable[str]
     return strings.
     """
     t0 = time.perf_counter()
-    print(f"docforge mcp: tool={name} start", file=sys.stderr, flush=True)
+    logger.info("tool=%s start", name)
     try:
         async with asyncio.timeout(_TOOL_TIMEOUT_S):
             result = await coro_fn()
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        print(
-            f"docforge mcp: tool={name} done in {elapsed_ms}ms",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.info("tool=%s done in %dms", name, int((time.perf_counter() - t0) * 1000))
         return result
     except asyncio.TimeoutError:
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        print(
-            f"docforge mcp: tool={name} HIT SAFETY-NET TIMEOUT after {elapsed_ms}ms",
-            file=sys.stderr,
-            flush=True,
+        logger.warning(
+            "tool=%s HIT SAFETY-NET TIMEOUT after %dms",
+            name,
+            int((time.perf_counter() - t0) * 1000),
         )
         return (
             f"docforge tool '{name}' hit the {int(_TOOL_TIMEOUT_S)}s safety-net timeout. "
