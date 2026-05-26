@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-05-26
+
+### Fixed
+- **Critical MCP hang on first tool call** (`docforge serve --remote-api`). `RemoteBackend.search()` lazy-imported `format_search_results_markdown` from `docforge.mcp_server`, which transitively pulls in numpy, fastmcp, asyncpg, and the embedder model. Running this synchronous import chain inside the active asyncio event loop on first tool dispatch deadlocked the MCP subprocess for 90+ seconds with no inner timeout firing — the HTTP call returned 200 in ~700ms but the post-HTTP formatter import never completed. Symptom: `dw-docforge__search_documentation` tool calls appear to hang indefinitely.
+- Fix: extracted `format_search_results_markdown` to a new stdlib-only `docforge.formatters` module. Both `remote_client.py` and `mcp_server.py` now import from there at module level. Reproduced fix end-to-end: MCP tool returns in ~1.6s, no hang. The v0.7.9 60s safety-net timeout still applies as a backstop but no longer fires under normal load.
+- Regression guard (`test_formatters_module_has_no_heavy_imports`) ensures `docforge.formatters` stays import-light.
+
+### Added
+- Diagnostic log breadcrumbs inside `RemoteBackend.search()` at each phase (request start/return, JSON parse, format, return) for future hang diagnosis.
+
 ## [0.7.9] - 2026-05-26
 
 ### Fixed

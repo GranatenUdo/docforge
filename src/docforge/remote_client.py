@@ -17,6 +17,8 @@ from typing import Protocol
 import httpx
 from fastmcp import FastMCP
 
+from docforge.formatters import format_search_results_markdown
+
 logger = logging.getLogger(__name__)
 
 
@@ -262,14 +264,18 @@ class RemoteBackend:
         """Search the remote API and return Markdown-formatted results."""
         body: dict[str, object] = {"query": query, "limit": limit}
         body.update(self._identity_body())
+        logger.info("search: about to call _request")
         result = await self._request("POST", "/search", json=body)
+        logger.info("search: _request returned (type=%s)", type(result).__name__)
         if isinstance(result, str):
             return result
 
-        from docforge.mcp_server import format_search_results_markdown
-
         data = result.json()
-        return format_search_results_markdown(data.get("results", []))
+        results = data.get("results", [])
+        logger.info("search: JSON parsed (%d results), formatting", len(results))
+        out = format_search_results_markdown(results)
+        logger.info("search: formatted markdown (%d chars), returning", len(out))
+        return out
 
     async def list_sources(self) -> str:
         """List indexed sources from the remote API."""

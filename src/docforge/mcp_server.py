@@ -14,7 +14,11 @@ from pydantic import Field
 
 from docforge.config import Settings
 from docforge.db import get_pool
+from docforge.formatters import format_search_results_markdown  # noqa: F401
 from docforge.processors.embedder import Embedder, EmbedderProtocol
+
+# Re-exported from formatters for backwards compatibility; see formatters.py
+# for the rationale (don't lazy-import this module from inside an async loop).
 
 logger = logging.getLogger(__name__)
 
@@ -47,32 +51,6 @@ def _get_embedder() -> EmbedderProtocol:
         logger.info("Loading embedding model (this may take a few seconds)...")
         _embedder = Embedder.from_settings(settings)
     return _embedder
-
-
-def format_search_results_markdown(
-    results: list[dict],
-    *,
-    empty_message: str = "No documentation found matching your query.",
-) -> str:
-    """Render a list of search-result dicts as the canonical Markdown shape.
-
-    Each result must have keys: similarity, source_title, source_url, text.
-    Optional: section_title, source_tags.
-    """
-    if not results:
-        return empty_message
-
-    parts: list[str] = []
-    for i, r in enumerate(results, 1):
-        header = f"**Result {i}** (relevance: {r['similarity']:.2f}) -- {r['source_title']}"
-        if r.get("section_title"):
-            header += f" > {r['section_title']}"
-        header += f"\nSource: {r['source_url']}"
-        tags = r.get("source_tags") or []
-        if tags:
-            header += f"\nTags: {', '.join(tags)}"
-        parts.append(f"{header}\n\n{r['text']}")
-    return "\n\n---\n\n".join(parts)
 
 
 @mcp.tool()
