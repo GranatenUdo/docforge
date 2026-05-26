@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-26
+
+### Fixed
+- MCP server (`docforge serve --remote-api`): added hard 60s safety-net timeout at the tool wrapper layer (`search_documentation` and `list_sources`). Existing inner timeouts (httpx 30s read + 2s retry-backoff + 15s Azure token-mint) rely on `asyncio.wait_for` cancellation propagating through the call chain — but if any downstream code (Azure SDK token refresh, FastMCP stdio, httpx pool) doesn't honor cancel, the tool call hangs indefinitely. The new outer `asyncio.timeout(60.0)` strictly bounds total wall-clock time per tool call regardless of inner state. On safety-net timeout, returns a diagnostic error string pointing at common causes.
+
+### Added
+- MCP server stderr logging at each phase (auth, HTTP request, tool entry/exit) with elapsed-ms tags. Next time a hang occurs, the last phase logged identifies where execution stalled. Logs use stderr (not stdout) to avoid corrupting the FastMCP JSON-RPC protocol.
+
 ## [0.7.8] - 2026-05-26
 
 ### Fixed
