@@ -17,16 +17,6 @@ import re
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _no_backoff_sleep(monkeypatch):
-    """Replace asyncio.sleep with a no-op (mirrors test_remote_client.py)."""
-
-    async def _fast(_delay):
-        return None
-
-    monkeypatch.setattr("docforge.remote_client.asyncio.sleep", _fast)
-
-
 @pytest.mark.asyncio
 async def test_tool_timeout_fires_on_hung_inner_call(monkeypatch):
     """If backend.search hangs past the safety-net budget, the tool wrapper
