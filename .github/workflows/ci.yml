@@ -105,7 +105,7 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-${{ runner.os }}-all-minilm-l6-v2
-      - run: pip install -e ".[dev,entra]"
+      - run: pip install -e ".[dev,azure,entra]"
       # --no-cov: the 60% fail_under threshold in pyproject.toml is calibrated
       # for the unit suite (which exercises ~74%). Integration tests cover a
       # different slice of the codebase and naturally sit at ~40%; gating
