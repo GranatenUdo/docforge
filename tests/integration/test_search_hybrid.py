@@ -20,8 +20,9 @@ import math
 
 import asyncpg
 import pytest
-from _helpers import _insert_chunk, _insert_source, _vec  # noqa: F401
 from pgvector.asyncpg import register_vector
+
+from tests.integration._helpers import _insert_chunk, _insert_source, _vec
 
 # The SQL under test — the production /search query, parameterized identically.
 # Keep this string in sync with src/docforge/api.py if either changes.

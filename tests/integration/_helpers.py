@@ -1,9 +1,9 @@
 """Shared helpers for integration tests against the hybrid-search SQL.
 
-Module-level helpers (not pytest fixtures) so they import cleanly via
-`from _helpers import _vec, _insert_source, _insert_chunk`. The
-`tests/integration/` directory is on sys.path by virtue of conftest.py
-collection — sibling test files can import this directly.
+Module-level helpers (not pytest fixtures). Imported as
+`from tests.integration._helpers import _vec, _insert_source, _insert_chunk`
+— the canonical path made possible by the `__init__.py` files in
+`tests/` and `tests/integration/`.
 """
 
 from __future__ import annotations

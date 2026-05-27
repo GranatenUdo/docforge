@@ -11,12 +11,12 @@ import math
 import asyncpg
 import numpy as np
 import pytest
-from _helpers import _insert_chunk, _insert_source, _vec  # noqa: F401
 from pgvector.asyncpg import register_vector
 
 from docforge.api import SearchRequest, perform_search
 from docforge.config import Settings
 from docforge.db import _init_connection
+from tests.integration._helpers import _insert_chunk, _insert_source, _vec
 
 
 class _StubEmbedder:
