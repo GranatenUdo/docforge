@@ -280,6 +280,20 @@ async def perform_search(
                          LIMIT $3
                      ) AS t
                  ),
+                 pool_sizes AS (
+                     SELECT (SELECT COUNT(*) FROM dense)  AS dense_count,
+                            (SELECT COUNT(*) FROM sparse) AS sparse_count
+                 ),
+                 weights AS (
+                     SELECT
+                         $10::float AS effective_dense_weight,
+                         CASE
+                             WHEN (SELECT sparse_count FROM pool_sizes)
+                                  > (SELECT dense_count FROM pool_sizes) * $12::float
+                               THEN $11::float * $13::float
+                             ELSE $11::float
+                         END AS effective_sparse_weight
+                 ),
                  fused AS (
                      SELECT COALESCE(d.id, sp.id) AS id,
                             COALESCE(d.source_id, sp.source_id) AS source_id,
@@ -287,8 +301,14 @@ async def perform_search(
                             COALESCE(d.section_title, sp.section_title) AS section_title,
                             d.rank AS dense_rank,
                             sp.rank AS sparse_rank,
-                            COALESCE($10::float / ($9 + d.rank), 0)
-                              + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
+                            COALESCE(
+                                (SELECT effective_dense_weight FROM weights) / ($9 + d.rank),
+                                0
+                            )
+                              + COALESCE(
+                                  (SELECT effective_sparse_weight FROM weights) / ($9 + sp.rank),
+                                  0
+                              ) AS rrf
                      FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
                  )
             SELECT f.text, f.section_title,
@@ -316,6 +336,8 @@ async def perform_search(
             settings.rrf_k,
             settings.dense_weight,
             settings.sparse_weight,
+            settings.sparse_flood_ratio,
+            settings.sparse_flood_dampening,
         )
     t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
