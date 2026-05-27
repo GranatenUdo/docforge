@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-05-27
+
+### Changed
+- **BREAKING:** minimum supported Python is now 3.13 (was 3.12). Bumped after
+  `test_serve_remote_api_falls_back_to_env_var` was found to fail only on 3.12
+  with a typer CliRunner stdout-flush bug that couldn't be reproduced or
+  bisected on 3.13. CI now pins to 3.13.
+- Integration-test helpers (`_vec`, `_insert_source`, `_insert_chunk`) extracted
+  to `tests/integration/_helpers.py`. Removed duplicated copies from
+  `test_search_hybrid.py` and `test_sparse_tsquery_or.py`.
+- `test_sparse_tsquery_or.py` now constructs `Settings()` with kwargs instead
+  of post-init mutation — safer if `Settings` ever becomes frozen.
+- `latency_report.py:compute_summary` docstring trimmed (2nd paragraph
+  duplicated the module-level WHY at lines 21-23).
+- Over-narrative module/test docstrings in `test_sparse_tsquery_or.py` trimmed
+  to one sentence each.
+
+### Fixed
+- CI test job installs `[azure,entra]` extras, resolving the 1 pre-existing
+  failure (`test_azure_auth_raises_when_audience_unset`) and 3 collection
+  errors in `test_auth.py::TestAuthModeEntra::*`.
+- `test_serve_remote_api_falls_back_to_env_var` un-skipped (was skipped on
+  Python 3.12; not relevant after the minimum bump).
+
 ## [0.7.10] - 2026-05-26
 
 ### Fixed
