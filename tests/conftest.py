@@ -94,6 +94,7 @@ def fake_settings():
         sparse_weight=1.0,
         sparse_flood_ratio=3.0,
         sparse_flood_dampening=0.5,
+        title_weight_a=4.0,
     )
 
 
