@@ -22,23 +22,12 @@ import math
 import asyncpg
 import numpy as np
 import pytest
+from _helpers import _insert_chunk, _insert_source, _vec  # noqa: F401
 from pgvector.asyncpg import register_vector
 
 from docforge.api import SearchRequest, perform_search
 from docforge.config import Settings
 from docforge.db import _init_connection
-
-
-def _vec(angle_rad: float) -> np.ndarray:
-    """Deterministic 1024-dim unit vector at angle `angle_rad` in axes (0, 1).
-
-    Mirrors the helper in test_search_hybrid.py; duplicated to keep this
-    regression test self-contained.
-    """
-    v = np.zeros(1024, dtype=np.float32)
-    v[0] = float(np.cos(angle_rad))
-    v[1] = float(np.sin(angle_rad))
-    return v
 
 
 class _StubEmbedder:
@@ -56,32 +45,6 @@ class _StubEmbedder:
 
     async def aembed_query(self, _query: str) -> np.ndarray:
         return self._vec
-
-
-async def _insert_source(conn, title: str) -> str:
-    return await conn.fetchval(
-        """
-        INSERT INTO sources (type, url, title, source_identifier, status, tags,
-                             content_hash, last_crawled_at)
-        VALUES ('git_repo', $1, $2, $1, 'active', $3, 'h', now())
-        RETURNING id
-        """,
-        f"file:///{title}",
-        title,
-        [],
-    )
-
-
-async def _insert_chunk(conn, source_id: str, text: str, vec: np.ndarray) -> None:
-    await conn.execute(
-        """
-        INSERT INTO chunks (source_id, chunk_index, text, embedding, section_title)
-        VALUES ($1, 0, $2, $3, NULL)
-        """,
-        source_id,
-        text,
-        vec,
-    )
 
 
 @pytest.mark.asyncio

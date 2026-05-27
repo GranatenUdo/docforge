@@ -19,52 +19,9 @@ from __future__ import annotations
 import math
 
 import asyncpg
-import numpy as np
 import pytest
+from _helpers import _insert_chunk, _insert_source, _vec  # noqa: F401
 from pgvector.asyncpg import register_vector
-
-
-def _vec(angle_rad: float) -> np.ndarray:
-    """Deterministic 1024-dim unit vector at angle `angle_rad` in the (axis 0, axis 1) plane.
-
-    Two vectors at angles a and b have cosine distance 1 - cos(a - b):
-        _vec(0.0) and _vec(0.0)       -> distance 0     (identical)
-        _vec(0.0) and _vec(0.1)       -> distance ~0.005 (very close)
-        _vec(0.0) and _vec(math.pi/2) -> distance 1     (orthogonal)
-
-    Use this to control which chunks rank close vs far on the dense path.
-    """
-    v = np.zeros(1024, dtype=np.float32)
-    v[0] = float(np.cos(angle_rad))
-    v[1] = float(np.sin(angle_rad))
-    return v
-
-
-async def _insert_source(conn, title: str, tags: list[str] | None = None) -> str:
-    return await conn.fetchval(
-        """
-        INSERT INTO sources (type, url, title, source_identifier, status, tags,
-                             content_hash, last_crawled_at)
-        VALUES ('git_repo', $1, $2, $1, 'active', $3, 'h', now())
-        RETURNING id
-        """,
-        f"file:///{title}",
-        title,
-        tags or [],
-    )
-
-
-async def _insert_chunk(conn, source_id: str, text: str, vec: np.ndarray) -> None:
-    await conn.execute(
-        """
-        INSERT INTO chunks (source_id, chunk_index, text, embedding, section_title)
-        VALUES ($1, 0, $2, $3, NULL)
-        """,
-        source_id,
-        text,
-        vec,
-    )
-
 
 # The SQL under test — the production /search query, parameterized identically.
 # Keep this string in sync with src/docforge/api.py if either changes.

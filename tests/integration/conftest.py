@@ -9,6 +9,11 @@ All tests in this directory are auto-marked with @pytest.mark.integration.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
 import asyncpg
 import pytest
 import pytest_asyncio
