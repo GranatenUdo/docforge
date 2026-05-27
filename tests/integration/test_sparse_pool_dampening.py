@@ -18,7 +18,6 @@ import math
 import asyncpg
 import numpy as np
 import pytest
-from pgvector.asyncpg import register_vector
 
 from docforge.api import SearchRequest, perform_search
 from docforge.config import Settings
@@ -114,7 +113,9 @@ async def test_balanced_pools_keep_full_sparse_weight(pg_url):
         embedder = _StubEmbedder(_vec(0.05))  # dense favors the unrelated chunks
         settings = Settings(sparse_flood_ratio=3.0, sparse_flood_dampening=0.5)
         req = SearchRequest(
-            query="CIS BackgroundProcessService dispatch strategy ADR architecture rationale design",
+            query=(
+                "CIS BackgroundProcessService dispatch strategy ADR architecture rationale design"
+            ),
             team_name="ccl",
             area_name="cloud",
             limit=5,
