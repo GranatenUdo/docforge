@@ -136,9 +136,8 @@ async def test_sparse_leg_grades_chunks_by_token_overlap(pg_url):
                 _vec(math.pi / 2),
             )
 
-        settings = Settings()
-        settings.dense_weight = 0.0  # pure-sparse comparison
-        settings.sparse_weight = 1.0
+        # pure-sparse comparison (no dense contribution)
+        settings = Settings(dense_weight=0.0, sparse_weight=1.0)
         embedder = _StubEmbedder(_vec(0.0))
         req = SearchRequest(query="settings service access strategy authentication", limit=5)
 
