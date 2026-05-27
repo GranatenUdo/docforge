@@ -103,8 +103,24 @@ class Settings(BaseSettings):
     # signal — legitimately rare long-tail queries (sparse pool small) keep
     # their full sparse weight. Both knobs tunable in docforge.yml without
     # an engine rebuild.
+    # NOTE (v0.7.13 eval): with default hybrid_pool_size=100, both pools cap
+    # at 100 so the ratio max is ~1.0 — the threshold rarely fires in
+    # practice. Kept for future tuning but the title_weight_a knob below is
+    # the load-bearing fix for short-common-token misses.
     sparse_flood_ratio: float = 3.0
     sparse_flood_dampening: float = 0.5
+
+    # Title-dominance factor for ts_rank_cd (sub-project E, v0.7.13). Postgres
+    # ts_rank_cd weights must be in [0, 1] so A is capped at 1.0. To make
+    # title-matches dominate body-keyword density, the SQL divides D/C/B by
+    # this factor (so weights become {D/F, C/F, B/F, A=1.0}). With F=4.0:
+    # default ratio A:D goes from 10:1 to 40:1 — title-match contributes 4x
+    # more, relative to body match, than under the Postgres defaults.
+    # Migration 008 indexed chunks.title at position A. Fixes the 3 short-
+    # common-token misses (Domain Catalog / Markus Koelmans / Morne) where
+    # the target chunk's title contains the query terms but its body doesn't
+    # repeat them as densely as competitor chunks. Tune in docforge.yml.
+    title_weight_a: float = 4.0
 
     # Sources-hygiene rules — see 2026-05-20-sources-hygiene-design.md.
     # legacy_path_substring: when not None, files whose path (case-insensitive)

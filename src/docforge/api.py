@@ -267,16 +267,32 @@ async def perform_search(
                          LIMIT $3
                      ) AS t
                  ),
+                 q_weights AS (
+                     SELECT ARRAY[
+                         0.1 / $14::float4,
+                         0.2 / $14::float4,
+                         0.4 / $14::float4,
+                         1.0
+                     ]::float4[] AS w
+                 ),
                  sparse AS (
                      SELECT id, source_id, text, section_title,
                             ROW_NUMBER() OVER (ORDER BY rk DESC) AS rank
                      FROM (
                          SELECT c.id, c.source_id, c.text, c.section_title,
-                                ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) AS rk
+                                ts_rank_cd(
+                                    (SELECT w FROM q_weights),
+                                    c.text_tsv,
+                                    (SELECT q FROM q_tsq)
+                                ) AS rk
                          FROM chunks c JOIN sources s ON c.source_id = s.id
                          WHERE s.status = 'active'
                            AND c.text_tsv @@ (SELECT q FROM q_tsq)
-                         ORDER BY ts_rank_cd(c.text_tsv, (SELECT q FROM q_tsq)) DESC
+                         ORDER BY ts_rank_cd(
+                             (SELECT w FROM q_weights),
+                             c.text_tsv,
+                             (SELECT q FROM q_tsq)
+                         ) DESC
                          LIMIT $3
                      ) AS t
                  ),
@@ -338,6 +354,7 @@ async def perform_search(
             settings.sparse_weight,
             settings.sparse_flood_ratio,
             settings.sparse_flood_dampening,
+            settings.title_weight_a,
         )
     t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 

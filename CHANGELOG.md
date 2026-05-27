@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-05-27
+
+### Fixed
+- Hybrid retrieval: `ts_rank_cd` now uses custom weights `{D=0.1/F, C=0.2/F,
+  B=0.4/F, A=1.0}` with title-dominance factor F (default 4.0), making
+  title-matches dominate body-keyword density 40:1 (vs Postgres default
+  10:1). Migration 008's chunks.title is now load-bearing for short queries
+  where the target page's title contains the query terms but its body
+  doesn't repeat them as densely as competitor chunks. Resolves 2 of 3
+  short-token misses left by sub-project D's eval (Markus Koelmans / Domain
+  Catalog). Morne remains a data-side issue (chunk content gap).
+
+### Added
+- `Settings.title_weight_a: float = 4.0` — title-dominance factor. Higher =
+  title-matches contribute more to sparse rank vs body-keyword density.
+  Tune in docforge.yml without an engine rebuild. Eval sweep found 4.0
+  optimal on the 60-query ground truth (recall@1: 32→34, MRR: 0.619→0.647).
+
+### Notes
+- v0.7.12's sparse-pool dampening machinery (`sparse_flood_ratio`,
+  `sparse_flood_dampening`) is retained but inert at defaults: both CTEs
+  cap at `hybrid_pool_size=100`, so the ratio can't exceed ~1.0 and the
+  default 3.0 threshold doesn't fire. Kept for future tuning. Title-weight
+  was the actual load-bearing fix.
+
 ## [0.7.12] - 2026-05-27
 
 ### Fixed
