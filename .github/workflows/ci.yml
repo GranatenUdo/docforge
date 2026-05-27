@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: '3.13'
           cache: 'pip'
-      - run: pip install -e ".[dev,entra]"
+      - run: pip install -e ".[dev,azure,entra]"
       - run: pytest -m "not integration"
 
   build-embedder-image:
