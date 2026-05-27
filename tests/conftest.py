@@ -92,6 +92,8 @@ def fake_settings():
         fts_language="english",
         dense_weight=1.0,
         sparse_weight=1.0,
+        sparse_flood_ratio=3.0,
+        sparse_flood_dampening=0.5,
     )
 
 
