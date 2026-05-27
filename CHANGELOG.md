@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-05-27
+
+### Fixed
+- Hybrid retrieval: sparse-leg RRF contribution is now dampened per-query
+  when the sparse-CTE returns more than `sparse_flood_ratio * dense_count`
+  rows. Targets the 3 short-common-token misses left by sub-project B
+  (`Morne team developer role`, `Markus Koelmans team responsibility lead`,
+  `Domain Catalog DocuWare domains`) without regressing the 5 long-rare-token
+  wins from v0.7.8. The dampening fires only when the sparse leg is
+  floodingly over-broad — long-tail queries that depend on OR-tsq recall stay
+  untouched.
+
+### Added
+- `Settings.sparse_flood_ratio: float = 3.0` — pool-size ratio threshold
+  (sparse_count / dense_count) above which dampening kicks in.
+- `Settings.sparse_flood_dampening: float = 0.5` — multiplier applied to
+  sparse_weight when threshold is exceeded. Both knobs are exposed in
+  docforge.yml for per-deployment tuning without an engine rebuild.
+- Two integration tests (`test_sparse_pool_dampening.py`): one for the
+  flooded-pool scenario (target wins post-dampening), one regression guard
+  for the balanced-pool case (sub-project B's wins preserved).
+
 ## [0.7.11] - 2026-05-27
 
 ### Changed
