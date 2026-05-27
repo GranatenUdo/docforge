@@ -39,11 +39,7 @@ class LatencySummary:
 async def compute_summary(database_url: str, since: str) -> LatencySummary:
     """Query query_log.request_ms within the given interval. Returns
     percentiles + row count + the earliest-seen request_ms timestamp (the
-    effective C4.3 cutover date for this DB).
-
-    `since` must match _SINCE_PATTERN (N + unit). It is embedded as a SQL
-    literal because asyncpg rejects str for $1::interval; the regex
-    validation is the injection boundary."""
+    effective C4.3 cutover date for this DB)."""
     if not _SINCE_PATTERN.match(since):
         raise ValueError(
             f"Invalid --since {since!r}. Expected 'N unit' where unit is "

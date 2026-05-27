@@ -8,7 +8,7 @@ docforge is a CLI tool that forges searchable context from Confluence and git re
 
 ## Tech Stack
 
-- **Language**: Python 3.12+
+- **Language**: Python 3.13+
 - **CLI**: Typer
 - **API**: FastAPI (for hosted deployment)
 - **Database**: PostgreSQL + pgvector
