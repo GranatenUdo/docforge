@@ -47,6 +47,34 @@ docforge status               # Show index stats
 - ruff for formatting and linting
 - pytest + pytest-asyncio for tests
 
+## Testing & Verification (REQUIRED before claiming a change works)
+
+Always verify changes against the **actual user-facing surface**, not just the
+nearest internal API. The cheapest mistakes have been:
+
+1. **Retrieval / SQL changes** — run `eval_search` BOTH `--direct` and
+   `--api-url <prod>` against the same ground truth. They MUST agree. If they
+   diverge, an env var (Bicep deployment param) is silently overriding a
+   `Settings` default — inspect with
+   `az containerapp show --name <app> --query "properties.template.containers[0].env"`.
+   Incident 2026-05-28: `SPARSE_WEIGHT=0.5` from bicepparam masked a 15-query
+   quality gap behind a green `--direct` eval.
+2. **MCP changes** — call the actual MCP tool
+   (`mcp__dw-docforge__search_documentation`) on a representative query and
+   confirm the expected page appears. `--direct` eval and `curl /search` do
+   NOT exercise the MCP path end-to-end.
+3. **Deployment changes** — after `az containerapp update`, check both `/health`
+   AND the user surface (MCP + `/search` via `curl`). Revision metadata
+   reporting `image: v0.7.13` can be paired with stale env vars from a prior
+   deploy.
+4. **Bicep param changes** — any `az containerapp update --set-env-vars` is
+   ephemeral. Update `rag/infrastructure/docforge.bicepparam` (or equivalent
+   in the dw-docforge repo) too, or the next Bicep deploy reverts your fix.
+5. **CI changes** — push to a branch and watch CI green before claiming it
+   works locally. Local pip extras and Python versions can mask CI-only
+   failures (engine has `[azure,entra]` extras that aren't installed in some
+   local venvs).
+
 ## Package Structure
 
 ```
