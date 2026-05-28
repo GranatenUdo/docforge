@@ -351,14 +351,20 @@ def test_main_rejects_empty_audience(monkeypatch, tmp_path, capsys):
         "sys.argv",
         [
             "eval_search",
-            "--api-url", "https://example.com",
-            "--audience", "",
-            "--ground-truth", str(gt),
-            "--user", "alice",
-            "--team", "ccl",
+            "--api-url",
+            "https://example.com",
+            "--audience",
+            "",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
         ],
     )
     from docforge.scripts import eval_search
+
     with pytest.raises(SystemExit) as exc_info:
         eval_search.main()
     assert exc_info.value.code == 2, f"argparse error exits 2; got {exc_info.value.code}"
@@ -370,10 +376,14 @@ def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
     gt.write_text("queries: []\n")
     base_argv = [
         "eval_search",
-        "--api-url", "https://example.com",
-        "--ground-truth", str(gt),
-        "--user", "alice",
-        "--team", "ccl",
+        "--api-url",
+        "https://example.com",
+        "--ground-truth",
+        str(gt),
+        "--user",
+        "alice",
+        "--team",
+        "ccl",
     ]
     for empty_flag in ("--user", "--team"):
         argv = list(base_argv)
@@ -381,6 +391,7 @@ def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
         argv[idx + 1] = ""
         monkeypatch.setattr("sys.argv", argv)
         from docforge.scripts import eval_search
+
         with pytest.raises(SystemExit) as exc_info:
             eval_search.main()
         assert exc_info.value.code == 2, f"{empty_flag}='' should exit 2; got {exc_info.value.code}"
@@ -431,21 +442,27 @@ def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
     # Loader requires 'q' (not 'query') + 'expected_title_contains' on each entry.
     gt.write_text(
         "queries:\n"
-        "  - q: \"never-matches-anything-xyz\"\n"
-        "    expected_title_contains: \"impossible-target-zzz\"\n"
+        '  - q: "never-matches-anything-xyz"\n'
+        '    expected_title_contains: "impossible-target-zzz"\n'
     )
     monkeypatch.setattr(
         "sys.argv",
         [
             "eval_search",
-            "--api-url", "http://127.0.0.1:1",  # unreachable
-            "--ground-truth", str(gt),
-            "--user", "alice",
-            "--team", "ccl",
-            "--k", "5",
+            "--api-url",
+            "http://127.0.0.1:1",  # unreachable
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
+            "--k",
+            "5",
         ],
     )
     from docforge.scripts import eval_search
+
     rc = _run_with_timeout(eval_search.main, timeout=45)
     assert rc != 0, f"All-MISS eval must return non-zero; got {rc}"
 
@@ -459,13 +476,18 @@ def test_main_rejects_angle_bracket_placeholders(monkeypatch, tmp_path):
             "sys.argv",
             [
                 "eval_search",
-                "--api-url", "https://example.com",
-                "--ground-truth", str(gt),
-                "--user", placeholder_val,
-                "--team", "ccl",
+                "--api-url",
+                "https://example.com",
+                "--ground-truth",
+                str(gt),
+                "--user",
+                placeholder_val,
+                "--team",
+                "ccl",
             ],
         )
         from docforge.scripts import eval_search
+
         with pytest.raises(SystemExit) as exc_info:
             eval_search.main()
         assert exc_info.value.code == 2, f"placeholder {placeholder_val!r} should exit 2"
@@ -474,6 +496,7 @@ def test_main_rejects_angle_bracket_placeholders(monkeypatch, tmp_path):
 def test_non_empty_str_strips_whitespace():
     """_non_empty_str returns the trimmed value (not the original with surrounding whitespace)."""
     from docforge.scripts.eval_search import _non_empty_str
+
     assert _non_empty_str("  alice  ") == "alice"
     assert _non_empty_str("\talice\n") == "alice"
     assert _non_empty_str("alice") == "alice"  # no-op on already-clean input
@@ -490,14 +513,20 @@ def test_main_rejects_empty_area(monkeypatch, tmp_path):
         "sys.argv",
         [
             "eval_search",
-            "--api-url", "https://example.com",
-            "--ground-truth", str(gt),
-            "--user", "alice",
-            "--team", "ccl",
-            "--area", "",
+            "--api-url",
+            "https://example.com",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
+            "--area",
+            "",
         ],
     )
     from docforge.scripts import eval_search
+
     with pytest.raises(SystemExit) as exc_info:
         eval_search.main()
     assert exc_info.value.code == 2
