@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `eval_search`: now exits with code 1 if every query in the ground-truth
   suite reports a MISS (likely auth / connectivity failure). Previously
   returned 0 even with 0/N hits, masking failures in CI.
+- `eval_search` `_non_empty_str` now also rejects `<placeholder>` literals
+  (e.g., `<you>`, `<your-team>`) that the previous validator silently
+  accepted. Closes a doc-recipe + hardening gap where users could paste
+  the recipe verbatim and pollute query_log with placeholder identity rows.
+- `eval_search` `_non_empty_str` now returns the stripped value (was
+  unstripped); trailing/leading whitespace from env-var typos no longer
+  flows through.
+- `eval_search` `--area` argparse now uses `_non_empty_str` (symmetric
+  with --user/--team/--audience).
+- `eval_search` all-MISS error message now lists three possible causes
+  (auth, ground-truth quality, retrieval regression) instead of blaming
+  auth/connectivity alone.
 
 ## [0.7.13] - 2026-05-27
 

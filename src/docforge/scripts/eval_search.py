@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,17 +24,28 @@ from pathlib import Path
 import httpx
 import yaml
 
+_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]+>$")
+
 
 def _non_empty_str(value: str) -> str:
-    """argparse type-callable: rejects empty/whitespace strings.
+    """argparse type-callable: rejects empty/whitespace strings AND `<placeholder>` literals.
 
-    Used on flags where bash $UNSET_VAR expansion to ``""`` would otherwise
-    silently fall through to the search SQL with empty identity fields,
-    polluting query_log and disabling tag-match boosts.
+    Returns the *stripped* value so trailing/leading whitespace from env-var typos
+    doesn't flow into the search request unchanged.
+
+    Bash $UNSET_VAR expansion gives empty string (caught by .strip() check).
+    Documentation placeholders like `<you>` / `<your-team>` are non-empty
+    but should be rejected before they pollute query_log.
     """
-    if not value or not value.strip():
+    stripped = value.strip()
+    if not stripped:
         raise argparse.ArgumentTypeError("must not be empty")
-    return value
+    if _PLACEHOLDER_PATTERN.match(stripped):
+        raise argparse.ArgumentTypeError(
+            f"looks like an unsubstituted placeholder: {stripped!r}. "
+            f"Replace with your actual value before running."
+        )
+    return stripped
 
 
 @dataclass(frozen=True)
@@ -321,7 +333,12 @@ def main() -> int:
         type=_non_empty_str,
         help="Your team tag — forwarded as team_name",
     )
-    parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
+    parser.add_argument(
+        "--area",
+        default=None,
+        type=_non_empty_str,
+        help="Optional area tag — forwarded as area_name",
+    )
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
     parser.add_argument(
         "--debug",
@@ -379,8 +396,12 @@ def main() -> int:
     # and exit non-zero so automation catches the failure.
     if results and summary[f"recall@{args.k}"] == 0.0 and summary["recall@1"] == 0.0:
         print(
-            f"\nERROR: 0/{len(results)} queries hit — likely auth or connectivity "
-            f"failure. See per-query output above.",
+            f"\nERROR: 0/{len(results)} queries hit. Likely causes: "
+            f"(a) auth/connectivity failure (check Entra audience + api-url + token mint), "
+            f"(b) ground-truth quality regression "
+            f"(the expected_title_contains values may no longer match), "
+            f"(c) retrieval-quality regression (a recent SQL/weight change). "
+            f"See per-query output above to discriminate.",
             file=sys.stderr,
         )
         return 1
