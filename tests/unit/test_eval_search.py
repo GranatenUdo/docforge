@@ -415,7 +415,8 @@ def _run_with_timeout(target, args=(), kwargs=None, timeout=45):
 
 
 def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
-    """If every query reports MISS (e.g., all 401 due to wrong audience), main() must return non-zero.
+    """If every query reports MISS (e.g., all 401 due to wrong audience),
+    main() must return non-zero.
 
     Use --api-url pointing at an unreachable port; the HTTP layer will fail and every
     query records as MISS. The current contract returns 0 even then — this test should
