@@ -341,3 +341,76 @@ class TestFormatReportDebug:
         report = format_report(results, summarize(results, k=5), k=5)
         assert "d#1 s#3" in report
         assert "d#4 s#1" in report
+
+
+def test_main_rejects_empty_audience(monkeypatch, tmp_path, capsys):
+    """Empty --audience triggers argparse type-callable rejection (SystemExit code 2)."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url", "https://example.com",
+            "--audience", "",
+            "--ground-truth", str(gt),
+            "--user", "alice",
+            "--team", "ccl",
+        ],
+    )
+    from docforge.scripts import eval_search
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2, f"argparse error exits 2; got {exc_info.value.code}"
+
+
+def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
+    """Empty --user or --team triggers argparse type-callable rejection (SystemExit code 2)."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    base_argv = [
+        "eval_search",
+        "--api-url", "https://example.com",
+        "--ground-truth", str(gt),
+        "--user", "alice",
+        "--team", "ccl",
+    ]
+    for empty_flag in ("--user", "--team"):
+        argv = list(base_argv)
+        idx = argv.index(empty_flag)
+        argv[idx + 1] = ""
+        monkeypatch.setattr("sys.argv", argv)
+        from docforge.scripts import eval_search
+        with pytest.raises(SystemExit) as exc_info:
+            eval_search.main()
+        assert exc_info.value.code == 2, f"{empty_flag}='' should exit 2; got {exc_info.value.code}"
+
+
+def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
+    """If every query reports MISS (e.g., all 401 due to wrong audience), main() must return non-zero.
+
+    Use --api-url pointing at an unreachable port; the HTTP layer will fail and every
+    query records as MISS. The current contract returns 0 even then — this test should
+    FAIL until the zero-hits exit-code fix is applied.
+    """
+    gt = tmp_path / "gt.yml"
+    # Loader requires 'q' (not 'query') + 'expected_title_contains' on each entry.
+    gt.write_text(
+        "queries:\n"
+        "  - q: \"never-matches-anything-xyz\"\n"
+        "    expected_title_contains: \"impossible-target-zzz\"\n"
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url", "http://127.0.0.1:1",  # unreachable
+            "--ground-truth", str(gt),
+            "--user", "alice",
+            "--team", "ccl",
+            "--k", "5",
+        ],
+    )
+    from docforge.scripts import eval_search
+    rc = eval_search.main()
+    assert rc != 0, f"All-MISS eval must return non-zero; got {rc}"

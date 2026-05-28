@@ -24,6 +24,18 @@ import httpx
 import yaml
 
 
+def _non_empty_str(value: str) -> str:
+    """argparse type-callable: rejects empty/whitespace strings.
+
+    Used on flags where bash $UNSET_VAR expansion to ``""`` would otherwise
+    silently fall through to the search SQL with empty identity fields,
+    polluting query_log and disabling tag-match boosts.
+    """
+    if not value or not value.strip():
+        raise argparse.ArgumentTypeError("must not be empty")
+    return value
+
+
 @dataclass(frozen=True)
 class QueryResult:
     query: str
@@ -297,8 +309,18 @@ def main() -> int:
         ),
     )
     parser.add_argument("--ground-truth", required=True, type=Path, help="Path to ground_truth.yml")
-    parser.add_argument("--user", required=True, help="Your identity — forwarded as user_name")
-    parser.add_argument("--team", required=True, help="Your team tag — forwarded as team_name")
+    parser.add_argument(
+        "--user",
+        required=True,
+        type=_non_empty_str,
+        help="Your identity — forwarded as user_name",
+    )
+    parser.add_argument(
+        "--team",
+        required=True,
+        type=_non_empty_str,
+        help="Your team tag — forwarded as team_name",
+    )
     parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
     parser.add_argument(
@@ -314,6 +336,7 @@ def main() -> int:
     parser.add_argument(
         "--audience",
         default=None,
+        type=_non_empty_str,
         help=(
             "Entra API audience (e.g., api://<app-id>). When set, attaches a "
             "Bearer token via DefaultAzureCredential. Omit for auth.mode=none."
@@ -352,6 +375,15 @@ def main() -> int:
         )
     summary = summarize(results, args.k)
     print(format_report(results, summary, args.k))
+    # Detect all-MISS catastrophe (e.g., wrong audience → 401 on every query)
+    # and exit non-zero so automation catches the failure.
+    if results and summary[f"recall@{args.k}"] == 0.0 and summary["recall@1"] == 0.0:
+        print(
+            f"\nERROR: 0/{len(results)} queries hit — likely auth or connectivity "
+            f"failure. See per-query output above.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

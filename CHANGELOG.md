@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `eval_search`: `--audience`, `--user`, `--team` now reject empty strings
+  via argparse type-callable. Empty-string expansion (e.g.,
+  `--user "$UNSET_VAR"`) previously ran the eval silently with empty
+  identity fields, polluting query logs and disabling tag-match boosts.
+- `eval_search`: now exits with code 1 if every query in the ground-truth
+  suite reports a MISS (likely auth / connectivity failure). Previously
+  returned 0 even with 0/N hits, masking failures in CI.
+
 ## [0.7.13] - 2026-05-27
 
 ### Fixed
