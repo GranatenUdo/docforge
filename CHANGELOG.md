@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via argparse type-callable. Empty-string expansion (e.g.,
   `--user "$UNSET_VAR"`) previously ran the eval silently with empty
   identity fields, polluting query logs and disabling tag-match boosts.
-- `eval_search`: now exits with code 1 if every query in the ground-truth
-  suite reports a MISS (likely auth / connectivity failure). Previously
-  returned 0 even with 0/N hits, masking failures in CI.
+- `eval_search`: now exits with code 1 if recall drops below 10% — catches
+  all-MISS (0/N) AND near-misses (e.g., 1/60 hits = 1.7%) which were
+  equally catastrophic but bypassed the previous strict `== 0.0` check.
+  Healthy 60-query suite baselines around 95% recall@20; below 10%
+  always indicates a real problem.
 - `eval_search` `_non_empty_str` now also rejects `<placeholder>` literals
   (e.g., `<you>`, `<your-team>`) that the previous validator silently
   accepted. Closes a doc-recipe + hardening gap where users could paste

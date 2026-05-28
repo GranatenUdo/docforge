@@ -392,11 +392,19 @@ def main() -> int:
         )
     summary = summarize(results, args.k)
     print(format_report(results, summary, args.k))
-    # Detect all-MISS catastrophe (e.g., wrong audience → 401 on every query)
-    # and exit non-zero so automation catches the failure.
-    if results and summary[f"recall@{args.k}"] == 0.0 and summary["recall@1"] == 0.0:
+    # Detect near-catastrophic recall and exit non-zero so automation catches
+    # the failure. The threshold (10%) catches all-MISS (0/N) AND
+    # near-misses (e.g., 1/60 = 1.7%) which are equally catastrophic but
+    # bypassed the previous strict `== 0.0` check. A healthy 60-query suite
+    # baselines around 95% recall@20; below 10% always indicates a real
+    # problem (auth, data, or retrieval regression).
+    THRESHOLD = 0.10
+    n = len(results)
+    if results and summary[f"recall@{args.k}"] < THRESHOLD and summary["recall@1"] < THRESHOLD:
+        hits_at_k = int(round(summary[f"recall@{args.k}"] * n))
         print(
-            f"\nERROR: 0/{len(results)} queries hit. Likely causes: "
+            f"\nERROR: {hits_at_k}/{n} queries hit at recall@{args.k} "
+            f"(threshold for sanity check: {int(THRESHOLD * 100)}%). Likely causes: "
             f"(a) auth/connectivity failure (check Entra audience + api-url + token mint), "
             f"(b) ground-truth quality regression "
             f"(the expected_title_contains values may no longer match), "
