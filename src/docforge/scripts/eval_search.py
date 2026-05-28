@@ -16,12 +16,36 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 import yaml
+
+_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]+>$")
+
+
+def _non_empty_str(value: str) -> str:
+    """argparse type-callable: rejects empty/whitespace strings AND `<placeholder>` literals.
+
+    Returns the *stripped* value so trailing/leading whitespace from env-var typos
+    doesn't flow into the search request unchanged.
+
+    Bash $UNSET_VAR expansion gives empty string (caught by .strip() check).
+    Documentation placeholders like `<you>` / `<your-team>` are non-empty
+    but should be rejected before they pollute query_log.
+    """
+    stripped = value.strip()
+    if not stripped:
+        raise argparse.ArgumentTypeError("must not be empty")
+    if _PLACEHOLDER_PATTERN.match(stripped):
+        raise argparse.ArgumentTypeError(
+            f"looks like an unsubstituted placeholder: {stripped!r}. "
+            f"Replace with your actual value before running."
+        )
+    return stripped
 
 
 @dataclass(frozen=True)
@@ -297,9 +321,24 @@ def main() -> int:
         ),
     )
     parser.add_argument("--ground-truth", required=True, type=Path, help="Path to ground_truth.yml")
-    parser.add_argument("--user", required=True, help="Your identity — forwarded as user_name")
-    parser.add_argument("--team", required=True, help="Your team tag — forwarded as team_name")
-    parser.add_argument("--area", default=None, help="Optional area tag — forwarded as area_name")
+    parser.add_argument(
+        "--user",
+        required=True,
+        type=_non_empty_str,
+        help="Your identity — forwarded as user_name",
+    )
+    parser.add_argument(
+        "--team",
+        required=True,
+        type=_non_empty_str,
+        help="Your team tag — forwarded as team_name",
+    )
+    parser.add_argument(
+        "--area",
+        default=None,
+        type=_non_empty_str,
+        help="Optional area tag — forwarded as area_name",
+    )
     parser.add_argument("--k", type=int, default=5, help="Top-k cutoff for recall@k")
     parser.add_argument(
         "--debug",
@@ -314,6 +353,7 @@ def main() -> int:
     parser.add_argument(
         "--audience",
         default=None,
+        type=_non_empty_str,
         help=(
             "Entra API audience (e.g., api://<app-id>). When set, attaches a "
             "Bearer token via DefaultAzureCredential. Omit for auth.mode=none."
@@ -352,6 +392,27 @@ def main() -> int:
         )
     summary = summarize(results, args.k)
     print(format_report(results, summary, args.k))
+    # Detect near-catastrophic recall and exit non-zero so automation catches
+    # the failure. The threshold (10%) catches all-MISS (0/N) AND
+    # near-misses (e.g., 1/60 = 1.7%) which are equally catastrophic but
+    # bypassed the previous strict `== 0.0` check. A healthy 60-query suite
+    # baselines around 95% recall@20; below 10% always indicates a real
+    # problem (auth, data, or retrieval regression).
+    THRESHOLD = 0.10
+    n = len(results)
+    if results and summary[f"recall@{args.k}"] < THRESHOLD and summary["recall@1"] < THRESHOLD:
+        hits_at_k = int(round(summary[f"recall@{args.k}"] * n))
+        print(
+            f"\nERROR: {hits_at_k}/{n} queries hit at recall@{args.k} "
+            f"(threshold for sanity check: {int(THRESHOLD * 100)}%). Likely causes: "
+            f"(a) auth/connectivity failure (check Entra audience + api-url + token mint), "
+            f"(b) ground-truth quality regression "
+            f"(the expected_title_contains values may no longer match), "
+            f"(c) retrieval-quality regression (a recent SQL/weight change). "
+            f"See per-query output above to discriminate.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

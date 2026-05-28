@@ -341,3 +341,192 @@ class TestFormatReportDebug:
         report = format_report(results, summarize(results, k=5), k=5)
         assert "d#1 s#3" in report
         assert "d#4 s#1" in report
+
+
+def test_main_rejects_empty_audience(monkeypatch, tmp_path, capsys):
+    """Empty --audience triggers argparse type-callable rejection (SystemExit code 2)."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "https://example.com",
+            "--audience",
+            "",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
+        ],
+    )
+    from docforge.scripts import eval_search
+
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2, f"argparse error exits 2; got {exc_info.value.code}"
+
+
+def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
+    """Empty --user or --team triggers argparse type-callable rejection (SystemExit code 2)."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    base_argv = [
+        "eval_search",
+        "--api-url",
+        "https://example.com",
+        "--ground-truth",
+        str(gt),
+        "--user",
+        "alice",
+        "--team",
+        "ccl",
+    ]
+    for empty_flag in ("--user", "--team"):
+        argv = list(base_argv)
+        idx = argv.index(empty_flag)
+        argv[idx + 1] = ""
+        monkeypatch.setattr("sys.argv", argv)
+        from docforge.scripts import eval_search
+
+        with pytest.raises(SystemExit) as exc_info:
+            eval_search.main()
+        assert exc_info.value.code == 2, f"{empty_flag}='' should exit 2; got {exc_info.value.code}"
+
+
+def _run_with_timeout(target, args=(), kwargs=None, timeout=45):
+    """Run `target(*args, **kwargs)` on a daemon thread; fail the test if it doesn't
+    finish within `timeout` seconds. Cross-platform substitute for `pytest.mark.timeout`
+    (pytest-timeout isn't in dev deps; signal.alarm is Unix-only).
+
+    Returns whatever the target returns. Raises pytest.fail on timeout.
+    """
+    import threading
+
+    kwargs = kwargs or {}
+    box: dict[str, object] = {}
+
+    def runner() -> None:
+        try:
+            box["rc"] = target(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raise via box
+            box["exc"] = exc
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        pytest.fail(f"target did not return within {timeout}s — pathological loopback wait")
+    if "exc" in box:
+        raise box["exc"]  # type: ignore[misc]
+    return box.get("rc")
+
+
+def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
+    """If every query reports MISS (e.g., all 401 due to wrong audience),
+    main() must return non-zero.
+
+    Use --api-url pointing at an unreachable port; the HTTP layer will fail and every
+    query records as MISS. The current contract returns 0 even then — this test should
+    FAIL until the zero-hits exit-code fix is applied.
+
+    Wrapped in a 45s watchdog (`_run_with_timeout`) so pathological loopback waits
+    (e.g. on platforms where connect() to 127.0.0.1:1 hangs instead of fast-failing)
+    can't stall CI. This stands in for `pytest.mark.timeout(45)` since pytest-timeout
+    is not in the dev extras.
+    """
+    gt = tmp_path / "gt.yml"
+    # Loader requires 'q' (not 'query') + 'expected_title_contains' on each entry.
+    gt.write_text(
+        "queries:\n"
+        '  - q: "never-matches-anything-xyz"\n'
+        '    expected_title_contains: "impossible-target-zzz"\n'
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "http://127.0.0.1:1",  # unreachable
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
+            "--k",
+            "5",
+        ],
+    )
+    from docforge.scripts import eval_search
+
+    rc = _run_with_timeout(eval_search.main, timeout=45)
+    assert rc != 0, f"All-MISS eval must return non-zero; got {rc}"
+
+
+def test_main_rejects_angle_bracket_placeholders(monkeypatch, tmp_path):
+    """Literal placeholders like <you>, <your-team> must be rejected by argparse."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    for placeholder_val in ("<you>", "<your-team>", "<your-area>", "<api-audience>"):
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "eval_search",
+                "--api-url",
+                "https://example.com",
+                "--ground-truth",
+                str(gt),
+                "--user",
+                placeholder_val,
+                "--team",
+                "ccl",
+            ],
+        )
+        from docforge.scripts import eval_search
+
+        with pytest.raises(SystemExit) as exc_info:
+            eval_search.main()
+        assert exc_info.value.code == 2, f"placeholder {placeholder_val!r} should exit 2"
+
+
+def test_non_empty_str_strips_whitespace():
+    """_non_empty_str returns the trimmed value (not the original with surrounding whitespace)."""
+    from docforge.scripts.eval_search import _non_empty_str
+
+    assert _non_empty_str("  alice  ") == "alice"
+    assert _non_empty_str("\talice\n") == "alice"
+    assert _non_empty_str("alice") == "alice"  # no-op on already-clean input
+
+
+def test_main_rejects_empty_area(monkeypatch, tmp_path):
+    """Empty --area triggers argparse rejection.
+
+    Closes the asymmetry vs --user / --team / --audience.
+    """
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "https://example.com",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "alice",
+            "--team",
+            "ccl",
+            "--area",
+            "",
+        ],
+    )
+    from docforge.scripts import eval_search
+
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2
