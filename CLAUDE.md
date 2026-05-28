@@ -20,8 +20,9 @@ docforge is a CLI tool that forges searchable context from Confluence and git re
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-.venv/Scripts/activate      # Windows
+# Pick ONE of the following based on your OS — do NOT run both:
+source .venv/bin/activate   # macOS/Linux
+.venv\Scripts\activate      # Windows  (Git-Bash users: source .venv/Scripts/activate; PowerShell users: .venv\Scripts\Activate.ps1)
 pip install -e ".[dev]"
 ```
 
