@@ -37,6 +37,8 @@ def _non_empty_str(value: str) -> str:
     Documentation placeholders like `<you>` / `<your-team>` are non-empty
     but should be rejected before they pollute query_log.
     """
+    if value is None:
+        raise argparse.ArgumentTypeError("must not be None")
     stripped = value.strip()
     if not stripped:
         raise argparse.ArgumentTypeError("must not be empty")
