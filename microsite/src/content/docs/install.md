@@ -69,26 +69,23 @@ If your team already operates a docforge deployment and you only want to *use* i
 ```bash
 # Generic (no auth)
 pip install docforge-cli
-claude mcp add -s user -e DOCFORGE_API_URL=https://docforge.example.com \
-  docforge -- docforge serve --remote-api $DOCFORGE_API_URL
+claude mcp add -s user docforge -- docforge serve --remote-api https://docforge.example.com
 
 # Static Bearer token
 pip install docforge-cli
 claude mcp add -s user \
-  -e DOCFORGE_API_URL=https://docforge.example.com \
   -e DOCFORGE_API_TOKEN=eyJ... \
   -e DOCFORGE_AUTH=bearer \
-  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth bearer
+  docforge -- docforge serve --remote-api https://docforge.example.com --auth bearer
 
 # Entra (Azure AD)
 pip install docforge-cli[azure]
 az login --tenant <your-tenant-id>
 claude mcp add -s user \
-  -e DOCFORGE_API_URL=https://docforge.example.com \
   -e DOCFORGE_AUDIENCE=api://<app-registration-uri> \
   -e DOCFORGE_AUTH=azure \
   -e DOCFORGE_TEAM=your-team \
-  docforge -- docforge serve --remote-api $DOCFORGE_API_URL --auth azure
+  docforge -- docforge serve --remote-api https://docforge.example.com --auth azure
 ```
 
 :::note
