@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from docforge.config import Settings
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder, EmbedderProtocol
-from docforge.query_log import log_query, log_results
+from docforge.query_log import log_search
 
 logger = logging.getLogger(__name__)
 
@@ -390,32 +390,32 @@ async def search(
     t_total_ms = int((time.perf_counter() - start) * 1000)
 
     effective_user_name = user.preferred_username if user else (req.user_name or "anonymous")
-    qid = await log_query(
+    results_payload = (
+        [
+            {
+                "rank": i,
+                "score": float(row["similarity"]),
+                "source_url": row["source_url"],
+                "source_title": row["source_title"],
+                "section_title": row["section_title"],
+                "chunk_text": row["text"],
+            }
+            for i, row in enumerate(rows, 1)
+        ]
+        if settings.log_responses
+        else None
+    )
+    await log_search(
         pool,
         effective_user_name,
         req.team_name,
         req.area_name,
         req.query,
         len(rows),
+        results=results_payload,
         user_oid=user.oid if user else None,
         request_ms=t_total_ms,
     )
-    if settings.log_responses and qid:
-        await log_results(
-            pool,
-            qid,
-            [
-                {
-                    "rank": i,
-                    "score": float(row["similarity"]),
-                    "source_url": row["source_url"],
-                    "source_title": row["source_title"],
-                    "section_title": row["section_title"],
-                    "chunk_text": row["text"],
-                }
-                for i, row in enumerate(rows, 1)
-            ],
-        )
 
     results = [
         SearchResult(

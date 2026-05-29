@@ -1,10 +1,18 @@
-"""Tests for docforge.query_log.log_query and log_results."""
+"""Tests for docforge.query_log.log_query and log_search."""
 
 from __future__ import annotations
 
 import pytest
 
-from docforge.query_log import log_query, log_results
+from docforge.query_log import log_query, log_search
+
+
+class _NoopConnTxn:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *a):
+        return None
 
 
 class _ConnCapture:
@@ -17,6 +25,14 @@ class _ConnCapture:
             raise RuntimeError("boom")
         self.executed.append((query, args))
         return "00000000-0000-0000-0000-000000000001"
+
+    async def executemany(self, query, rows):
+        if self.raise_on_execute:
+            raise RuntimeError("boom")
+        self.executed.append((query, list(rows)))
+
+    def transaction(self):
+        return _NoopConnTxn()
 
 
 class _AcquireCtx:
@@ -154,72 +170,56 @@ async def test_log_query_request_ms_defaults_to_none():
     assert args[-1] is None
 
 
-class _ManyCapture:
-    def __init__(self, raise_on_call: bool = False):
-        self.raise_on_call = raise_on_call
-        self.many = []
-
-    async def executemany(self, query, rows):
-        if self.raise_on_call:
-            raise RuntimeError("boom")
-        self.many.append((query, list(rows)))
-
-
-def _many_pool(conn):
-    return _FakePool(conn)
+@pytest.mark.asyncio
+async def test_log_search_query_only_when_no_results():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    qid = await log_search(
+        pool=pool,
+        user_name="u",
+        team_name="t",
+        area_name=None,
+        query="q",
+        result_count=0,
+        results=None,
+    )
+    assert qid == "00000000-0000-0000-0000-000000000001"
+    assert len(conn.executed) == 1  # only the query_log INSERT
+    assert "INSERT INTO query_log" in conn.executed[0][0]
 
 
 @pytest.mark.asyncio
-async def test_log_results_inserts_rows():
-    conn = _ManyCapture()
-    results = [
-        {
-            "rank": 1,
-            "score": 0.03,
-            "source_url": "u1",
-            "source_title": "T1",
-            "section_title": "S1",
-            "chunk_text": "body1",
-        },
-        {
-            "rank": 2,
-            "score": 0.02,
-            "source_url": "u2",
-            "source_title": "T2",
-            "section_title": None,
-            "chunk_text": "body2",
-        },
-    ]
-    await log_results(_many_pool(conn), "qid-1", results)
-    assert len(conn.many) == 1
-    query, rows = conn.many[0]
-    assert "INSERT INTO query_result" in query
-    assert rows[0] == ("qid-1", 1, 0.03, "u1", "T1", "S1", "body1")
-    assert rows[1][5] is None  # section_title nullable
-
-
-@pytest.mark.asyncio
-async def test_log_results_empty_is_noop():
-    conn = _ManyCapture()
-    await log_results(_many_pool(conn), "qid-1", [])
-    assert conn.many == []
-
-
-@pytest.mark.asyncio
-async def test_log_results_swallows_failures():
-    conn = _ManyCapture(raise_on_call=True)
-    await log_results(
-        _many_pool(conn),
-        "qid-1",
-        [
+async def test_log_search_logs_query_and_results():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    qid = await log_search(
+        pool=pool,
+        user_name="u",
+        team_name="t",
+        area_name=None,
+        query="q",
+        result_count=1,
+        results=[
             {
                 "rank": 1,
-                "score": 0.0,
-                "source_url": "u",
-                "source_title": "t",
-                "section_title": None,
-                "chunk_text": "b",
+                "score": 0.03,
+                "source_url": "u1",
+                "source_title": "T1",
+                "section_title": "S1",
+                "chunk_text": "b1",
             }
         ],
     )
-    # must not raise
+    assert qid == "00000000-0000-0000-0000-000000000001"
+    joined = " ".join(q for q, _ in conn.executed)
+    assert "INSERT INTO query_log" in joined and "INSERT INTO query_result" in joined
+
+
+@pytest.mark.asyncio
+async def test_log_search_swallows_failure():
+    conn = _ConnCapture(raise_on_execute=True)
+    pool = _FakePool(conn)
+    qid = await log_search(
+        pool=pool, user_name="u", team_name="t", area_name=None, query="q", result_count=0
+    )
+    assert qid is None

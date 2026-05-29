@@ -7,6 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 
+class _NoopTxn:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *a):
+        return None
+
+
 class FakeConn:
     """asyncpg connection stand-in: `fetch` returns preset rows; `execute` is a no-op."""
 
@@ -18,6 +26,9 @@ class FakeConn:
 
     async def execute(self, query, *args):
         return None
+
+    def transaction(self):
+        return _NoopTxn()
 
 
 class _AcquireCtx:
@@ -60,6 +71,9 @@ class CapturingConn:
 
     async def executemany(self, query, args_list):
         self._executes.append((query, list(args_list)))
+
+    def transaction(self):
+        return _NoopTxn()
 
 
 class _CapturingAcquireCtx:
