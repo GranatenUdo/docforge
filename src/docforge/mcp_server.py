@@ -74,6 +74,12 @@ async def search_documentation(
         area_name: Your area tag (e.g., "cloud"). Optional; boosts area-tagged docs.
         limit: Maximum number of results to return. Must be between 1 and 50, default 10.
     """
+    # Note (maintainers): this embedded path is DENSE-ONLY cosine search. The pilot
+    # runs `docforge serve --remote-api`, which proxies to the FastAPI `/search`
+    # endpoint (hybrid dense+sparse RRF), so results here will NOT match prod for the
+    # same query. Kept as a comment, NOT docstring text, because @mcp.tool() ships the
+    # docstring to the calling LLM as the tool description (fastmcp inspect.getdoc).
+    # Treat this embedded tool as a local-dev convenience; keep eval/capture on /search.
     settings = _get_settings()
     embedder = _get_embedder()
 

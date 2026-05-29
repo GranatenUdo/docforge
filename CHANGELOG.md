@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-05-29
+
+### Added
+- Server-side response capture: `/search` now records each returned result
+  (rank, score, source url/title, section, chunk text) into a new
+  `query_result` table, gated by the default-off `LOG_RESPONSES` flag
+  (`log_responses` setting). Cascades with `query_log`, inheriting the
+  existing 180-day retention cleanup. Migration `010_add_query_result.sql`.
+- `LOG_RESPONSES` bicep param (default-off) to enable capture per deployment.
+
+### Changed
+- `/search` and the MCP `search_documentation` default `limit` raised 5 → 10.
+- The hosted MCP `/search` result formatter (`formatters.py`) no longer prints
+  a `relevance:` score; the raw weighted-RRF value (~0.03 ceiling) was
+  misleading to end users. (The local `docforge search` CLI and the `docforge
+  init` client template still show it — out of scope for this release.)
+
 ### Fixed
 - `eval_search`: `--audience`, `--user`, `--team` now reject empty strings
   via argparse type-callable. Empty-string expansion (e.g.,
