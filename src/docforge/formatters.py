@@ -21,7 +21,7 @@ def format_search_results_markdown(
 ) -> str:
     """Render a list of search-result dicts as the canonical Markdown shape.
 
-    Each result must have keys: similarity, source_title, source_url, text.
+    Each result must have keys: source_title, source_url, text.
     Optional: section_title, source_tags.
     """
     if not results:
@@ -29,7 +29,7 @@ def format_search_results_markdown(
 
     parts: list[str] = []
     for i, r in enumerate(results, 1):
-        header = f"**Result {i}** (relevance: {r['similarity']:.2f}) -- {r['source_title']}"
+        header = f"**Result {i}** -- {r['source_title']}"
         if r.get("section_title"):
             header += f" > {r['section_title']}"
         header += f"\nSource: {r['source_url']}"
