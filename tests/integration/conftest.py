@@ -52,7 +52,7 @@ async def pg_url(_pg_url_session):
     url = _pg_url_session
     conn = await asyncpg.connect(url)
     try:
-        await conn.execute("TRUNCATE sources, chunks RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE sources, chunks, query_log RESTART IDENTITY CASCADE")
     finally:
         await conn.close()
     yield url

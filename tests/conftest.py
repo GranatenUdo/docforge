@@ -7,6 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 
+class _NoopTxn:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *a):
+        return None
+
+
 class FakeConn:
     """asyncpg connection stand-in: `fetch` returns preset rows; `execute` is a no-op."""
 
@@ -18,6 +26,9 @@ class FakeConn:
 
     async def execute(self, query, *args):
         return None
+
+    def transaction(self):
+        return _NoopTxn()
 
 
 class _AcquireCtx:
@@ -54,6 +65,16 @@ class CapturingConn:
     async def execute(self, query, *args):
         self._executes.append((query, args))
 
+    async def fetchval(self, query, *args):
+        self._executes.append((query, args))
+        return "00000000-0000-0000-0000-000000000001"
+
+    async def executemany(self, query, args_list):
+        self._executes.append((query, list(args_list)))
+
+    def transaction(self):
+        return _NoopTxn()
+
 
 class _CapturingAcquireCtx:
     def __init__(self, conn):
@@ -87,6 +108,7 @@ def fake_settings():
         pool_min_size=5,
         pool_max_size=25,
         query_log_retention_days=180,
+        log_responses=False,
         hybrid_pool_size=100,
         rrf_k=60,
         fts_language="english",

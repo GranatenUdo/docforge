@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from docforge.scripts.eval_search import (
     QueryResult,
@@ -370,7 +373,8 @@ def test_main_rejects_empty_audience(monkeypatch, tmp_path, capsys):
     assert exc_info.value.code == 2, f"argparse error exits 2; got {exc_info.value.code}"
 
 
-def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
+@pytest.mark.parametrize("empty_flag", ["--user", "--team"])
+def test_main_rejects_empty_required_identity(monkeypatch, tmp_path, empty_flag):
     """Empty --user or --team triggers argparse type-callable rejection (SystemExit code 2)."""
     gt = tmp_path / "gt.yml"
     gt.write_text("queries: []\n")
@@ -385,16 +389,15 @@ def test_main_rejects_empty_user_and_team(monkeypatch, tmp_path):
         "--team",
         "ccl",
     ]
-    for empty_flag in ("--user", "--team"):
-        argv = list(base_argv)
-        idx = argv.index(empty_flag)
-        argv[idx + 1] = ""
-        monkeypatch.setattr("sys.argv", argv)
-        from docforge.scripts import eval_search
+    argv = list(base_argv)
+    idx = argv.index(empty_flag)
+    argv[idx + 1] = ""
+    monkeypatch.setattr("sys.argv", argv)
+    from docforge.scripts import eval_search
 
-        with pytest.raises(SystemExit) as exc_info:
-            eval_search.main()
-        assert exc_info.value.code == 2, f"{empty_flag}='' should exit 2; got {exc_info.value.code}"
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2, f"{empty_flag}='' should exit 2; got {exc_info.value.code}"
 
 
 def _run_with_timeout(target, args=(), kwargs=None, timeout=45):
@@ -425,7 +428,7 @@ def _run_with_timeout(target, args=(), kwargs=None, timeout=45):
     return box.get("rc")
 
 
-def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
+def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path, capsys):
     """If every query reports MISS (e.g., all 401 due to wrong audience),
     main() must return non-zero.
 
@@ -445,6 +448,11 @@ def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
         '  - q: "never-matches-anything-xyz"\n'
         '    expected_title_contains: "impossible-target-zzz"\n'
     )
+    # NOTE: this test assumes a single-query ground truth so the 45s timeout
+    # budget (httpx default connect_timeout=30s) doesn't blow on pathological
+    # firewall behavior. If you expand the fixture, bump the timeout.
+    with open(gt) as f:
+        assert len(yaml.safe_load(f)["queries"]) == 1
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -464,33 +472,42 @@ def test_main_returns_nonzero_when_all_queries_miss(monkeypatch, tmp_path):
     from docforge.scripts import eval_search
 
     rc = _run_with_timeout(eval_search.main, timeout=45)
-    assert rc != 0, f"All-MISS eval must return non-zero; got {rc}"
+    assert rc != 0, "all-MISS must exit nonzero"
+    captured = capsys.readouterr()
+    # Pin the shape of the threshold error, not the exact wording.
+    # Expected format: "0/1 queries hit at recall@5 (threshold ... 10%)"
+    assert re.search(r"\d+/\d+", captured.err), (
+        f"expected 'N/M' shape in stderr, got: {captured.err[:200]}"
+    )
+    assert re.search(r"\d+\s*%", captured.err), (
+        f"expected a percentage in stderr, got: {captured.err[:200]}"
+    )
 
 
-def test_main_rejects_angle_bracket_placeholders(monkeypatch, tmp_path):
-    """Literal placeholders like <you>, <your-team> must be rejected by argparse."""
+@pytest.mark.parametrize("placeholder", ["<you>", "<your-team>", "<your-area>", "<api-audience>"])
+def test_main_rejects_angle_bracket_placeholder(monkeypatch, tmp_path, placeholder):
+    """Each placeholder literal triggers argparse rejection independently."""
     gt = tmp_path / "gt.yml"
     gt.write_text("queries: []\n")
-    for placeholder_val in ("<you>", "<your-team>", "<your-area>", "<api-audience>"):
-        monkeypatch.setattr(
-            "sys.argv",
-            [
-                "eval_search",
-                "--api-url",
-                "https://example.com",
-                "--ground-truth",
-                str(gt),
-                "--user",
-                placeholder_val,
-                "--team",
-                "ccl",
-            ],
-        )
-        from docforge.scripts import eval_search
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "https://example.com",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            placeholder,
+            "--team",
+            "ccl",
+        ],
+    )
+    from docforge.scripts import eval_search
 
-        with pytest.raises(SystemExit) as exc_info:
-            eval_search.main()
-        assert exc_info.value.code == 2, f"placeholder {placeholder_val!r} should exit 2"
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2, f"placeholder {placeholder!r} should exit 2"
 
 
 def test_non_empty_str_strips_whitespace():
@@ -500,6 +517,14 @@ def test_non_empty_str_strips_whitespace():
     assert _non_empty_str("  alice  ") == "alice"
     assert _non_empty_str("\talice\n") == "alice"
     assert _non_empty_str("alice") == "alice"  # no-op on already-clean input
+
+
+def test_non_empty_str_rejects_none():
+    """_non_empty_str rejects None explicitly — defensive for any non-argparse caller."""
+    from docforge.scripts.eval_search import _non_empty_str
+
+    with pytest.raises(argparse.ArgumentTypeError, match="must not be None"):
+        _non_empty_str(None)  # type: ignore[arg-type]
 
 
 def test_main_rejects_empty_area(monkeypatch, tmp_path):

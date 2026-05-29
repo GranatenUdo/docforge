@@ -66,8 +66,8 @@ async def test_search_documentation_formats_results(patch_mcp_deps):
     )
 
     assert "Platform team owns orgs." in result
-    assert "0.92" in result
     assert "Tags: platform, cloud" in result
+    assert "**Result 1** -- Team Responsibilities" in result
     # query_log insert fired
     assert any("INSERT INTO query_log" in q for q, _ in pool.executes)
 

@@ -146,6 +146,11 @@ class Settings(BaseSettings):
     # query_log retention — app-level cleanup loop deletes rows older than this
     query_log_retention_days: int = 180
 
+    # When true, /search writes per-result snapshots to query_result (capture
+    # for the review/feedback loop). Default off so other consumers are
+    # unaffected; the CCL pilot enables it via bicepparam (LOG_RESPONSES=true).
+    log_responses: bool = False
+
     # asyncpg pool sizing — defaults match the operating profile (multi-replica,
     # bursty AI-assistant traffic). Smaller deploys can lower these via
     # POOL_MIN_SIZE / POOL_MAX_SIZE env vars.

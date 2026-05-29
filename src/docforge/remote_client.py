@@ -260,7 +260,7 @@ class RemoteBackend:
         # Anything else is already a formatted error string.
         return first
 
-    async def search(self, *, query: str, limit: int = 5) -> str:
+    async def search(self, *, query: str, limit: int = 10) -> str:
         """Search the remote API and return Markdown-formatted results."""
         body: dict[str, object] = {"query": query, "limit": limit}
         body.update(self._identity_body())
@@ -355,7 +355,7 @@ def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> No
     mcp = FastMCP("docforge", instructions=INSTRUCTIONS)
 
     @mcp.tool()
-    async def search_documentation(query: str, limit: int = 5) -> str:
+    async def search_documentation(query: str, limit: int = 10) -> str:
         """Search across indexed documentation from Confluence pages and git repos."""
         return await _run_tool_with_timeout(
             "search_documentation",

@@ -229,14 +229,14 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_uses_anonymous_when_no_auth_no_user_name(self, monkeypatch):
-        """POST /search without user_name and no auth → log_query receives 'anonymous'."""
+        """POST /search without user_name and no auth → log_search receives 'anonymous'."""
         captured: dict = {}
 
-        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+        async def fake_log_search(pool, user_name, team_name, area_name, query, count, **kwargs):
             captured["user_name"] = user_name
             captured["team_name"] = team_name
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         async with _client() as client:
             resp = await client.post("/search", json={"query": "hello", "limit": 5})
@@ -247,17 +247,17 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_uses_auth_subject_when_present(self, monkeypatch):
-        """POST /search with auth subject → log_query receives preferred_username."""
+        """POST /search with auth subject → log_search receives preferred_username."""
         from types import SimpleNamespace
 
         from docforge.api import _auth_dependency
 
         captured: dict = {}
 
-        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+        async def fake_log_search(pool, user_name, team_name, area_name, query, count, **kwargs):
             captured["user_name"] = user_name
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         fake_user = SimpleNamespace(preferred_username="tobias.ens", oid="abc-123")
         app.dependency_overrides[_auth_dependency] = lambda: fake_user
@@ -317,16 +317,16 @@ class TestSourcesEndpoint:
 
 class TestRequestTimingInstrumentation:
     """C4.3 — the /search handler measures its own wall-clock time and
-    passes request_ms into log_query."""
+    passes request_ms into log_search."""
 
     @pytest.mark.asyncio
     async def test_search_writes_request_ms_to_query_log(self, monkeypatch):
         captured: dict = {}
 
-        async def fake_log_query(*args, **kwargs):
+        async def fake_log_search(*args, **kwargs):
             captured.update(kwargs)
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         from tests.conftest import FakeEmbedder
 
@@ -354,6 +354,12 @@ class TestRequestTimingInstrumentation:
         assert captured["request_ms"] >= 0
         # Sanity: should be much less than a second for a stubbed handler.
         assert captured["request_ms"] < 1000
+
+
+def test_search_request_default_limit_is_10():
+    from docforge.api import SearchRequest
+
+    assert SearchRequest(query="x").limit == 10
 
 
 def test_search_request_user_name_and_team_name_optional():
@@ -508,6 +514,69 @@ class TestLifespanLoggingConfig:
         assert final_level == logging.INFO, (
             f"lifespan must reconfigure root logger to INFO; got {final_level}"
         )
+
+
+@pytest.mark.asyncio
+async def test_search_captures_results_when_flag_on():
+    from tests.conftest import FakeEmbedder, fake_settings
+
+    def _settings_capture():
+        s = fake_settings()
+        s.log_responses = True
+        return s
+
+    rows = [
+        {
+            "text": "Platform owns orgs.",
+            "section_title": "Platform",
+            "source_title": "Doc A",
+            "source_url": "https://wiki/a",
+            "source_tags": ["org"],
+            "similarity": 0.03,
+        }
+    ]
+    pool = CapturingPool(rows)
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+    app.dependency_overrides[get_pool_dep] = lambda: pool
+    app.dependency_overrides[get_settings] = _settings_capture
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                "/search", json={"query": "q", "user_name": "u", "team_name": "ccl", "limit": 5}
+            )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert any("INSERT INTO query_result" in q for q, _ in pool.executes)
+
+
+@pytest.mark.asyncio
+async def test_search_skips_capture_when_flag_off():
+    from tests.conftest import FakeEmbedder
+
+    rows = [
+        {
+            "text": "x",
+            "section_title": None,
+            "source_title": "T",
+            "source_url": "u",
+            "source_tags": [],
+            "similarity": 0.01,
+        }
+    ]
+    pool = CapturingPool(rows)
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+    app.dependency_overrides[get_pool_dep] = lambda: pool
+    app.dependency_overrides[get_settings] = fake_settings  # log_responses=False
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                "/search", json={"query": "q", "user_name": "u", "team_name": "t", "limit": 5}
+            )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert not any("INSERT INTO query_result" in q for q, _ in pool.executes)
 
 
 class TestSearchDebugMode:
