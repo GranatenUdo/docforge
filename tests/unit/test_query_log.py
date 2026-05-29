@@ -12,10 +12,11 @@ class _ConnCapture:
         self.raise_on_execute = raise_on_execute
         self.executed = []
 
-    async def execute(self, query, *args):
+    async def fetchval(self, query, *args):
         if self.raise_on_execute:
             raise RuntimeError("boom")
         self.executed.append((query, args))
+        return "00000000-0000-0000-0000-000000000001"
 
 
 class _AcquireCtx:
@@ -41,18 +42,15 @@ class _FakePool:
 async def test_log_query_inserts_row():
     conn = _ConnCapture()
     pool = _FakePool(conn)
-    await log_query(
-        pool=pool,
-        user_name="tobias.ens",
-        team_name="platform",
-        area_name="cloud",
-        query="retry policy",
-        result_count=3,
+    returned = await log_query(
+        pool=pool, user_name="tobias.ens", team_name="platform",
+        area_name="cloud", query="retry policy", result_count=3,
     )
     assert len(conn.executed) == 1
     query, args = conn.executed[0]
-    assert "INSERT INTO query_log" in query
+    assert "INSERT INTO query_log" in query and "RETURNING id" in query
     assert args == ("tobias.ens", "platform", "cloud", "retry policy", 3, None, None)
+    assert returned == "00000000-0000-0000-0000-000000000001"
 
 
 @pytest.mark.asyncio
@@ -76,14 +74,9 @@ async def test_log_query_swallows_failures():
     conn = _ConnCapture(raise_on_execute=True)
     pool = _FakePool(conn)
     # Must not raise
-    await log_query(
-        pool=pool,
-        user_name="a",
-        team_name="b",
-        area_name=None,
-        query="q",
-        result_count=0,
-    )
+    returned = await log_query(pool=pool, user_name="a", team_name="b",
+                               area_name=None, query="q", result_count=0)
+    assert returned is None
 
 
 @pytest.mark.asyncio

@@ -21,25 +21,21 @@ async def log_query(
     result_count: int,
     user_oid: str | None = None,
     request_ms: int | None = None,
-) -> None:
-    """Record a search request. user_oid is the Entra object ID (post-auth)
-    or None (pre-auth rows). request_ms is the handler's wall-clock time in
-    milliseconds (post-C4.3) or None (pre-C4.3 rows). Never raises."""
+) -> str | None:
+    """Record a search request and return the new row id (str UUID), or None on
+    failure. Never raises — query logging must never break a search."""
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
+            row_id = await conn.fetchval(
                 """
                 INSERT INTO query_log
                     (user_name, team_name, area_name, query, result_count, user_oid, request_ms)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
                 """,
-                user_name,
-                team_name,
-                area_name,
-                query,
-                result_count,
-                user_oid,
-                request_ms,
+                user_name, team_name, area_name, query, result_count, user_oid, request_ms,
             )
+        return str(row_id) if row_id is not None else None
     except Exception as e:
         logger.warning("query_log insert failed: %s", e)
+        return None
