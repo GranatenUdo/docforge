@@ -1,4 +1,5 @@
 """Integration test: migration 010 adds the query_result table."""
+
 from __future__ import annotations
 
 import asyncpg
@@ -18,8 +19,15 @@ async def test_query_result_table_shape(pg_url):
         }
         assert cols, "query_result table missing"
         for name in (
-            "id", "query_log_id", "rank", "score",
-            "source_url", "source_title", "section_title", "chunk_text", "created_at",
+            "id",
+            "query_log_id",
+            "rank",
+            "score",
+            "source_url",
+            "source_title",
+            "section_title",
+            "chunk_text",
+            "created_at",
         ):
             assert name in cols, f"missing column {name}"
         assert "chunk_id" not in cols and "source_id" not in cols

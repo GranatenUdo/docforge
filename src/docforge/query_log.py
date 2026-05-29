@@ -33,7 +33,13 @@ async def log_query(
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
-                user_name, team_name, area_name, query, result_count, user_oid, request_ms,
+                user_name,
+                team_name,
+                area_name,
+                query,
+                result_count,
+                user_oid,
+                request_ms,
             )
         return str(row_id) if row_id is not None else None
     except Exception as e:

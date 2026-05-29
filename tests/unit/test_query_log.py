@@ -43,8 +43,12 @@ async def test_log_query_inserts_row():
     conn = _ConnCapture()
     pool = _FakePool(conn)
     returned = await log_query(
-        pool=pool, user_name="tobias.ens", team_name="platform",
-        area_name="cloud", query="retry policy", result_count=3,
+        pool=pool,
+        user_name="tobias.ens",
+        team_name="platform",
+        area_name="cloud",
+        query="retry policy",
+        result_count=3,
     )
     assert len(conn.executed) == 1
     query, args = conn.executed[0]
@@ -74,8 +78,9 @@ async def test_log_query_swallows_failures():
     conn = _ConnCapture(raise_on_execute=True)
     pool = _FakePool(conn)
     # Must not raise
-    returned = await log_query(pool=pool, user_name="a", team_name="b",
-                               area_name=None, query="q", result_count=0)
+    returned = await log_query(
+        pool=pool, user_name="a", team_name="b", area_name=None, query="q", result_count=0
+    )
     assert returned is None
 
 
@@ -168,10 +173,22 @@ def _many_pool(conn):
 async def test_log_results_inserts_rows():
     conn = _ManyCapture()
     results = [
-        {"rank": 1, "score": 0.03, "source_url": "u1", "source_title": "T1",
-         "section_title": "S1", "chunk_text": "body1"},
-        {"rank": 2, "score": 0.02, "source_url": "u2", "source_title": "T2",
-         "section_title": None, "chunk_text": "body2"},
+        {
+            "rank": 1,
+            "score": 0.03,
+            "source_url": "u1",
+            "source_title": "T1",
+            "section_title": "S1",
+            "chunk_text": "body1",
+        },
+        {
+            "rank": 2,
+            "score": 0.02,
+            "source_url": "u2",
+            "source_title": "T2",
+            "section_title": None,
+            "chunk_text": "body2",
+        },
     ]
     await log_results(_many_pool(conn), "qid-1", results)
     assert len(conn.many) == 1
@@ -191,6 +208,18 @@ async def test_log_results_empty_is_noop():
 @pytest.mark.asyncio
 async def test_log_results_swallows_failures():
     conn = _ManyCapture(raise_on_call=True)
-    await log_results(_many_pool(conn), "qid-1", [{"rank": 1, "score": 0.0,
-        "source_url": "u", "source_title": "t", "section_title": None, "chunk_text": "b"}])
+    await log_results(
+        _many_pool(conn),
+        "qid-1",
+        [
+            {
+                "rank": 1,
+                "score": 0.0,
+                "source_url": "u",
+                "source_title": "t",
+                "section_title": None,
+                "chunk_text": "b",
+            }
+        ],
+    )
     # must not raise

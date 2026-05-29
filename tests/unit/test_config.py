@@ -328,10 +328,12 @@ def test_sources_hygiene_disabled_via_none():
 def test_log_responses_defaults_false(monkeypatch):
     monkeypatch.delenv("LOG_RESPONSES", raising=False)
     from docforge.config import Settings
+
     assert Settings().log_responses is False
 
 
 def test_log_responses_env_true(monkeypatch):
     monkeypatch.setenv("LOG_RESPONSES", "true")
     from docforge.config import Settings
+
     assert Settings().log_responses is True
