@@ -32,8 +32,8 @@ def test_format_single_result_renders_canonical_shape():
             }
         ]
     )
-    assert "**Result 1**" in out
-    assert "relevance: 0.85" in out
+    assert "**Result 1** -- My Page" in out
+    assert "relevance:" not in out
     assert "My Page" in out
     assert "> Overview" in out
     assert "Source: https://example.com" in out
