@@ -493,6 +493,31 @@ def test_main_rejects_angle_bracket_placeholders(monkeypatch, tmp_path):
         assert exc_info.value.code == 2, f"placeholder {placeholder_val!r} should exit 2"
 
 
+def test_main_rejects_empty_angle_brackets(monkeypatch, tmp_path):
+    """`<>` (empty placeholder brackets) must be rejected — not just `<x>`."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "https://example.com",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "<>",
+            "--team",
+            "ccl",
+        ],
+    )
+    from docforge.scripts import eval_search
+
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2
+
+
 def test_non_empty_str_strips_whitespace():
     """_non_empty_str returns the trimmed value (not the original with surrounding whitespace)."""
     from docforge.scripts.eval_search import _non_empty_str

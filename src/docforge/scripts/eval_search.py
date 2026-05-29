@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]+>$")
+_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]*>$")
 
 
 def _non_empty_str(value: str) -> str:
