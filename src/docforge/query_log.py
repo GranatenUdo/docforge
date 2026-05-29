@@ -39,3 +39,39 @@ async def log_query(
     except Exception as e:
         logger.warning("query_log insert failed: %s", e)
         return None
+
+
+async def log_results(
+    pool: asyncpg.Pool,
+    query_log_id: str,
+    results: list[dict],
+) -> None:
+    """Batch-insert per-result snapshots into query_result. Best-effort; never
+    raises. Each item needs: rank, score, source_url, source_title,
+    section_title (optional), chunk_text."""
+    if not results:
+        return
+    try:
+        rows = [
+            (
+                query_log_id,
+                r["rank"],
+                r["score"],
+                r["source_url"],
+                r["source_title"],
+                r.get("section_title"),
+                r["chunk_text"],
+            )
+            for r in results
+        ]
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                """
+                INSERT INTO query_result
+                    (query_log_id, rank, score, source_url, source_title, section_title, chunk_text)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                rows,
+            )
+    except Exception as e:
+        logger.warning("query_result insert failed: %s", e)

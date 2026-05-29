@@ -1,10 +1,10 @@
-"""Tests for docforge.query_log.log_query."""
+"""Tests for docforge.query_log.log_query and log_results."""
 
 from __future__ import annotations
 
 import pytest
 
-from docforge.query_log import log_query
+from docforge.query_log import log_query, log_results
 
 
 class _ConnCapture:
@@ -147,3 +147,50 @@ async def test_log_query_request_ms_defaults_to_none():
     )
     _, args = conn.executed[0]
     assert args[-1] is None
+
+
+class _ManyCapture:
+    def __init__(self, raise_on_call: bool = False):
+        self.raise_on_call = raise_on_call
+        self.many = []
+
+    async def executemany(self, query, rows):
+        if self.raise_on_call:
+            raise RuntimeError("boom")
+        self.many.append((query, list(rows)))
+
+
+def _many_pool(conn):
+    return _FakePool(conn)
+
+
+@pytest.mark.asyncio
+async def test_log_results_inserts_rows():
+    conn = _ManyCapture()
+    results = [
+        {"rank": 1, "score": 0.03, "source_url": "u1", "source_title": "T1",
+         "section_title": "S1", "chunk_text": "body1"},
+        {"rank": 2, "score": 0.02, "source_url": "u2", "source_title": "T2",
+         "section_title": None, "chunk_text": "body2"},
+    ]
+    await log_results(_many_pool(conn), "qid-1", results)
+    assert len(conn.many) == 1
+    query, rows = conn.many[0]
+    assert "INSERT INTO query_result" in query
+    assert rows[0] == ("qid-1", 1, 0.03, "u1", "T1", "S1", "body1")
+    assert rows[1][5] is None  # section_title nullable
+
+
+@pytest.mark.asyncio
+async def test_log_results_empty_is_noop():
+    conn = _ManyCapture()
+    await log_results(_many_pool(conn), "qid-1", [])
+    assert conn.many == []
+
+
+@pytest.mark.asyncio
+async def test_log_results_swallows_failures():
+    conn = _ManyCapture(raise_on_call=True)
+    await log_results(_many_pool(conn), "qid-1", [{"rank": 1, "score": 0.0,
+        "source_url": "u", "source_title": "t", "section_title": None, "chunk_text": "b"}])
+    # must not raise
