@@ -37,6 +37,8 @@ def _non_empty_str(value: str) -> str:
     Documentation placeholders like `<you>` / `<your-team>` are non-empty
     but should be rejected before they pollute query_log.
     """
+    # Defensive: argparse never passes None to a type= callable, but direct
+    # callers from tests / scripts might.
     if value is None:
         raise argparse.ArgumentTypeError("must not be None")
     stripped = value.strip()
