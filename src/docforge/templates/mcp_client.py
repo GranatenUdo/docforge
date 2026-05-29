@@ -31,12 +31,12 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-async def search_documentation(query: str, limit: int = 5) -> str:
+async def search_documentation(query: str, limit: int = 10) -> str:
     """Search across indexed documentation from Confluence pages and git repos.
 
     Args:
         query: Natural language search query.
-        limit: Maximum number of results to return (default 5).
+        limit: Maximum number of results to return (default 10).
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(

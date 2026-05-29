@@ -171,7 +171,7 @@ class SearchRequest(BaseModel):
     user_name: str | None = None
     team_name: str | None = None
     area_name: str | None = None
-    limit: int = Field(5, ge=1, le=50)
+    limit: int = Field(10, ge=1, le=50)
     debug: bool = Field(
         False,
         description=(
