@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `/search` and the MCP `search_documentation` default `limit` raised 5 → 10.
-- Result rendering no longer prints a `relevance:` score; the raw weighted-RRF
-  value (~0.03 ceiling) was misleading to end users.
+- The hosted MCP `/search` result formatter (`formatters.py`) no longer prints
+  a `relevance:` score; the raw weighted-RRF value (~0.03 ceiling) was
+  misleading to end users. (The local `docforge search` CLI and the `docforge
+  init` client template still show it — out of scope for this release.)
 
 ### Fixed
 - `eval_search`: `--audience`, `--user`, `--team` now reject empty strings
