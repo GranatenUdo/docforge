@@ -229,14 +229,14 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_uses_anonymous_when_no_auth_no_user_name(self, monkeypatch):
-        """POST /search without user_name and no auth → log_query receives 'anonymous'."""
+        """POST /search without user_name and no auth → log_search receives 'anonymous'."""
         captured: dict = {}
 
-        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+        async def fake_log_search(pool, user_name, team_name, area_name, query, count, **kwargs):
             captured["user_name"] = user_name
             captured["team_name"] = team_name
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         async with _client() as client:
             resp = await client.post("/search", json={"query": "hello", "limit": 5})
@@ -247,17 +247,17 @@ class TestSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_uses_auth_subject_when_present(self, monkeypatch):
-        """POST /search with auth subject → log_query receives preferred_username."""
+        """POST /search with auth subject → log_search receives preferred_username."""
         from types import SimpleNamespace
 
         from docforge.api import _auth_dependency
 
         captured: dict = {}
 
-        async def fake_log_query(pool, user_name, team_name, area_name, query, count, **kwargs):
+        async def fake_log_search(pool, user_name, team_name, area_name, query, count, **kwargs):
             captured["user_name"] = user_name
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         fake_user = SimpleNamespace(preferred_username="tobias.ens", oid="abc-123")
         app.dependency_overrides[_auth_dependency] = lambda: fake_user
@@ -317,16 +317,16 @@ class TestSourcesEndpoint:
 
 class TestRequestTimingInstrumentation:
     """C4.3 — the /search handler measures its own wall-clock time and
-    passes request_ms into log_query."""
+    passes request_ms into log_search."""
 
     @pytest.mark.asyncio
     async def test_search_writes_request_ms_to_query_log(self, monkeypatch):
         captured: dict = {}
 
-        async def fake_log_query(*args, **kwargs):
+        async def fake_log_search(*args, **kwargs):
             captured.update(kwargs)
 
-        monkeypatch.setattr("docforge.api.log_query", fake_log_query)
+        monkeypatch.setattr("docforge.api.log_search", fake_log_search)
 
         from tests.conftest import FakeEmbedder
 
