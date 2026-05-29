@@ -59,29 +59,30 @@ async def log_search(
     user_oid: str | None = None,
     request_ms: int | None = None,
 ) -> str | None:
-    """Record a search (query_log) and, when `results` is given, its per-result
-    snapshots (query_result) in ONE transaction. Returns the query_log id (str)
-    or None on failure. Best-effort; never raises. Each result dict needs:
-    rank, score, source_url, source_title, section_title (optional), chunk_text."""
+    """Record a search request in query_log and, when `results` is given,
+    snapshot each result in query_result best-effort — the query is always
+    logged even if result capture fails. Returns the query_log id (str) or
+    None on failure. Never raises. Each result dict needs: rank, score,
+    source_url, source_title, section_title (optional), chunk_text."""
     try:
         async with pool.acquire() as conn:
-            async with conn.transaction():
-                row_id = await conn.fetchval(
-                    """
-                    INSERT INTO query_log
-                        (user_name, team_name, area_name, query, result_count, user_oid, request_ms)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    RETURNING id
-                    """,
-                    user_name,
-                    team_name,
-                    area_name,
-                    query,
-                    result_count,
-                    user_oid,
-                    request_ms,
-                )
-                if results:
+            row_id = await conn.fetchval(
+                """
+                INSERT INTO query_log
+                    (user_name, team_name, area_name, query, result_count, user_oid, request_ms)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+                """,
+                user_name,
+                team_name,
+                area_name,
+                query,
+                result_count,
+                user_oid,
+                request_ms,
+            )
+            if results:
+                try:
                     await conn.executemany(
                         """
                         INSERT INTO query_result
@@ -102,6 +103,8 @@ async def log_search(
                             for r in results
                         ],
                     )
+                except Exception as e:
+                    logger.warning("query_result insert failed: %s", e)
         return str(row_id) if row_id is not None else None
     except Exception as e:
         logger.warning("log_search failed: %s", e)

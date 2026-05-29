@@ -156,6 +156,7 @@ async def test_remote_backend_search_happy_path(monkeypatch):
 
     assert "Test Page" in result
     assert "**Result 1**" in result
+    assert "**Result 1** -- Test Page" in result
     assert "Tags: org" in result
     assert captured["url"] == "https://api.example.com/search"
     assert captured["body"] == {"query": "hello", "limit": 5}

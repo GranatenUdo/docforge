@@ -356,6 +356,12 @@ class TestRequestTimingInstrumentation:
         assert captured["request_ms"] < 1000
 
 
+def test_search_request_default_limit_is_10():
+    from docforge.api import SearchRequest
+
+    assert SearchRequest(query="x").limit == 10
+
+
 def test_search_request_user_name_and_team_name_optional():
     """SearchRequest validates without user_name or team_name (relaxed schema)."""
     from docforge.api import SearchRequest

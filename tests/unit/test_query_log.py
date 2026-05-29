@@ -16,8 +16,9 @@ class _NoopConnTxn:
 
 
 class _ConnCapture:
-    def __init__(self, raise_on_execute: bool = False):
+    def __init__(self, raise_on_execute: bool = False, raise_on_executemany: bool = False):
         self.raise_on_execute = raise_on_execute
+        self.raise_on_executemany = raise_on_executemany
         self.executed = []
 
     async def fetchval(self, query, *args):
@@ -27,7 +28,7 @@ class _ConnCapture:
         return "00000000-0000-0000-0000-000000000001"
 
     async def executemany(self, query, rows):
-        if self.raise_on_execute:
+        if self.raise_on_execute or self.raise_on_executemany:
             raise RuntimeError("boom")
         self.executed.append((query, list(rows)))
 
@@ -223,3 +224,30 @@ async def test_log_search_swallows_failure():
         pool=pool, user_name="u", team_name="t", area_name=None, query="q", result_count=0
     )
     assert qid is None
+
+
+@pytest.mark.asyncio
+async def test_log_search_logs_query_even_when_results_fail():
+    conn = _ConnCapture(raise_on_executemany=True)
+    pool = _FakePool(conn)
+    qid = await log_search(
+        pool=pool,
+        user_name="u",
+        team_name="t",
+        area_name=None,
+        query="q",
+        result_count=1,
+        results=[
+            {
+                "rank": 1,
+                "score": 0.03,
+                "source_url": "u1",
+                "source_title": "T1",
+                "section_title": "S1",
+                "chunk_text": "b1",
+            }
+        ],
+    )
+    # query_log was written (id returned) despite the query_result failure being swallowed
+    assert qid == "00000000-0000-0000-0000-000000000001"
+    assert any("INSERT INTO query_log" in q for q, _ in conn.executed)
