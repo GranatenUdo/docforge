@@ -36,7 +36,8 @@ async def test_query_result_cascades_on_query_log_delete(pg_url):
             "VALUES ('u','t',NULL,'q',1) RETURNING id"
         )
         await conn.execute(
-            "INSERT INTO query_result (query_log_id, rank, score, source_url, source_title, chunk_text) "
+            "INSERT INTO query_result "
+            "(query_log_id, rank, score, source_url, source_title, chunk_text) "
             "VALUES ($1, 1, 0.03, 'http://x', 'X', 'body')",
             qid,
         )
