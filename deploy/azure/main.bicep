@@ -124,6 +124,9 @@ param denseWeight string = '1.0'
 @description('Per-retriever multiplier on the sparse path RRF contribution. Default 1.0 = classic RRF. Bruch et al. 2023 (ACM TOIS) shows weight tuning is dataset-specific — adjust via bicepparam per deployment, not by changing this default.')
 param sparseWeight string = '1.0'
 
+@description('Server-side capture of /search result rows into query_result, gated default-off. Container Apps env values are strings; pydantic-settings parses LOG_RESPONSES to bool at runtime.')
+param logResponses string = 'false'
+
 @description('Optional suffix appended to the managed environment name + Container App names. Lets a new Workload-Profiles environment coexist with an existing Consumption-only one during a migration. Leave empty for legacy single-env deployments.')
 param nameSuffix string = ''
 
@@ -459,6 +462,10 @@ var realContainerEnv = [
   {
     name: 'SPARSE_WEIGHT'
     value: sparseWeight
+  }
+  {
+    name: 'LOG_RESPONSES'
+    value: logResponses
   }
 ]
 
