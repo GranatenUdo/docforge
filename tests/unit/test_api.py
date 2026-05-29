@@ -510,6 +510,69 @@ class TestLifespanLoggingConfig:
         )
 
 
+@pytest.mark.asyncio
+async def test_search_captures_results_when_flag_on():
+    from tests.conftest import FakeEmbedder, fake_settings
+
+    def _settings_capture():
+        s = fake_settings()
+        s.log_responses = True
+        return s
+
+    rows = [
+        {
+            "text": "Platform owns orgs.",
+            "section_title": "Platform",
+            "source_title": "Doc A",
+            "source_url": "https://wiki/a",
+            "source_tags": ["org"],
+            "similarity": 0.03,
+        }
+    ]
+    pool = CapturingPool(rows)
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+    app.dependency_overrides[get_pool_dep] = lambda: pool
+    app.dependency_overrides[get_settings] = _settings_capture
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                "/search", json={"query": "q", "user_name": "u", "team_name": "ccl", "limit": 5}
+            )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert any("INSERT INTO query_result" in q for q, _ in pool.executes)
+
+
+@pytest.mark.asyncio
+async def test_search_skips_capture_when_flag_off():
+    from tests.conftest import FakeEmbedder
+
+    rows = [
+        {
+            "text": "x",
+            "section_title": None,
+            "source_title": "T",
+            "source_url": "u",
+            "source_tags": [],
+            "similarity": 0.01,
+        }
+    ]
+    pool = CapturingPool(rows)
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+    app.dependency_overrides[get_pool_dep] = lambda: pool
+    app.dependency_overrides[get_settings] = fake_settings  # log_responses=False
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                "/search", json={"query": "q", "user_name": "u", "team_name": "t", "limit": 5}
+            )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert not any("INSERT INTO query_result" in q for q, _ in pool.executes)
+
+
 class TestSearchDebugMode:
     @pytest.mark.asyncio
     async def test_debug_false_default_omits_debug_fields(self):
