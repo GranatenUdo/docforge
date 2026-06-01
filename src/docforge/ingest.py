@@ -15,7 +15,7 @@ import asyncpg
 import numpy as np
 
 from docforge.config import Settings
-from docforge.crawlers.confluence import crawl_page
+from docforge.crawlers.confluence import crawl_page, enumerate_tree_page_ids
 from docforge.crawlers.git import crawl_repo
 from docforge.db import get_pool
 from docforge.processors.chunker import chunk_sections
@@ -23,6 +23,7 @@ from docforge.processors.embedder import Embedder
 from docforge.processors.parser import Section, parse_confluence_html
 from docforge.sources import (
     ConfluenceSourceConfig,
+    ConfluenceTreeSourceConfig,
     GitRepoSourceConfig,
     load_sources,
 )
@@ -70,6 +71,11 @@ async def ingest_all(
             if isinstance(source, ConfluenceSourceConfig):
                 await _ingest_confluence_source(source, settings, pool, embedder, tokenizer_fn)
                 current_identifiers.add(source.page_id)
+            elif isinstance(source, ConfluenceTreeSourceConfig):
+                tree_ids = await _ingest_confluence_tree(
+                    source, settings, pool, embedder, tokenizer_fn
+                )
+                current_identifiers.update(tree_ids)
             elif isinstance(source, GitRepoSourceConfig):
                 git_identifiers = await _ingest_git_source(
                     source, settings, pool, embedder, tokenizer_fn
@@ -111,34 +117,74 @@ async def _ingest_confluence_source(
     embedder: Embedder,
     tokenizer_fn: Callable[[str], int],
 ) -> None:
-    """Ingest a single Confluence page: crawl, parse HTML, chunk, embed, store."""
+    """Ingest a single configured Confluence page."""
     logger.info("Crawling Confluence: %s (page_id=%s)", source.title, source.page_id)
+    await _ingest_one_confluence_page(
+        source.page_id, source.tags, source.space_key, settings, pool, embedder, tokenizer_fn
+    )
 
+
+async def _ingest_confluence_tree(
+    source: ConfluenceTreeSourceConfig,
+    settings: Settings,
+    pool: asyncpg.Pool,
+    embedder: Embedder,
+    tokenizer_fn: Callable[[str], int],
+) -> list[str]:
+    """Ingest every current, non-stale descendant page of a tree root.
+
+    Returns the list of page-id identifiers ingested (for orphan tracking)."""
+    logger.info(
+        "Crawling Confluence tree: %s (root_page_id=%s, stale_months=%s)",
+        source.title,
+        source.root_page_id,
+        source.stale_months,
+    )
+    page_ids = await enumerate_tree_page_ids(
+        source.root_page_id,
+        base_url=settings.confluence_base_url,
+        email=settings.confluence_email,
+        api_token=settings.confluence_api_token.get_secret_value(),
+        stale_months=source.stale_months,
+    )
+    logger.info("Tree %s: %d page(s) to ingest", source.title, len(page_ids))
+    for page_id in page_ids:
+        await _ingest_one_confluence_page(
+            page_id, source.tags, source.space_key, settings, pool, embedder, tokenizer_fn
+        )
+    return page_ids
+
+
+async def _ingest_one_confluence_page(
+    page_id: str,
+    tags: list[str],
+    space_key: str,
+    settings: Settings,
+    pool: asyncpg.Pool,
+    embedder: Embedder,
+    tokenizer_fn: Callable[[str], int],
+) -> None:
+    """Crawl one Confluence page, and (if changed) parse, chunk, embed, store it."""
     page = await crawl_page(
-        source.page_id,
+        page_id,
         base_url=settings.confluence_base_url,
         email=settings.confluence_email,
         api_token=settings.confluence_api_token.get_secret_value(),
         stale_threshold_months=settings.stale_threshold_months,
     )
 
-    existing_hash = await _get_existing_hash(pool, source.page_id)
+    existing_hash = await _get_existing_hash(pool, page_id)
     if existing_hash == page.content_hash:
-        logger.info("No changes detected for: %s", source.title)
+        logger.info("No changes detected for page %s (%s)", page_id, page.title)
         return
 
-    logger.info("Parsing: %s", source.title)
     sections = parse_confluence_html(page.html_content)
-    logger.info("Found %d sections", len(sections))
-
     chunks = chunk_sections(sections, max_tokens=500, tokenizer_fn=tokenizer_fn)
-    logger.info("Created %d chunks", len(chunks))
-
     if not chunks:
-        logger.warning("No chunks produced for: %s", source.title)
+        logger.warning("No chunks produced for page %s (%s)", page_id, page.title)
         return
 
-    logger.info("Embedding %d chunks...", len(chunks))
+    logger.info("Embedding %d chunks for page %s (%s)", len(chunks), page_id, page.title)
     texts = [chunk.text for chunk in chunks]
     embeddings = await embedder.aembed(texts)
 
@@ -149,7 +195,7 @@ async def _ingest_confluence_source(
                 INSERT INTO sources (type, url, title, confluence_page_id,
                                      confluence_space_key, last_crawled_at,
                                      content_hash, status, tags)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8)
+                VALUES ('confluence_page', $1, $2, $3, $4, $5, $6, 'active', $7)
                 ON CONFLICT (confluence_page_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -160,14 +206,13 @@ async def _ingest_confluence_source(
                     tags = EXCLUDED.tags
                 RETURNING id
                 """,
-                source.type,
                 page.url,
                 page.title,
-                source.page_id,
-                source.space_key,
+                page_id,
+                space_key,
                 datetime.now(timezone.utc),
                 page.content_hash,
-                source.tags,
+                tags,
             )
 
             await conn.execute("DELETE FROM chunks WHERE source_id = $1", source_id)
@@ -187,7 +232,7 @@ async def _ingest_confluence_source(
                     page.title,
                 )
 
-    logger.info("Stored %d chunks for: %s", len(chunks), source.title)
+    logger.info("Stored %d chunks for page %s (%s)", len(chunks), page_id, page.title)
 
 
 async def _ingest_git_source(

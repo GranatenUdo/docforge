@@ -346,3 +346,64 @@ async def test_ingest_all_skips_purge_when_any_source_failed(tmp_path, monkeypat
     # The guard should skip _purge_orphans entirely.
     await ingest_all(settings, purge_orphans=True, confirm=True)
     assert purge_calls["n"] == 0, "purge must be skipped when any source failed"
+
+
+@pytest.mark.asyncio
+async def test_ingest_confluence_tree_ingests_each_enumerated_page(
+    tmp_path, monkeypatch, fake_embedder
+):
+    """A confluence_tree source enumerates descendant page ids, then ingests
+    each one with the tree's tags."""
+    from datetime import datetime, timezone
+
+    from docforge.crawlers.confluence import CrawledPage
+
+    sources_file = tmp_path / "sources.yml"
+    sources_file.write_text(
+        "sources:\n"
+        "  - type: confluence_tree\n"
+        '    root_page_id: "999"\n'
+        "    space_key: ProDev\n"
+        '    title: "ProDev: Team CCL"\n'
+        "    tags: [productdev, ccl]\n"
+    )
+
+    async def fake_enumerate(root_page_id, **kwargs):
+        assert root_page_id == "999"
+        return ["101", "102"]
+
+    crawled = {}
+
+    async def fake_crawl_page(page_id, **kwargs):
+        crawled[page_id] = kwargs
+        return CrawledPage(
+            page_id=page_id,
+            title=f"Page {page_id}",
+            space_key="9999",
+            html_content="<h1>H</h1><p>body text here.</p>",
+            content_hash=f"hash-{page_id}",
+            version=1,
+            url=f"https://x/wiki/spaces/ProDev/pages/{page_id}",
+            last_modified=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+    monkeypatch.setattr(ingest_mod, "enumerate_tree_page_ids", fake_enumerate)
+    monkeypatch.setattr(ingest_mod, "crawl_page", fake_crawl_page)
+
+    conn = _Conn(existing_hash=None)
+
+    async def fake_get_pool(url, **kwargs):
+        return _FakePool(conn)
+
+    monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
+
+    from docforge.config import Settings
+
+    settings = Settings(sources_file=str(sources_file))
+    await ingest_all(settings)
+
+    # One source row per enumerated page (2), each carrying the tree's tags.
+    assert len(conn.inserted_sources) == 2
+    for src_args in conn.inserted_sources:
+        assert src_args[-1] == ["productdev", "ccl"]
+    assert set(crawled.keys()) == {"101", "102"}
