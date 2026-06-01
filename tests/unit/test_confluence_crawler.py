@@ -337,11 +337,13 @@ async def test_enumerate_follows_links_next_prepending_base(mock_confluence):
                 },
             )
         calls["second_url"] = str(request.url)
-        return httpx.Response(200, json={"results": [{"id": "3"}], "_links": {}})
+        # include the root id on a LATER page to exercise cross-page dedupe
+        return httpx.Response(200, json={"results": [{"id": "3"}, {"id": "999"}], "_links": {}})
 
     mock_confluence(handler)
     ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
     assert ids == ["999", "1", "2", "3"]  # root prepended, then paginated descendants
+    assert ids.count("999") == 1  # root injected on the 2nd page is deduped, not re-appended
     assert calls["second_url"].startswith("https://x/wiki/rest/api/content/search")
     assert "cursor=ABC" in calls["second_url"]
 
