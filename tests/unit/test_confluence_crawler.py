@@ -312,7 +312,7 @@ async def test_enumerate_single_page_no_pagination(mock_confluence):
 
     mock_confluence(handler)
     ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
-    assert ids == ["111"]
+    assert ids == ["999", "111"]  # root prepended, then descendants
     # Default 24-month staleness with UPPERCASE M (months). Lowercase m means
     # MINUTES in CQL and would silently match almost nothing.
     assert captured["cql"] == 'ancestor=999 and type=page and lastmodified >= now("-24M")'
@@ -341,7 +341,7 @@ async def test_enumerate_follows_links_next_prepending_base(mock_confluence):
 
     mock_confluence(handler)
     ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
-    assert ids == ["1", "2", "3"]
+    assert ids == ["999", "1", "2", "3"]  # root prepended, then paginated descendants
     assert calls["second_url"].startswith("https://x/wiki/rest/api/content/search")
     assert "cursor=ABC" in calls["second_url"]
 
@@ -359,6 +359,25 @@ async def test_enumerate_omits_staleness_clause_when_none(mock_confluence):
         "999", base_url="https://x", email="a", api_token="t", stale_months=None
     )
     assert captured["cql"] == "ancestor=999 and type=page"
+
+
+@pytest.mark.asyncio
+async def test_enumerate_includes_root_first_and_once(mock_confluence):
+    """The root page id is always included (first) — CQL ancestor excludes it —
+    and is not duplicated even if the API ever returned it among descendants."""
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"results": [{"id": "999"}, {"id": "55"}], "_links": {}},
+        )
+
+    mock_confluence(handler)
+    ids = await enumerate_tree_page_ids(
+        "999", base_url="https://x", email="a", api_token="t"
+    )
+    assert ids[0] == "999"          # root first
+    assert ids.count("999") == 1    # not duplicated
+    assert ids == ["999", "55"]
 
 
 @pytest.mark.asyncio

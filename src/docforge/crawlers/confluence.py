@@ -122,9 +122,13 @@ async def enumerate_tree_page_ids(
     api_token: str,
     stale_months: int | None = 24,
 ) -> list[str]:
-    """Return the IDs of all CURRENT descendant pages of ``root_page_id``,
-    filtered to those edited within the last ``stale_months`` months
+    """Return ``root_page_id`` followed by the IDs of all its CURRENT descendant
+    pages, filtered to those edited within the last ``stale_months`` months
     (``None`` = no staleness filter).
+
+    The root is always included (CQL ``ancestor=<X>`` returns only descendants of
+    X, never X itself), unconditionally — it is the explicitly-configured anchor,
+    so the staleness filter applies only to the auto-discovered descendants.
 
     Uses Confluence CQL search (``ancestor=<id> and type=page``). CQL returns
     the full tree depth (the v2 ``/descendants`` endpoint silently caps depth)
@@ -143,13 +147,15 @@ async def enumerate_tree_page_ids(
     auth = httpx.BasicAuth(email, api_token)
     url = f"{base}/wiki/rest/api/content/search"
     params: dict | None = {"cql": cql, "limit": 250}
-    ids: list[str] = []
+    ids: list[str] = [root_page_id]
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             response = await _request_with_retry(client, url, params=params, auth=auth)
             data = response.json()
-            ids.extend(item["id"] for item in data.get("results", []))
+            ids.extend(
+                item["id"] for item in data.get("results", []) if item["id"] != root_page_id
+            )
             links = data.get("_links", {})
             nxt = links.get("next")
             if not nxt:
