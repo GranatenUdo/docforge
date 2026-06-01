@@ -153,9 +153,7 @@ async def enumerate_tree_page_ids(
         while True:
             response = await _request_with_retry(client, url, params=params, auth=auth)
             data = response.json()
-            ids.extend(
-                item["id"] for item in data.get("results", []) if item["id"] != root_page_id
-            )
+            ids.extend(item["id"] for item in data.get("results", []) if item["id"] != root_page_id)
             links = data.get("_links", {})
             nxt = links.get("next")
             if not nxt:

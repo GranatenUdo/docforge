@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `similarity * (1 + tag_match_weight * |source_tags ∩ user_tags|)`; `'org'` is
   an ordinary team tag. Removed the `org_tag_weight` setting.
 
+### Fixed
+- `confluence_tree` now ingests the **root page itself**, not only its
+  descendants (Confluence CQL `ancestor=<id>` excludes the root). The root is
+  always included regardless of `stale_months`.
+- `confluence_tree` `stale_months` now rejects `0` and negative values
+  (must be `>= 1`, or `null` to disable). `0` previously built `now("-0M")`
+  and silently matched no pages.
+
+### Notes
+- `--purge-orphans` removes Confluence pages that have aged out of a tree's
+  `stale_months` window (they drop out of enumeration and are treated as
+  orphans). Run a full re-ingest review before purging if `stale_months` is
+  tight. Per-source orphan scoping is future work.
+
 ## [0.7.14] - 2026-05-29
 
 ### Added

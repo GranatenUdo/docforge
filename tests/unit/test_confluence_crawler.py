@@ -367,6 +367,7 @@ async def test_enumerate_omits_staleness_clause_when_none(mock_confluence):
 async def test_enumerate_includes_root_first_and_once(mock_confluence):
     """The root page id is always included (first) — CQL ancestor excludes it —
     and is not duplicated even if the API ever returned it among descendants."""
+
     def handler(request):
         return httpx.Response(
             200,
@@ -374,11 +375,9 @@ async def test_enumerate_includes_root_first_and_once(mock_confluence):
         )
 
     mock_confluence(handler)
-    ids = await enumerate_tree_page_ids(
-        "999", base_url="https://x", email="a", api_token="t"
-    )
-    assert ids[0] == "999"          # root first
-    assert ids.count("999") == 1    # not duplicated
+    ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
+    assert ids[0] == "999"  # root first
+    assert ids.count("999") == 1  # not duplicated
     assert ids == ["999", "55"]
 
 
