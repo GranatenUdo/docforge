@@ -65,5 +65,5 @@ If metrics rise, consider re-baselining.
 
 - `sources.yml` changed (additions, removals, tag edits)
 - Embedding model changed
-- Ranking weights (`tag_match_weight`, `org_tag_weight`) changed
+- Ranking weight (`tag_match_weight`) changed
 - Ground truth rewritten

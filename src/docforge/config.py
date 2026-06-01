@@ -74,9 +74,10 @@ class Settings(BaseSettings):
     # Sources config
     sources_file: str = "sources.yml"
 
-    # Ranking weights (see docforge.ranking.compute_boosted_score)
+    # Ranking weight (see docforge.ranking.compute_boosted_score). The boost is
+    # similarity * (1 + tag_match_weight * |source_tags ∩ user_tags|). There is
+    # deliberately no org/"everyone" boost: 'org' is an ordinary team tag.
     tag_match_weight: float = 0.1
-    org_tag_weight: float = 0.05
 
     # Hybrid retrieval (RRF over dense + sparse). rrf_k=60 matches the universal
     # default (Azure AI Search, Elasticsearch, OpenSearch); higher k flattens
@@ -139,6 +140,14 @@ class Settings(BaseSettings):
     default_user_name: str = ""
     default_team_name: str = ""
     default_area_name: str = ""
+
+    # MCP surface text for `serve --remote-api` (see remote_client.run_remote_mcp).
+    # Empty = use the engine's built-in generic defaults. The DocuWare deployment
+    # injects org-specific coverage + the team-name/abbreviation vocabulary via
+    # MCP_INSTRUCTIONS / MCP_TOOL_DESCRIPTION env vars so the calling assistant
+    # knows when to call docforge and what it covers.
+    mcp_instructions: str = ""
+    mcp_tool_description: str = ""
 
     # Auth (opt-in Entra ID for /search + /sources)
     auth: AuthSettings = AuthSettings()

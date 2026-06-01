@@ -21,10 +21,12 @@ class TestSettingsDefaults:
         assert s.chunk_max_tokens == 500
         assert s.sources_file == "sources.yml"
         assert s.tag_match_weight == pytest.approx(0.1)
-        assert s.org_tag_weight == pytest.approx(0.05)
+        assert not hasattr(s, "org_tag_weight")
         assert s.default_user_name == ""
         assert s.default_team_name == ""
         assert s.default_area_name == ""
+        assert s.mcp_instructions == ""
+        assert s.mcp_tool_description == ""
 
 
 class TestYamlLoading:

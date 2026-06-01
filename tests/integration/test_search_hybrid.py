@@ -27,10 +27,10 @@ from tests.integration._helpers import _insert_chunk, _insert_source, _vec
 # The SQL under test — the production /search query, parameterized identically.
 # Keep this string in sync with src/docforge/api.py if either changes.
 # Parameters: $1=query_vec, $2=query_text, $3=pool_size, $4=tag_match_weight,
-#             $5=user_tags, $6=org_tag_weight, $7=req.limit, $8=fts_language,
-#             $9=rrf_k, $10=dense_weight, $11=sparse_weight.
+#             $5=user_tags, $6=req.limit, $7=fts_language, $8=rrf_k,
+#             $9=dense_weight, $10=sparse_weight.
 HYBRID_SEARCH_SQL = """
-WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
+WITH q_tsq AS (SELECT websearch_to_tsquery($7::regconfig, $2::text) AS q),
      dense AS (
          SELECT id, source_id, text, section_title,
                 ROW_NUMBER() OVER (ORDER BY dist) AS rank
@@ -61,8 +61,8 @@ WITH q_tsq AS (SELECT websearch_to_tsquery($8::regconfig, $2::text) AS q),
                 COALESCE(d.source_id, sp.source_id) AS source_id,
                 COALESCE(d.text, sp.text) AS text,
                 COALESCE(d.section_title, sp.section_title) AS section_title,
-                COALESCE($10::float / ($9 + d.rank), 0)
-                  + COALESCE($11::float / ($9 + sp.rank), 0) AS rrf
+                COALESCE($9::float / ($8 + d.rank), 0)
+                  + COALESCE($10::float / ($8 + sp.rank), 0) AS rrf
          FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
      )
 SELECT s.title AS source_title, f.rrf AS similarity,
@@ -70,18 +70,16 @@ SELECT s.title AS source_title, f.rrf AS similarity,
                 + $4::float * cardinality(
                     ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
                   )
-                + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
        ) AS boosted_score
 FROM fused f JOIN sources s ON f.source_id = s.id
 ORDER BY boosted_score DESC
-LIMIT $7
+LIMIT $6
 """
 
 
 # Common test defaults — match production Settings defaults
 POOL = 100
 WEIGHT_TAG = 0.1
-WEIGHT_ORG = 0.05
 LIMIT = 5
 FTS_LANG = "english"
 RRF_K = 60
@@ -110,12 +108,11 @@ async def test_dense_only_winner(pg_url):
             POOL,
             WEIGHT_TAG,
             ["platform"],
-            WEIGHT_ORG,
             LIMIT,
             FTS_LANG,
             RRF_K,
-            1.0,  # $10: dense_weight
-            1.0,  # $11: sparse_weight
+            1.0,  # $9: dense_weight
+            1.0,  # $10: sparse_weight
         )
         assert [r["source_title"] for r in rows][0] == "DenseTarget"
     finally:
@@ -150,12 +147,11 @@ async def test_sparse_only_winner(pg_url):
             POOL,
             WEIGHT_TAG,
             ["platform"],
-            WEIGHT_ORG,
             LIMIT,
             FTS_LANG,
             RRF_K,
-            1.0,  # $10: dense_weight
-            1.0,  # $11: sparse_weight
+            1.0,  # $9: dense_weight
+            1.0,  # $10: sparse_weight
         )
         titles = [r["source_title"] for r in rows]
         # Target appears in results despite losing the dense ranking
@@ -210,12 +206,11 @@ async def test_hybrid_winner_above_single_path_winners(pg_url):
             POOL,
             WEIGHT_TAG,
             ["platform"],
-            WEIGHT_ORG,
             LIMIT,
             FTS_LANG,
             RRF_K,
-            1.0,  # $10: dense_weight
-            1.0,  # $11: sparse_weight
+            1.0,  # $9: dense_weight
+            1.0,  # $10: sparse_weight
         )
         assert rows[0]["source_title"] == "HybridTarget", (
             f"expected HybridTarget first, got {[r['source_title'] for r in rows]}"
@@ -252,12 +247,11 @@ async def test_weights_shift_ranking(pg_url):
             POOL,
             WEIGHT_TAG,
             ["platform"],
-            WEIGHT_ORG,
             LIMIT,
             FTS_LANG,
             RRF_K,
-            1.0,  # dense_weight = $10
-            0.0,  # sparse_weight = $11 -> sparse contribution becomes 0
+            1.0,  # dense_weight = $9
+            0.0,  # sparse_weight = $10 -> sparse contribution becomes 0
         )
         assert rows[0]["source_title"] == "DenseStrong", (
             f"expected DenseStrong with sparse_weight=0, got {[r['source_title'] for r in rows]}"
@@ -272,7 +266,6 @@ async def test_weights_shift_ranking(pg_url):
             POOL,
             WEIGHT_TAG,
             ["platform"],
-            WEIGHT_ORG,
             LIMIT,
             FTS_LANG,
             RRF_K,

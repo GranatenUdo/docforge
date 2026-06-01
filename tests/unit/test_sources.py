@@ -62,6 +62,18 @@ class TestTags:
         sources = load_sources(yml)
         assert sources[0].tags == []
 
+    def test_confluence_tree_tags_default_to_empty(self, tmp_path):
+        yml = tmp_path / "sources.yml"
+        yml.write_text(
+            "sources:\n"
+            "  - type: confluence_tree\n"
+            '    root_page_id: "1"\n'
+            "    space_key: ProDev\n"
+            '    title: "T"\n'
+        )
+        sources = load_sources(yml)
+        assert sources[0].tags == []
+
     def test_tags_parsed_from_yaml(self, tmp_path):
         yml = tmp_path / "sources.yml"
         yml.write_text(
@@ -101,3 +113,61 @@ def test_load_sources_handles_utf8_titles(tmp_path, monkeypatch):
     sources = load_sources(yml)
     assert len(sources) == 1
     assert sources[0].title == "\U0001f3af Light-Year Strategy — em-dash"
+
+
+class TestConfluenceTreeSource:
+    def test_loads_confluence_tree_source(self, tmp_path):
+        yml = tmp_path / "sources.yml"
+        yml.write_text(
+            "sources:\n"
+            "  - type: confluence_tree\n"
+            '    root_page_id: "6540493502"\n'
+            "    space_key: ProDev\n"
+            '    title: "ProDev: Product Documentation"\n'
+            "    tags: [productdev]\n"
+        )
+        sources = load_sources(yml)
+        assert len(sources) == 1
+        s = sources[0]
+        assert s.type == "confluence_tree"
+        assert s.root_page_id == "6540493502"
+        assert s.space_key == "ProDev"
+        assert s.title == "ProDev: Product Documentation"
+        assert s.tags == ["productdev"]
+        assert s.stale_months == 24  # default
+
+    def test_confluence_tree_stale_months_override_and_none(self, tmp_path):
+        yml = tmp_path / "sources.yml"
+        yml.write_text(
+            "sources:\n"
+            "  - type: confluence_tree\n"
+            '    root_page_id: "1"\n'
+            "    space_key: ProDev\n"
+            '    title: "All"\n'
+            "    stale_months: null\n"
+            "  - type: confluence_tree\n"
+            '    root_page_id: "2"\n'
+            "    space_key: ProDev\n"
+            '    title: "Recent"\n'
+            "    stale_months: 12\n"
+        )
+        sources = load_sources(yml)
+        assert sources[0].stale_months is None
+        assert sources[1].stale_months == 12
+
+    def test_stale_months_rejects_zero_and_negative(self, tmp_path):
+        import pytest
+        from pydantic import ValidationError
+
+        for bad in (0, -1):
+            yml = tmp_path / "sources.yml"
+            yml.write_text(
+                "sources:\n"
+                "  - type: confluence_tree\n"
+                '    root_page_id: "1"\n'
+                "    space_key: ProDev\n"
+                '    title: "T"\n'
+                f"    stale_months: {bad}\n"
+            )
+            with pytest.raises(ValidationError):
+                load_sources(yml)

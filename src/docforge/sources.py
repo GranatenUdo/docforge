@@ -1,7 +1,8 @@
 """Source configuration — pydantic models + YAML loader.
 
-Each entry in `sources.yml` is a ConfluenceSourceConfig or a
-GitRepoSourceConfig, discriminated by the `type` field.
+Each entry in `sources.yml` is one of the `SourceConfig` union members
+(`confluence_page`, `git_repo`, `confluence_tree`), discriminated by the
+`type` field.
 """
 
 from __future__ import annotations
@@ -29,8 +30,22 @@ class GitRepoSourceConfig(BaseModel):
     tags: list[str] = []
 
 
+class ConfluenceTreeSourceConfig(BaseModel):
+    type: Literal["confluence_tree"]
+    root_page_id: str
+    space_key: str
+    title: str
+    tags: list[str] = []
+    # Ingest only pages edited within this many months (None = no staleness
+    # filter). Applied server-side via the CQL `lastmodified >= now("-NM")`
+    # clause in enumerate_tree_page_ids. Default 24 = the ProDev policy.
+    # Must be >= 1: 0 would build now("-0M") (matches nothing); a negative builds
+    # now("--NM") (CQL syntax error). Use None to disable the filter entirely.
+    stale_months: Annotated[int, Field(ge=1)] | None = 24
+
+
 SourceConfig = Annotated[
-    ConfluenceSourceConfig | GitRepoSourceConfig,
+    ConfluenceSourceConfig | GitRepoSourceConfig | ConfluenceTreeSourceConfig,
     Field(discriminator="type"),
 ]
 

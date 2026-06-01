@@ -230,7 +230,9 @@ def test_serve_remote_api_dispatches_to_run_remote_mcp(monkeypatch):
 
     captured = {}
 
-    def fake_run_remote_mcp(*, url: str, auth_name) -> None:
+    def fake_run_remote_mcp(
+        *, url: str, auth_name, instructions=None, tool_description=None
+    ) -> None:
         captured["url"] = url
         captured["auth_name"] = auth_name
 
@@ -256,7 +258,9 @@ def test_serve_remote_api_falls_back_to_env_var(monkeypatch):
     monkeypatch.setenv("DOCFORGE_API_URL", "https://from-env.example.com")
     captured = {}
 
-    def fake_run_remote_mcp(*, url: str, auth_name) -> None:
+    def fake_run_remote_mcp(
+        *, url: str, auth_name, instructions=None, tool_description=None
+    ) -> None:
         captured["url"] = url
 
     monkeypatch.setattr("docforge.remote_client.run_remote_mcp", fake_run_remote_mcp)

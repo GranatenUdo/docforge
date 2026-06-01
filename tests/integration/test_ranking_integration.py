@@ -61,7 +61,6 @@ async def test_team_tagged_source_ranks_above_untagged_on_similar_similarity(pg_
                       + $2::float * cardinality(
                           ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
                         )
-                      + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
                      ) AS score
             FROM chunks c JOIN sources s ON c.source_id = s.id
             ORDER BY score DESC
@@ -69,7 +68,6 @@ async def test_team_tagged_source_ranks_above_untagged_on_similar_similarity(pg_
             query_vec,
             0.1,
             ["platform"],
-            0.05,
         )
         titles = [r["title"] for r in rows]
         assert titles == ["TaggedDoc", "UntaggedDoc"]
@@ -103,32 +101,5 @@ async def test_two_tag_overlap_outranks_one_tag_overlap(pg_url):
             ["platform", "cloud"],
         )
         assert [r["title"] for r in rows] == ["TwoTag", "OneTag"]
-    finally:
-        await conn.close()
-
-
-@pytest.mark.asyncio
-async def test_org_tag_baseline_boost_applies_when_user_tags_empty(pg_url):
-    conn = await asyncpg.connect(pg_url)
-    try:
-        await register_vector(conn)
-        sid_org = await _insert_source(conn, "OrgDoc", ["org"])
-        sid_plain = await _insert_source(conn, "PlainDoc", [])
-        vec = _vec(0.001)
-        await _insert_chunk(conn, sid_org, "org", vec)
-        await _insert_chunk(conn, sid_plain, "plain", vec)
-
-        rows = await conn.fetch(
-            """
-            SELECT s.title,
-                   (1 - (c.embedding <=> $1::vector)) *
-                     (1 + $2::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)) AS score
-            FROM chunks c JOIN sources s ON c.source_id = s.id
-            ORDER BY score DESC
-            """,
-            vec,
-            0.05,
-        )
-        assert [r["title"] for r in rows] == ["OrgDoc", "PlainDoc"]
     finally:
         await conn.close()

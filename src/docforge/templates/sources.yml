@@ -19,3 +19,13 @@ sources: []
   #   repo_path: "/path/to/my-repo"
   #   include_patterns: ["README.md", "CLAUDE.md", "docs/**/*.md"]
   #   title: "My Repo"
+
+  # Ingest a whole Confluence subtree: the root page + all current descendants
+  # edited within `stale_months` months (omit `stale_months` or set it to null
+  # to disable the staleness filter). root_page_id MUST be quoted (it is a string).
+  # - type: confluence_tree
+  #   root_page_id: "123456789"
+  #   space_key: "TEAM"
+  #   title: "Team space: docs subtree"
+  #   tags: [example-team]
+  #   stale_months: 24
