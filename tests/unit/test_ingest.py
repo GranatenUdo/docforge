@@ -408,6 +408,11 @@ async def test_ingest_confluence_tree_ingests_each_enumerated_page(
         assert src_args[-1] == ["productdev", "ccl"]
     assert set(crawled.keys()) == {"101", "102"}
 
+    # space_key must come from the source config ("ProDev"), NOT the crawled
+    # page.space_key (the fake CrawledPage returns "9999").
+    for src_args in conn.inserted_sources:
+        assert src_args[3] == "ProDev"
+
 
 @pytest.mark.asyncio
 async def test_ingest_confluence_tree_skips_unchanged_page(tmp_path, monkeypatch, fake_embedder):
