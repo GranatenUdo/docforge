@@ -106,18 +106,16 @@ async def search_documentation(
                      + $2::float * cardinality(
                          ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($3::text[]))
                        )
-                     + $4::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
                     ) AS boosted_score
             FROM chunks c
             JOIN sources s ON c.source_id = s.id
             WHERE s.status = 'active'
             ORDER BY boosted_score DESC
-            LIMIT $5
+            LIMIT $4
             """,
             np.array(query_vector, dtype=np.float32),
             settings.tag_match_weight,
             user_tags,
-            settings.org_tag_weight,
             limit,
         )
 
