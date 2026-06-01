@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     default_team_name: str = ""
     default_area_name: str = ""
 
+    # MCP surface text for `serve --remote-api` (see remote_client.run_remote_mcp).
+    # Empty = use the engine's built-in generic defaults. The DocuWare deployment
+    # injects org-specific coverage + the team-name/abbreviation vocabulary via
+    # MCP_INSTRUCTIONS / MCP_TOOL_DESCRIPTION env vars so the calling assistant
+    # knows when to call docforge and what it covers.
+    mcp_instructions: str = ""
+    mcp_tool_description: str = ""
+
     # Auth (opt-in Entra ID for /search + /sources)
     auth: AuthSettings = AuthSettings()
 

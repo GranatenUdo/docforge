@@ -143,9 +143,16 @@ def serve(
         typer.echo("Warning: --auth has no effect without --remote-api.", err=True)
 
     if remote_api:
+        from docforge.config import Settings
         from docforge.remote_client import run_remote_mcp
 
-        run_remote_mcp(url=remote_api, auth_name=auth)
+        settings = Settings()
+        run_remote_mcp(
+            url=remote_api,
+            auth_name=auth,
+            instructions=settings.mcp_instructions or None,
+            tool_description=settings.mcp_tool_description or None,
+        )
     elif api:
         import uvicorn
 

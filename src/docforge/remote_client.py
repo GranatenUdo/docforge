@@ -300,6 +300,9 @@ INSTRUCTIONS = (
     "Use the search_documentation tool when you need information about other teams, "
     "shared coding practices, or organizational knowledge."
 )
+DEFAULT_TOOL_DESCRIPTION = (
+    "Search across indexed documentation from Confluence pages and git repos."
+)
 
 
 # Hard outer bound on a single MCP tool call, in seconds. Sized to comfortably
@@ -348,15 +351,24 @@ async def _run_tool_with_timeout(name: str, coro_fn: Callable[[], Awaitable[str]
         )
 
 
-def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> None:
-    """Run an MCP server proxying tool calls to a remote docforge search-api."""
+def build_remote_mcp(
+    *,
+    url: str,
+    auth_name: AuthName | str = AuthName.none,
+    instructions: str | None = None,
+    tool_description: str | None = None,
+) -> FastMCP:
+    """Construct (but do not run) the remote-backed MCP server.
+
+    `instructions` and `tool_description` default to the engine's built-in
+    generic text when None; deployments inject their own via Settings.
+    Returned without running so the wiring is unit-testable."""
     auth = make_auth_provider(auth_name)
     backend = RemoteBackend(url=url, auth=auth)
-    mcp = FastMCP("docforge", instructions=INSTRUCTIONS)
+    mcp = FastMCP("docforge", instructions=instructions or INSTRUCTIONS)
 
-    @mcp.tool()
+    @mcp.tool(description=tool_description or DEFAULT_TOOL_DESCRIPTION)
     async def search_documentation(query: str, limit: int = 10) -> str:
-        """Search across indexed documentation from Confluence pages and git repos."""
         return await _run_tool_with_timeout(
             "search_documentation",
             lambda: backend.search(query=query, limit=limit),
@@ -370,4 +382,21 @@ def run_remote_mcp(*, url: str, auth_name: AuthName | str = AuthName.none) -> No
             lambda: backend.list_sources(),
         )
 
+    return mcp
+
+
+def run_remote_mcp(
+    *,
+    url: str,
+    auth_name: AuthName | str = AuthName.none,
+    instructions: str | None = None,
+    tool_description: str | None = None,
+) -> None:
+    """Run an MCP server proxying tool calls to a remote docforge search-api."""
+    mcp = build_remote_mcp(
+        url=url,
+        auth_name=auth_name,
+        instructions=instructions,
+        tool_description=tool_description,
+    )
     mcp.run()

@@ -25,6 +25,8 @@ class TestSettingsDefaults:
         assert s.default_user_name == ""
         assert s.default_team_name == ""
         assert s.default_area_name == ""
+        assert s.mcp_instructions == ""
+        assert s.mcp_tool_description == ""
 
 
 class TestYamlLoading:

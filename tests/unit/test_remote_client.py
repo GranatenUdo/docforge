@@ -297,7 +297,7 @@ def test_run_remote_mcp_constructs_components(monkeypatch):
             constructed["name"] = name
             constructed["tools"] = []
 
-        def tool(self):
+        def tool(self, **kwargs):
             def deco(fn):
                 constructed["tools"].append(fn.__name__)
                 return fn
@@ -416,6 +416,44 @@ async def test_request_does_not_retry_on_4xx():
     assert call_count["n"] == 1, "401 must not be retried"
     assert isinstance(result, str)
     assert "Auth failed" in result
+
+
+@pytest.mark.asyncio
+async def test_build_remote_mcp_injects_instructions_and_description():
+    from fastmcp.client import Client
+
+    from docforge.remote_client import AuthName, build_remote_mcp
+
+    mcp = build_remote_mcp(
+        url="https://example",
+        auth_name=AuthName.none,
+        instructions="CUSTOM INSTRUCTIONS",
+        tool_description="CUSTOM TOOL DESC",
+    )
+    assert mcp.instructions == "CUSTOM INSTRUCTIONS"
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        sd = next(t for t in tools if t.name == "search_documentation")
+        assert sd.description == "CUSTOM TOOL DESC"
+
+
+@pytest.mark.asyncio
+async def test_build_remote_mcp_uses_builtin_defaults_when_none():
+    from fastmcp.client import Client
+
+    from docforge.remote_client import (
+        DEFAULT_TOOL_DESCRIPTION,
+        INSTRUCTIONS,
+        AuthName,
+        build_remote_mcp,
+    )
+
+    mcp = build_remote_mcp(url="https://example", auth_name=AuthName.none)
+    assert mcp.instructions == INSTRUCTIONS
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        sd = next(t for t in tools if t.name == "search_documentation")
+        assert sd.description == DEFAULT_TOOL_DESCRIPTION
 
 
 @pytest.mark.asyncio
