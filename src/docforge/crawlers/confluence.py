@@ -114,6 +114,51 @@ async def crawl_page(
     )
 
 
+async def enumerate_tree_page_ids(
+    root_page_id: str,
+    *,
+    base_url: str,
+    email: str,
+    api_token: str,
+    stale_months: int | None = 24,
+) -> list[str]:
+    """Return the IDs of all CURRENT descendant pages of ``root_page_id``,
+    filtered to those edited within the last ``stale_months`` months
+    (``None`` = no staleness filter).
+
+    Uses Confluence CQL search (``ancestor=<id> and type=page``). CQL returns
+    the full tree depth (the v2 ``/descendants`` endpoint silently caps depth)
+    and excludes archived pages by default. Paginates via ``_links.base`` +
+    ``_links.next`` — the ``next`` URL omits the ``/wiki`` context path, so the
+    base is prepended.
+    """
+    cql = f"ancestor={root_page_id} and type=page"
+    if stale_months is not None:
+        # CQL now() units are CASE-SENSITIVE: "M" = months, "m" = MINUTES.
+        # A lowercase m here would silently match only the last N minutes.
+        cql += f' and lastmodified >= now("-{stale_months}M")'
+
+    base = base_url.rstrip("/")
+    auth = httpx.BasicAuth(email, api_token)
+    url = f"{base}/wiki/rest/api/content/search"
+    params: dict | None = {"cql": cql, "limit": 250}
+    ids: list[str] = []
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while True:
+            response = await _request_with_retry(client, url, params=params, auth=auth)
+            data = response.json()
+            ids.extend(item["id"] for item in data.get("results", []))
+            links = data.get("_links", {})
+            nxt = links.get("next")
+            if not nxt:
+                break
+            link_base = links.get("base") or f"{base}/wiki"
+            url = nxt if nxt.startswith("http") else f"{link_base}{nxt}"
+            params = None  # the next URL already encodes cql + cursor
+    return ids
+
+
 async def _request_with_retry(
     client: httpx.AsyncClient,
     url: str,

@@ -295,3 +295,89 @@ async def test_stale_prefix_disabled_via_none(mock_confluence):
         stale_threshold_months=None,
     )
     assert page.title == "Ancient Page"
+
+
+from docforge.crawlers.confluence import enumerate_tree_page_ids
+
+
+@pytest.mark.asyncio
+async def test_enumerate_single_page_no_pagination(mock_confluence):
+    captured = {}
+
+    def handler(request):
+        # request.url.params decodes the query string, so we assert on the exact
+        # CQL the function built — not its percent-encoded form.
+        captured["cql"] = request.url.params.get("cql")
+        return httpx.Response(
+            200,
+            json={"results": [{"id": "111", "type": "page", "title": "A"}], "_links": {}},
+        )
+
+    mock_confluence(handler)
+    ids = await enumerate_tree_page_ids(
+        "999", base_url="https://x", email="a", api_token="t"
+    )
+    assert ids == ["111"]
+    # Default 24-month staleness with UPPERCASE M (months). Lowercase m means
+    # MINUTES in CQL and would silently match almost nothing.
+    assert captured["cql"] == 'ancestor=999 and type=page and lastmodified >= now("-24M")'
+
+
+@pytest.mark.asyncio
+async def test_enumerate_follows_links_next_prepending_base(mock_confluence):
+    calls = {"n": 0, "second_url": None}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "1"}, {"id": "2"}],
+                    # next omits the /wiki context path; base carries it
+                    "_links": {
+                        "base": "https://x/wiki",
+                        "next": "/rest/api/content/search?cursor=ABC",
+                    },
+                },
+            )
+        calls["second_url"] = str(request.url)
+        return httpx.Response(200, json={"results": [{"id": "3"}], "_links": {}})
+
+    mock_confluence(handler)
+    ids = await enumerate_tree_page_ids(
+        "999", base_url="https://x", email="a", api_token="t"
+    )
+    assert ids == ["1", "2", "3"]
+    assert calls["second_url"].startswith("https://x/wiki/rest/api/content/search")
+    assert "cursor=ABC" in calls["second_url"]
+
+
+@pytest.mark.asyncio
+async def test_enumerate_omits_staleness_clause_when_none(mock_confluence):
+    captured = {}
+
+    def handler(request):
+        captured["cql"] = request.url.params.get("cql")
+        return httpx.Response(200, json={"results": [], "_links": {}})
+
+    mock_confluence(handler)
+    await enumerate_tree_page_ids(
+        "999", base_url="https://x", email="a", api_token="t", stale_months=None
+    )
+    assert captured["cql"] == "ancestor=999 and type=page"
+
+
+@pytest.mark.asyncio
+async def test_enumerate_custom_stale_months(mock_confluence):
+    captured = {}
+
+    def handler(request):
+        captured["cql"] = request.url.params.get("cql")
+        return httpx.Response(200, json={"results": [], "_links": {}})
+
+    mock_confluence(handler)
+    await enumerate_tree_page_ids(
+        "999", base_url="https://x", email="a", api_token="t", stale_months=12
+    )
+    assert 'now("-12M")' in captured["cql"]
