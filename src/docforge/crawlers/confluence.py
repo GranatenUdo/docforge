@@ -128,9 +128,10 @@ async def enumerate_tree_page_ids(
 
     Uses Confluence CQL search (``ancestor=<id> and type=page``). CQL returns
     the full tree depth (the v2 ``/descendants`` endpoint silently caps depth)
-    and excludes archived pages by default. Paginates via ``_links.base`` +
-    ``_links.next`` — the ``next`` URL omits the ``/wiki`` context path, so the
-    base is prepended.
+    and excludes archived pages by default. Uses the v1
+    ``/rest/api/content/search`` endpoint because the v2 API does not expose
+    CQL search. Paginates via ``_links.base`` + ``_links.next`` — the ``next``
+    URL omits the ``/wiki`` context path, so the base is prepended.
     """
     cql = f"ancestor={root_page_id} and type=page"
     if stale_months is not None:

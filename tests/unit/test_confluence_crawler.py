@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
-from docforge.crawlers.confluence import crawl_page
+from docforge.crawlers.confluence import crawl_page, enumerate_tree_page_ids
 
 
 @pytest.fixture
@@ -295,9 +295,6 @@ async def test_stale_prefix_disabled_via_none(mock_confluence):
         stale_threshold_months=None,
     )
     assert page.title == "Ancient Page"
-
-
-from docforge.crawlers.confluence import enumerate_tree_page_ids
 
 
 @pytest.mark.asyncio
