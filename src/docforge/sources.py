@@ -29,8 +29,20 @@ class GitRepoSourceConfig(BaseModel):
     tags: list[str] = []
 
 
+class ConfluenceTreeSourceConfig(BaseModel):
+    type: Literal["confluence_tree"]
+    root_page_id: str
+    space_key: str
+    title: str
+    tags: list[str] = []
+    # Ingest only pages edited within this many months (None = no staleness
+    # filter). Applied server-side via the CQL `lastmodified >= now("-NM")`
+    # clause in enumerate_tree_page_ids. Default 24 = the ProDev policy.
+    stale_months: int | None = 24
+
+
 SourceConfig = Annotated[
-    ConfluenceSourceConfig | GitRepoSourceConfig,
+    ConfluenceSourceConfig | GitRepoSourceConfig | ConfluenceTreeSourceConfig,
     Field(discriminator="type"),
 ]
 
