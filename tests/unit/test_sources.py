@@ -62,6 +62,18 @@ class TestTags:
         sources = load_sources(yml)
         assert sources[0].tags == []
 
+    def test_confluence_tree_tags_default_to_empty(self, tmp_path):
+        yml = tmp_path / "sources.yml"
+        yml.write_text(
+            "sources:\n"
+            "  - type: confluence_tree\n"
+            '    root_page_id: "1"\n'
+            "    space_key: ProDev\n"
+            '    title: "T"\n'
+        )
+        sources = load_sources(yml)
+        assert sources[0].tags == []
+
     def test_tags_parsed_from_yaml(self, tmp_path):
         yml = tmp_path / "sources.yml"
         yml.write_text(
@@ -120,6 +132,7 @@ class TestConfluenceTreeSource:
         assert s.type == "confluence_tree"
         assert s.root_page_id == "6540493502"
         assert s.space_key == "ProDev"
+        assert s.title == "ProDev: Product Documentation"
         assert s.tags == ["productdev"]
         assert s.stale_months == 24  # default
 
