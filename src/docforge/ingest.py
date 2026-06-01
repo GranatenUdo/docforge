@@ -1,7 +1,7 @@
 """Ingest pipeline — crawl → parse → chunk → embed → store.
 
 `ingest_all` loads the sources list and runs the appropriate crawler for
-each source type (Confluence page or local git repo). Per-source failures
+each source type (Confluence page, Confluence tree, or local git repo). Per-source failures
 are logged but do not abort the run.
 """
 
@@ -133,7 +133,7 @@ async def _ingest_confluence_tree(
 ) -> list[str]:
     """Ingest every current, non-stale descendant page of a tree root.
 
-    Returns the list of page-id identifiers ingested (for orphan tracking)."""
+    Returns the list of page-id identifiers enumerated (for orphan tracking)."""
     logger.info(
         "Crawling Confluence tree: %s (root_page_id=%s, stale_months=%s)",
         source.title,
@@ -148,6 +148,10 @@ async def _ingest_confluence_tree(
         stale_months=source.stale_months,
     )
     logger.info("Tree %s: %d page(s) to ingest", source.title, len(page_ids))
+    # A per-page failure propagates out of this loop to ingest_all's per-source
+    # try/except, marking the whole tree source failed (like _ingest_git_source).
+    # Do NOT wrap per-page in try/except — current_identifiers must only get this
+    # tree's ids after a fully successful enumeration+ingest.
     for page_id in page_ids:
         await _ingest_one_confluence_page(
             page_id, source.tags, source.space_key, settings, pool, embedder, tokenizer_fn
