@@ -104,7 +104,6 @@ def fake_settings():
     return SimpleNamespace(
         database_url="postgresql://fake",
         tag_match_weight=0.1,
-        org_tag_weight=0.05,
         pool_min_size=5,
         pool_max_size=25,
         query_log_retention_days=180,

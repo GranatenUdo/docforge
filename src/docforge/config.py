@@ -74,9 +74,10 @@ class Settings(BaseSettings):
     # Sources config
     sources_file: str = "sources.yml"
 
-    # Ranking weights (see docforge.ranking.compute_boosted_score)
+    # Ranking weight (see docforge.ranking.compute_boosted_score). The boost is
+    # similarity * (1 + tag_match_weight * |source_tags ∩ user_tags|). There is
+    # deliberately no org/"everyone" boost: 'org' is an ordinary team tag.
     tag_match_weight: float = 0.1
-    org_tag_weight: float = 0.05
 
     # Hybrid retrieval (RRF over dense + sparse). rrf_k=60 matches the universal
     # default (Azure AI Search, Elasticsearch, OpenSearch); higher k flattens
