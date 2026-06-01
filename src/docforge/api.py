@@ -252,7 +252,7 @@ async def perform_search(
         rows = await conn.fetch(
             """
             WITH q_tsq AS (
-                     SELECT replace(websearch_to_tsquery($8::regconfig, $2::text)::text,
+                     SELECT replace(websearch_to_tsquery($7::regconfig, $2::text)::text,
                                     '&', '|')::tsquery AS q
                  ),
                  dense AS (
@@ -269,9 +269,9 @@ async def perform_search(
                  ),
                  q_weights AS (
                      SELECT ARRAY[
-                         0.1 / $14::float4,
-                         0.2 / $14::float4,
-                         0.4 / $14::float4,
+                         0.1 / $13::float4,
+                         0.2 / $13::float4,
+                         0.4 / $13::float4,
                          1.0
                      ]::float4[] AS w
                  ),
@@ -302,12 +302,12 @@ async def perform_search(
                  ),
                  weights AS (
                      SELECT
-                         $10::float AS effective_dense_weight,
+                         $9::float AS effective_dense_weight,
                          CASE
                              WHEN (SELECT sparse_count FROM pool_sizes)
-                                  > (SELECT dense_count FROM pool_sizes) * $12::float
-                               THEN $11::float * $13::float
-                             ELSE $11::float
+                                  > (SELECT dense_count FROM pool_sizes) * $11::float
+                               THEN $10::float * $12::float
+                             ELSE $10::float
                          END AS effective_sparse_weight
                  ),
                  fused AS (
@@ -318,11 +318,11 @@ async def perform_search(
                             d.rank AS dense_rank,
                             sp.rank AS sparse_rank,
                             COALESCE(
-                                (SELECT effective_dense_weight FROM weights) / ($9 + d.rank),
+                                (SELECT effective_dense_weight FROM weights) / ($8 + d.rank),
                                 0
                             )
                               + COALESCE(
-                                  (SELECT effective_sparse_weight FROM weights) / ($9 + sp.rank),
+                                  (SELECT effective_sparse_weight FROM weights) / ($8 + sp.rank),
                                   0
                               ) AS rrf
                      FROM dense d FULL OUTER JOIN sparse sp ON d.id = sp.id
@@ -335,18 +335,16 @@ async def perform_search(
                             + $4::float * cardinality(
                                 ARRAY(SELECT unnest(s.tags) INTERSECT SELECT unnest($5::text[]))
                               )
-                            + $6::float * (CASE WHEN 'org' = ANY(s.tags) THEN 1 ELSE 0 END)
                    ) AS boosted_score
             FROM fused f JOIN sources s ON f.source_id = s.id
             ORDER BY boosted_score DESC
-            LIMIT $7
+            LIMIT $6
             """,
             np.array(query_vector, dtype=np.float32),
             req.query,
             settings.hybrid_pool_size,
             settings.tag_match_weight,
             user_tags,
-            settings.org_tag_weight,
             req.limit,
             settings.fts_language,
             settings.rrf_k,
