@@ -39,7 +39,9 @@ class ConfluenceTreeSourceConfig(BaseModel):
     # Ingest only pages edited within this many months (None = no staleness
     # filter). Applied server-side via the CQL `lastmodified >= now("-NM")`
     # clause in enumerate_tree_page_ids. Default 24 = the ProDev policy.
-    stale_months: int | None = 24
+    # Must be >= 1: 0 would build now("-0M") (matches nothing); a negative builds
+    # now("--NM") (CQL syntax error). Use None to disable the filter entirely.
+    stale_months: Annotated[int, Field(ge=1)] | None = 24
 
 
 SourceConfig = Annotated[
