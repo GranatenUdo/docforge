@@ -65,3 +65,13 @@ class TestComputeBoostedScore:
             user_tags=[],
             tag_weight=0.1,
         ) == pytest.approx(0.9)
+
+    def test_org_in_user_tags_boosts_normally(self):
+        # 'org' is now an ordinary team tag (the Organization team): when it is
+        # the user's team AND the source carries it, it boosts like any overlap.
+        assert compute_boosted_score(
+            similarity=0.8,
+            source_tags=["org"],
+            user_tags=["org"],
+            tag_weight=0.1,
+        ) == pytest.approx(0.8 * 1.1)
