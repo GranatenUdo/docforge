@@ -311,9 +311,7 @@ async def test_enumerate_single_page_no_pagination(mock_confluence):
         )
 
     mock_confluence(handler)
-    ids = await enumerate_tree_page_ids(
-        "999", base_url="https://x", email="a", api_token="t"
-    )
+    ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
     assert ids == ["111"]
     # Default 24-month staleness with UPPERCASE M (months). Lowercase m means
     # MINUTES in CQL and would silently match almost nothing.
@@ -342,9 +340,7 @@ async def test_enumerate_follows_links_next_prepending_base(mock_confluence):
         return httpx.Response(200, json={"results": [{"id": "3"}], "_links": {}})
 
     mock_confluence(handler)
-    ids = await enumerate_tree_page_ids(
-        "999", base_url="https://x", email="a", api_token="t"
-    )
+    ids = await enumerate_tree_page_ids("999", base_url="https://x", email="a", api_token="t")
     assert ids == ["1", "2", "3"]
     assert calls["second_url"].startswith("https://x/wiki/rest/api/content/search")
     assert "cursor=ABC" in calls["second_url"]

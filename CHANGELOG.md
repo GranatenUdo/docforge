@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.15] - 2026-06-01
+
+### Added
+- `confluence_tree` source type: ingests a whole Confluence subtree (a root
+  page + all descendants) via CQL `ancestor` search — full tree depth (unlike
+  the depth-capped v2 `/descendants`), current pages only, filtered to those
+  edited within `stale_months` months (default 24). New
+  `crawlers.confluence.enumerate_tree_page_ids`.
+- Config-injectable MCP surface text: `mcp_instructions` / `mcp_tool_description`
+  settings (env `MCP_INSTRUCTIONS` / `MCP_TOOL_DESCRIPTION`) override the
+  built-in generic strings for `serve --remote-api`. New `build_remote_mcp`.
+
+### Changed
+- **Ranking:** removed the `org` "everyone-boost" from all three search paths
+  (the `/search` hybrid SQL, the embedded MCP dense search, and the `docforge
+  search` CLI). The boost is now purely
+  `similarity * (1 + tag_match_weight * |source_tags ∩ user_tags|)`; `'org'` is
+  an ordinary team tag. Removed the `org_tag_weight` setting.
+
 ## [0.7.14] - 2026-05-29
 
 ### Added
