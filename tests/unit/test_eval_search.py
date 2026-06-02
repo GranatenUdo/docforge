@@ -510,6 +510,31 @@ def test_main_rejects_angle_bracket_placeholder(monkeypatch, tmp_path, placehold
     assert exc_info.value.code == 2, f"placeholder {placeholder!r} should exit 2"
 
 
+def test_main_rejects_empty_angle_brackets(monkeypatch, tmp_path):
+    """`<>` (empty placeholder brackets) must be rejected — not just `<x>`."""
+    gt = tmp_path / "gt.yml"
+    gt.write_text("queries: []\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "eval_search",
+            "--api-url",
+            "https://example.com",
+            "--ground-truth",
+            str(gt),
+            "--user",
+            "<>",
+            "--team",
+            "ccl",
+        ],
+    )
+    from docforge.scripts import eval_search
+
+    with pytest.raises(SystemExit) as exc_info:
+        eval_search.main()
+    assert exc_info.value.code == 2
+
+
 def test_non_empty_str_strips_whitespace():
     """_non_empty_str returns the trimmed value (not the original with surrounding whitespace)."""
     from docforge.scripts.eval_search import _non_empty_str
@@ -555,3 +580,38 @@ def test_main_rejects_empty_area(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc_info:
         eval_search.main()
     assert exc_info.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    ["&lt;you&gt;", "&lt;your-team&gt;", "&lt;&gt;"],
+)
+def test_main_rejects_html_entity_escaped_placeholder(monkeypatch, tmp_path, placeholder):
+    """Reject HTML-entity-escaped placeholders like `&lt;you&gt;` that arrive
+    from copy-pastes of rendered Confluence/GitHub pages where `<you>` was
+    HTML-escaped during rendering."""
+    fixture = tmp_path / "gt.yml"
+    fixture.write_text(
+        "queries:\n  - query: x\n    expected_title_contains: y\n",
+        encoding="utf-8",
+    )
+    argv = [
+        "eval_search",
+        "--direct",
+        "--ground-truth",
+        str(fixture),
+        "--user",
+        placeholder,
+        "--team",
+        "ccl",
+        "--area",
+        "ccl",
+        "--k",
+        "5",
+    ]
+    monkeypatch.setattr("sys.argv", argv)
+    from docforge.scripts import eval_search
+
+    with pytest.raises(SystemExit) as exc:
+        eval_search.main()
+    assert exc.value.code == 2  # argparse error

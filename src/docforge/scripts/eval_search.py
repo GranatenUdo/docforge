@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import re
 import sys
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]+>$")
+_PLACEHOLDER_PATTERN = re.compile(r"^<[^>]*>$")
 
 
 def _non_empty_str(value: str) -> str:
@@ -44,7 +45,7 @@ def _non_empty_str(value: str) -> str:
     stripped = value.strip()
     if not stripped:
         raise argparse.ArgumentTypeError("must not be empty")
-    if _PLACEHOLDER_PATTERN.match(stripped):
+    if _PLACEHOLDER_PATTERN.match(stripped) or _PLACEHOLDER_PATTERN.match(html.unescape(stripped)):
         raise argparse.ArgumentTypeError(
             f"looks like an unsubstituted placeholder: {stripped!r}. "
             f"Replace with your actual value before running."
