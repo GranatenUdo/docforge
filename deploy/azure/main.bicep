@@ -146,6 +146,11 @@ param embedderCpu int = 2
 @maxValue(64)
 param embedderMemoryGi int = 4
 
+@description('Per-call embedding sub-batch size on the embedder (EMBEDDING_BATCH_SIZE). Lower values cut peak GPU VRAM per forward pass — Qwen3-4B leaves little headroom on a T4, so 8 avoids CUDA OOM on long-chunk batches; higher reduces Python overhead. Default 32 matches the engine default.')
+@minValue(1)
+@maxValue(256)
+param embedderEmbeddingBatchSize int = 32
+
 @description('When true, the managed environment is provisioned as a Workload-Profiles env (with a workloadProfiles array). When false (default), it stays Consumption-only — preserves backward compatibility for OSS / non-CCL deployments.')
 param enableWorkloadProfiles bool = false
 
@@ -563,6 +568,14 @@ var embedderRealEnv = [
   {
     name: 'EMBEDDER_TOKEN'
     secretRef: 'embedder-token'
+  }
+  {
+    name: 'EMBEDDING_BATCH_SIZE'
+    value: string(embedderEmbeddingBatchSize)
+  }
+  {
+    name: 'PYTORCH_CUDA_ALLOC_CONF'
+    value: 'expandable_segments:True'
   }
 ]
 
