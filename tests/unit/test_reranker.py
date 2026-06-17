@@ -52,8 +52,8 @@ class TestRerankHappyPath:
         r._client = httpx.AsyncClient(transport=transport)
 
         result = await r.arerank("q", ["a", "b", "c"])
-        # Indices sorted by descending score: 1 (0.9), 2 (0.5), 0 (0.1).
-        assert result == [1, 2, 0]
+        # (index, score) pairs sorted by descending score: 1 (0.9), 2 (0.5), 0 (0.1).
+        assert result == [(1, 0.9), (2, 0.5), (0, 0.1)]
         assert captured["headers"]["authorization"] == "Bearer secret-tok"
         assert captured["body"] == {"query": "q", "texts": ["a", "b", "c"]}
         assert captured["url"].endswith("/rerank")
@@ -71,7 +71,7 @@ class TestRerankHappyPath:
         r._client = httpx.AsyncClient(transport=transport)
 
         result = await r.arerank("q", ["x", "y", "z"])
-        assert result == [2, 0, 1]
+        assert result == [(2, 3.0), (0, 2.0), (1, 1.0)]
         await r.aclose()
 
 
@@ -91,7 +91,7 @@ class TestRetryBehavior:
         r._client = httpx.AsyncClient(transport=transport)
 
         result = await r.arerank("q", ["only"])
-        assert result == [0]
+        assert result == [(0, 0.5)]
         assert attempts["n"] == 2
         await r.aclose()
 
@@ -127,7 +127,7 @@ class TestRetryBehavior:
         r._client = httpx.AsyncClient(transport=transport)
 
         result = await r.arerank("q", ["a", "b"])
-        assert result == [1, 0]
+        assert result == [(1, 0.2), (0, 0.1)]
         assert attempts["n"] == 2
         await r.aclose()
 

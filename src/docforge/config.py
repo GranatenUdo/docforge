@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -176,10 +176,15 @@ class Settings(BaseSettings):
     # `rerank_top_n` hybrid candidates are re-scored by a cross-encoder served
     # at `reranker_url` (RemoteReranker, bearer auth via `reranker_token`).
     # `rerank_top_n` must not exceed `hybrid_pool_size` — you cannot rerank
-    # more candidates than the hybrid pool produces.
+    # more candidates than the hybrid pool produces. It should also be >= the
+    # largest expected request limit, since positions beyond it in the search
+    # results are raw RRF (not reranked) — see the perform_search seam.
     rerank_enabled: bool = False
+    # rerank_model: consumed by the reranker sidecar (reranker_api.py) to load
+    # the cross-encoder, NOT by the in-engine search path (which talks to the
+    # sidecar over HTTP via RemoteReranker).
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
-    rerank_top_n: int = 50
+    rerank_top_n: int = Field(50, ge=1)
     reranker_url: str = ""
     reranker_token: SecretStr = SecretStr("")
 
@@ -197,7 +202,9 @@ class Settings(BaseSettings):
                 "RemoteReranker requires a bearer token. Set RERANKER_TOKEN "
                 "via env or docforge.yml, or unset reranker_url."
             )
-        if self.rerank_top_n > self.hybrid_pool_size:
+        # Only meaningful when reranking is on: lowering HYBRID_POOL_SIZE with
+        # rerank OFF must not break startup over an unused rerank_top_n.
+        if self.rerank_enabled and self.rerank_top_n > self.hybrid_pool_size:
             raise ValueError(
                 f"rerank_top_n ({self.rerank_top_n}) must not exceed "
                 f"hybrid_pool_size ({self.hybrid_pool_size}) — cannot rerank "

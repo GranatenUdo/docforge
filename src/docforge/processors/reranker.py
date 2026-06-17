@@ -24,9 +24,11 @@ class RerankerProtocol(Protocol):
     reranker_api.py sidecar, not by `reranker_from_settings`.
     """
 
-    async def arerank(self, query: str, passages: list[str]) -> list[int]: ...
+    async def arerank(self, query: str, passages: list[str]) -> list[tuple[int, float]]: ...
 
 
+# NOTE: consumed by the reranker sidecar (reranker_api.py), not by the in-engine
+# search path. reranker_from_settings never builds this; the sidecar wraps it.
 class Reranker:
     """Re-scores (query, passage) pairs with an in-process cross-encoder.
 
@@ -115,14 +117,17 @@ class RemoteReranker:
         # line is unreachable but keeps mypy happy about implicit None.
         raise RuntimeError("unreachable")
 
-    async def arerank(self, query: str, passages: list[str]) -> list[int]:
-        """Return passage indices ordered by descending relevance score.
+    async def arerank(self, query: str, passages: list[str]) -> list[tuple[int, float]]:
+        """Return (original_index, score) pairs ordered by descending score.
 
         The server returns one score per passage in input order; the client
         does its own sort and never trusts the server's positional ordering.
+        Carrying the score back lets callers surface the cross-encoder score
+        (instead of the stale RRF similarity) on reranked rows.
         """
         scores = await self._post_rerank(query, passages)
-        return sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        return [(i, scores[i]) for i in order]
 
 
 def reranker_from_settings(settings: Settings) -> RerankerProtocol | None:

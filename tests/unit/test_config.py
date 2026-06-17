@@ -327,14 +327,46 @@ class TestRerankerSettings:
         with pytest.raises(ValueError, match="reranker_token"):
             Settings()
 
-    def test_top_n_exceeding_pool_size_raises(self, tmp_path, monkeypatch):
+    def test_top_n_exceeding_pool_size_raises_when_rerank_enabled(self, tmp_path, monkeypatch):
+        # The pool-size guard is gated on rerank_enabled, so the raise-case must
+        # turn reranking ON (plus url + token to clear the other validators).
         monkeypatch.chdir(tmp_path)
         for var in self._RERANK_VARS:
             monkeypatch.delenv(var, raising=False)
         from docforge.config import Settings
 
         with pytest.raises(ValueError, match="rerank_top_n"):
-            Settings(rerank_top_n=999)
+            Settings(
+                rerank_enabled=True,
+                reranker_url="https://rerank.internal",
+                reranker_token="hunter2",
+                rerank_top_n=999,
+            )
+
+    def test_top_n_exceeding_pool_size_ignored_when_rerank_off(self, tmp_path, monkeypatch):
+        # Lowering HYBRID_POOL_SIZE below the default rerank_top_n with rerank
+        # OFF must NOT break startup — the guard only fires when reranking is on.
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        s = Settings(hybrid_pool_size=10)  # default rerank_top_n=50 > 10, rerank OFF
+        assert s.rerank_enabled is False
+        assert s.rerank_top_n == 50
+        assert s.hybrid_pool_size == 10
+
+    def test_top_n_zero_or_negative_raises(self, tmp_path, monkeypatch):
+        # rerank_top_n is bounded ge=1 so 0/negative fail loud at construction.
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="rerank_top_n"):
+            Settings(rerank_top_n=0)
+        with pytest.raises(ValueError, match="rerank_top_n"):
+            Settings(rerank_top_n=-1)
 
     def test_token_secretstr_not_in_repr(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

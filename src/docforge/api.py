@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
+import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
@@ -27,6 +28,16 @@ from docforge.processors.reranker import RerankerProtocol, reranker_from_setting
 from docforge.query_log import log_search
 
 logger = logging.getLogger(__name__)
+
+
+class RerankerUnavailable(Exception):
+    """Raised when the cross-encoder reranker sidecar is unreachable or errors.
+
+    Distinct from DB failures so the /search handler can map it to a 502
+    (bad gateway / upstream dependency down) instead of the generic 503
+    (database unavailable). The eval --direct path lets it propagate (fail-loud).
+    """
+
 
 _CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
 CLEANUP_LOCK_ID = 0xD0CF0001  # decimal 3,503,226,881 — stable across replicas
@@ -259,6 +270,11 @@ async def perform_search(
 
     user_tags = [t for t in (req.team_name, req.area_name) if t]
 
+    # Single predicate for the whole rerank path: drives BOTH the $6 fetch-size
+    # bind below and the rerank seam after the fetch. When off, both collapse to
+    # the byte-identical rerank-OFF behavior (SQL caps at req.limit, no seam).
+    do_rerank = settings.rerank_enabled and reranker is not None
+
     t_db_start = time.perf_counter()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -349,7 +365,7 @@ async def perform_search(
                               )
                    ) AS boosted_score
             FROM fused f JOIN sources s ON f.source_id = s.id
-            ORDER BY boosted_score DESC
+            ORDER BY boosted_score DESC, f.id
             LIMIT $6
             """,
             np.array(query_vector, dtype=np.float32),
@@ -357,12 +373,12 @@ async def perform_search(
             settings.hybrid_pool_size,
             settings.tag_match_weight,
             user_tags,
-            # $6 — LIMIT on the SQL fetch. When reranking, fetch the full
-            # hybrid pool so the cross-encoder sees all candidates; otherwise
-            # the SQL itself caps at req.limit (rerank-OFF path is unchanged).
-            settings.hybrid_pool_size
-            if (settings.rerank_enabled and reranker is not None)
-            else req.limit,
+            # $6 — LIMIT on the SQL fetch. When reranking, fetch enough rows for
+            # the cross-encoder to score its head (rerank_top_n) while still
+            # honoring a larger req.limit; don't over-fetch the full pool when
+            # only that many rows can ever be returned. Off -> the SQL caps at
+            # req.limit (rerank-OFF path is byte-identical).
+            max(req.limit, settings.rerank_top_n) if do_rerank else req.limit,
             settings.fts_language,
             settings.rrf_k,
             settings.dense_weight,
@@ -374,17 +390,44 @@ async def perform_search(
     t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
     t_rerank_ms = 0
-    if settings.rerank_enabled and reranker is not None and rows:
+    if do_rerank and rows:
         head = rows[: settings.rerank_top_n]
-        passages = [f"{r['source_title']}\n{r['section_title']}\n{r['text']}" for r in head]
+        # Join only non-empty fields so a missing section_title (NULL in SQL ->
+        # None here) doesn't inject a literal "None" line into the passage.
+        passages = [
+            "\n".join(s for s in (r["source_title"], r["section_title"], r["text"]) if s)
+            for r in head
+        ]
         _rr_start = time.perf_counter()
-        order = await reranker.arerank(req.query, passages)
-        assert len(order) == len(head)
-        # `order` is trusted to be a valid permutation of head's indices; the
-        # assert above is the guarded invariant. RemoteReranker builds it via
-        # sorted(range(len(scores)), ...), which is always a permutation.
-        rows = [head[i] for i in order] + rows[settings.rerank_top_n :]
+        try:
+            ranked = await reranker.arerank(req.query, passages)
+        except (httpx.HTTPError, RuntimeError) as e:
+            # The reranker sidecar is an upstream dependency, NOT the DB. Surface
+            # it as a distinct failure so /search maps it to 502, not 503.
+            raise RerankerUnavailable("reranker unavailable") from e
+        # Fail loud on a malformed permutation (survives `python -O`, unlike a
+        # bare assert): indices must be EXACTLY the set range(len(head)) — same
+        # length AND no dropped/duplicated index. Mirrors the embedder's
+        # dimension guard.
+        indices = [i for i, _ in ranked]
+        if len(indices) != len(head) or set(indices) != set(range(len(head))):
+            raise RuntimeError(
+                f"reranker returned an invalid permutation: got {len(indices)} "
+                f"indices {sorted(indices)}, expected a permutation of "
+                f"range({len(head)})"
+            )
+        # Carry the cross-encoder score back onto each reranked row: replace the
+        # stale RRF `similarity` (non-monotonic with the new rank) with the CE
+        # score so the LOG_RESPONSES feedback loop sees rank-consistent scores.
+        # asyncpg Records are read-only, so rebuild head rows as dicts (downstream
+        # only does row["key"], which works on dicts). Reranked head rows now
+        # carry CE scores while any surviving tail rows keep their RRF score —
+        # consistent for the common req.limit <= rerank_top_n case (head only).
+        reranked = [{**dict(head[i]), "similarity": float(score)} for i, score in ranked]
+        rows = reranked + rows[settings.rerank_top_n :]
         t_rerank_ms = int((time.perf_counter() - _rr_start) * 1000)
+    # NOTE: positions beyond rerank_top_n are raw RRF, so rerank_top_n should be
+    # >= the largest expected req.limit or the tail mixes rank regimes.
     rows = rows[: req.limit]
 
     logger.info(
@@ -414,6 +457,11 @@ async def search(
         rows = await perform_search(
             req=req, settings=settings, pool=pool, embedder=embedder, reranker=reranker
         )
+    except RerankerUnavailable as e:
+        # Reranker sidecar down — an upstream dependency, not the DB. Map to 502
+        # so callers/monitoring don't misread it as a database outage (503).
+        logger.error("Reranker unavailable during search: %s", e)
+        raise HTTPException(status_code=502, detail="reranker unavailable")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
