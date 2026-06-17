@@ -116,6 +116,12 @@ def fake_settings():
         sparse_flood_ratio=3.0,
         sparse_flood_dampening=0.5,
         title_weight_a=4.0,
+        # Cross-encoder reranker — default OFF, mirroring Settings. perform_search
+        # reads rerank_enabled/rerank_top_n; reranker_from_settings reads
+        # reranker_url. Empty url -> factory returns None -> rerank-OFF path.
+        rerank_enabled=False,
+        rerank_top_n=50,
+        reranker_url="",
     )
 
 

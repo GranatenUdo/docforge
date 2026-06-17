@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from docforge.config import Settings
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder, EmbedderProtocol
+from docforge.processors.reranker import RerankerProtocol, reranker_from_settings
 from docforge.query_log import log_search
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,9 @@ async def lifespan(app: FastAPI):
 
     settings = Settings()
     embedder: EmbedderProtocol | None = None  # set inside try; outer finally reads it
+    # reranker_from_settings returns None when reranker_url is unset; no model
+    # load or network here (RemoteReranker construction is lazy/inert).
+    reranker = reranker_from_settings(settings)
     pool = await asyncpg.create_pool(
         settings.database_url,
         min_size=settings.pool_min_size,
@@ -123,6 +127,7 @@ async def lifespan(app: FastAPI):
                 "settings": settings,
                 "pool": pool,
                 "embedder": embedder,
+                "reranker": reranker,
                 "azure_scheme": azure_scheme,
             }
         finally:
@@ -134,6 +139,8 @@ async def lifespan(app: FastAPI):
     finally:
         if embedder is not None and hasattr(embedder, "aclose"):
             await embedder.aclose()
+        if reranker is not None and hasattr(reranker, "aclose"):
+            await reranker.aclose()
         await pool.close()
 
 
@@ -150,6 +157,10 @@ def get_pool_dep(request: Request) -> asyncpg.Pool:
 
 def get_embedder(request: Request) -> EmbedderProtocol:
     return request.state.embedder
+
+
+def get_reranker(request: Request) -> RerankerProtocol | None:
+    return getattr(request.state, "reranker", None)
 
 
 def get_azure_scheme(request: Request):
@@ -230,6 +241,7 @@ async def perform_search(
     settings: Settings,
     pool: asyncpg.Pool,
     embedder: EmbedderProtocol,
+    reranker: RerankerProtocol | None = None,
 ) -> list[asyncpg.Record]:
     """Embed query, run the hybrid-retrieval SQL, return rows.
 
@@ -345,7 +357,12 @@ async def perform_search(
             settings.hybrid_pool_size,
             settings.tag_match_weight,
             user_tags,
-            req.limit,
+            # $6 — LIMIT on the SQL fetch. When reranking, fetch the full
+            # hybrid pool so the cross-encoder sees all candidates; otherwise
+            # the SQL itself caps at req.limit (rerank-OFF path is unchanged).
+            settings.hybrid_pool_size
+            if (settings.rerank_enabled and reranker is not None)
+            else req.limit,
             settings.fts_language,
             settings.rrf_k,
             settings.dense_weight,
@@ -356,11 +373,23 @@ async def perform_search(
         )
     t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
+    t_rerank_ms = 0
+    if settings.rerank_enabled and reranker is not None and rows:
+        head = rows[: settings.rerank_top_n]
+        passages = [f"{r['source_title']}\n{r['section_title']}\n{r['text']}" for r in head]
+        _rr_start = time.perf_counter()
+        order = await reranker.arerank(req.query, passages)
+        assert len(order) == len(head)
+        rows = [head[i] for i in order] + rows[settings.rerank_top_n :]
+        t_rerank_ms = int((time.perf_counter() - _rr_start) * 1000)
+    rows = rows[: req.limit]
+
     logger.info(
-        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d rows=%d",
+        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d t_rerank_ms=%d rows=%d",
         len(req.query),
         t_embed_ms,
         t_db_ms,
+        t_rerank_ms,
         len(rows),
     )
     return rows
@@ -372,13 +401,16 @@ async def search(
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Depends(get_pool_dep),
     embedder: EmbedderProtocol = Depends(get_embedder),
+    reranker: RerankerProtocol | None = Depends(get_reranker),
     user=Depends(_auth_dependency),
 ) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
     start = time.perf_counter()
 
     try:
-        rows = await perform_search(req=req, settings=settings, pool=pool, embedder=embedder)
+        rows = await perform_search(
+            req=req, settings=settings, pool=pool, embedder=embedder, reranker=reranker
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:

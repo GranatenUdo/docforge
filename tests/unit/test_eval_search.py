@@ -267,7 +267,7 @@ class TestDirectVsHttpParity:
         monkeypatch.setattr("httpx.AsyncClient", patched_async_client)
 
         # --- Direct path setup: stub perform_search to return the same row ---
-        async def fake_perform_search(*, req, settings, pool, embedder):
+        async def fake_perform_search(*, req, settings, pool, embedder, reranker=None):
             return [row]
 
         monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
