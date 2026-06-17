@@ -265,6 +265,87 @@ class TestEmbedderSidecarSettings:
         assert "very-secret-shhh" not in repr(s)
 
 
+class TestRerankerSettings:
+    _RERANK_VARS = (
+        "RERANK_ENABLED",
+        "RERANK_MODEL",
+        "RERANK_TOP_N",
+        "RERANKER_URL",
+        "RERANKER_TOKEN",
+    )
+
+    def test_defaults_when_unset(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.rerank_enabled is False
+        assert s.rerank_model == "BAAI/bge-reranker-v2-m3"
+        assert s.rerank_top_n == 50
+        assert s.reranker_url == ""
+        assert s.reranker_token.get_secret_value() == ""
+
+    def test_overrides_loadable_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("RERANK_ENABLED", "true")
+        monkeypatch.setenv("RERANK_MODEL", "BAAI/bge-reranker-base")
+        monkeypatch.setenv("RERANK_TOP_N", "25")
+        monkeypatch.setenv("RERANKER_URL", "https://rerank.internal")
+        monkeypatch.setenv("RERANKER_TOKEN", "hunter2")
+        from docforge.config import Settings
+
+        s = Settings()
+        assert s.rerank_enabled is True
+        assert s.rerank_model == "BAAI/bge-reranker-base"
+        assert s.rerank_top_n == 25
+        assert s.reranker_url == "https://rerank.internal"
+        assert s.reranker_token.get_secret_value() == "hunter2"
+
+    def test_enabled_without_url_raises(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="reranker_url"):
+            Settings(rerank_enabled=True)
+
+    def test_url_set_without_token_raises(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        (tmp_path / "docforge.yml").write_text(
+            "reranker_url: https://rerank.example\n",
+            encoding="utf-8",
+        )
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="reranker_token"):
+            Settings()
+
+    def test_top_n_exceeding_pool_size_raises(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="rerank_top_n"):
+            Settings(rerank_top_n=999)
+
+    def test_token_secretstr_not_in_repr(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import Settings
+
+        s = Settings(reranker_token="secret-x")
+        assert "secret-x" not in repr(s)
+
+
 def test_hybrid_retrieval_defaults():
     """Hybrid retrieval Settings defaults match the design spec."""
     from docforge.config import Settings
