@@ -380,6 +380,9 @@ async def perform_search(
         _rr_start = time.perf_counter()
         order = await reranker.arerank(req.query, passages)
         assert len(order) == len(head)
+        # `order` is trusted to be a valid permutation of head's indices; the
+        # assert above is the guarded invariant. RemoteReranker builds it via
+        # sorted(range(len(scores)), ...), which is always a permutation.
         rows = [head[i] for i in order] + rows[settings.rerank_top_n :]
         t_rerank_ms = int((time.perf_counter() - _rr_start) * 1000)
     rows = rows[: req.limit]
