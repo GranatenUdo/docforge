@@ -133,8 +133,14 @@ def reranker_from_settings(settings: Settings) -> RerankerProtocol | None:
     only the reranker_api.py sidecar instantiates it.
     """
     if settings.reranker_url:
+        token = settings.reranker_token.get_secret_value()
+        if not token:
+            raise RuntimeError(
+                "reranker_url is set but reranker_token is empty — "
+                "refusing to construct a RemoteReranker without auth"
+            )
         return RemoteReranker(
             settings.reranker_url,
-            settings.reranker_token.get_secret_value(),
+            token,
         )
     return None
