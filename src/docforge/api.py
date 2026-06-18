@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
+import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
@@ -23,9 +24,20 @@ from pydantic import BaseModel, Field
 from docforge.config import Settings
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder, EmbedderProtocol
+from docforge.processors.reranker import RerankerProtocol, reranker_from_settings
 from docforge.query_log import log_search
 
 logger = logging.getLogger(__name__)
+
+
+class RerankerUnavailable(Exception):
+    """Raised when the cross-encoder reranker sidecar is unreachable or errors.
+
+    Distinct from DB failures so the /search handler can map it to a 502
+    (bad gateway / upstream dependency down) instead of the generic 503
+    (database unavailable). The eval --direct path lets it propagate (fail-loud).
+    """
+
 
 _CLEANUP_INTERVAL_SECONDS = 3600  # one hour — overridable in tests
 CLEANUP_LOCK_ID = 0xD0CF0001  # decimal 3,503,226,881 — stable across replicas
@@ -93,6 +105,9 @@ async def lifespan(app: FastAPI):
 
     settings = Settings()
     embedder: EmbedderProtocol | None = None  # set inside try; outer finally reads it
+    # reranker_from_settings returns None when reranker_url is unset; no model
+    # load or network here (RemoteReranker construction is lazy/inert).
+    reranker = reranker_from_settings(settings)
     pool = await asyncpg.create_pool(
         settings.database_url,
         min_size=settings.pool_min_size,
@@ -123,6 +138,7 @@ async def lifespan(app: FastAPI):
                 "settings": settings,
                 "pool": pool,
                 "embedder": embedder,
+                "reranker": reranker,
                 "azure_scheme": azure_scheme,
             }
         finally:
@@ -134,6 +150,8 @@ async def lifespan(app: FastAPI):
     finally:
         if embedder is not None and hasattr(embedder, "aclose"):
             await embedder.aclose()
+        if reranker is not None and hasattr(reranker, "aclose"):
+            await reranker.aclose()
         await pool.close()
 
 
@@ -150,6 +168,10 @@ def get_pool_dep(request: Request) -> asyncpg.Pool:
 
 def get_embedder(request: Request) -> EmbedderProtocol:
     return request.state.embedder
+
+
+def get_reranker(request: Request) -> RerankerProtocol | None:
+    return getattr(request.state, "reranker", None)
 
 
 def get_azure_scheme(request: Request):
@@ -204,6 +226,10 @@ class SearchResult(BaseModel):
     source_url: str
     source_tags: list[str]
     similarity: float
+    # Cross-encoder rerank score, present only on reranked head rows. None when
+    # reranking is off or for any tail row beyond rerank_top_n. similarity stays
+    # the RRF value regardless; this is an additive signal, not a replacement.
+    rerank_score: float | None = None
     debug: SearchResultDebug | None = None
 
 
@@ -230,6 +256,7 @@ async def perform_search(
     settings: Settings,
     pool: asyncpg.Pool,
     embedder: EmbedderProtocol,
+    reranker: RerankerProtocol | None = None,
 ) -> list[asyncpg.Record]:
     """Embed query, run the hybrid-retrieval SQL, return rows.
 
@@ -246,6 +273,11 @@ async def perform_search(
     t_embed_ms = int((time.perf_counter() - t_embed_start) * 1000)
 
     user_tags = [t for t in (req.team_name, req.area_name) if t]
+
+    # Single predicate for the whole rerank path: drives BOTH the $6 fetch-size
+    # bind below and the rerank seam after the fetch. When off, both collapse to
+    # the byte-identical rerank-OFF behavior (SQL caps at req.limit, no seam).
+    do_rerank = settings.rerank_enabled and reranker is not None
 
     t_db_start = time.perf_counter()
     async with pool.acquire() as conn:
@@ -337,7 +369,7 @@ async def perform_search(
                               )
                    ) AS boosted_score
             FROM fused f JOIN sources s ON f.source_id = s.id
-            ORDER BY boosted_score DESC
+            ORDER BY boosted_score DESC, f.id
             LIMIT $6
             """,
             np.array(query_vector, dtype=np.float32),
@@ -345,7 +377,12 @@ async def perform_search(
             settings.hybrid_pool_size,
             settings.tag_match_weight,
             user_tags,
-            req.limit,
+            # $6 — LIMIT on the SQL fetch. When reranking, fetch enough rows for
+            # the cross-encoder to score its head (rerank_top_n) while still
+            # honoring a larger req.limit; don't over-fetch the full pool when
+            # only that many rows can ever be returned. Off -> the SQL caps at
+            # req.limit (rerank-OFF path is byte-identical).
+            max(req.limit, settings.rerank_top_n) if do_rerank else req.limit,
             settings.fts_language,
             settings.rrf_k,
             settings.dense_weight,
@@ -356,11 +393,53 @@ async def perform_search(
         )
     t_db_ms = int((time.perf_counter() - t_db_start) * 1000)
 
+    t_rerank_ms = 0
+    if do_rerank and rows:
+        head = rows[: settings.rerank_top_n]
+        # Join only non-empty fields so a missing section_title (NULL in SQL ->
+        # None here) doesn't inject a literal "None" line into the passage.
+        passages = [
+            "\n".join(s for s in (r["source_title"], r["section_title"], r["text"]) if s)
+            for r in head
+        ]
+        _rr_start = time.perf_counter()
+        try:
+            ranked = await reranker.arerank(req.query, passages)
+        except (httpx.HTTPError, RuntimeError) as e:
+            # The reranker sidecar is an upstream dependency, NOT the DB. Surface
+            # it as a distinct failure so /search maps it to 502, not 503.
+            raise RerankerUnavailable("reranker unavailable") from e
+        # Fail loud on a malformed permutation (survives `python -O`, unlike a
+        # bare assert): indices must be EXACTLY the set range(len(head)) — same
+        # length AND no dropped/duplicated index. Mirrors the embedder's
+        # dimension guard.
+        indices = [i for i, _ in ranked]
+        if len(indices) != len(head) or set(indices) != set(range(len(head))):
+            raise RuntimeError(
+                f"reranker returned an invalid permutation: got {len(indices)} "
+                f"indices {sorted(indices)}, expected a permutation of "
+                f"range({len(head)})"
+            )
+        # Carry the cross-encoder score back onto each reranked row WITHOUT
+        # touching `similarity`: similarity stays the RRF value (preserving its
+        # scale and the debug.rrf_score readout), and the CE score lands under a
+        # new `rerank_score` key. Consumers trust the returned ORDER (nothing
+        # re-sorts by score downstream), so the two scores can coexist. asyncpg
+        # Records are read-only, so rebuild head rows as dicts; tail rows keep
+        # their RRF similarity and have no rerank_score (None on read via .get).
+        reranked = [{**dict(head[i]), "rerank_score": float(score)} for i, score in ranked]
+        rows = reranked + rows[settings.rerank_top_n :]
+        t_rerank_ms = int((time.perf_counter() - _rr_start) * 1000)
+    # NOTE: positions beyond rerank_top_n are raw RRF, so rerank_top_n should be
+    # >= the largest expected req.limit or the tail mixes rank regimes.
+    rows = rows[: req.limit]
+
     logger.info(
-        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d rows=%d",
+        "search_phases query_len=%d t_embed_ms=%d t_db_ms=%d t_rerank_ms=%d rows=%d",
         len(req.query),
         t_embed_ms,
         t_db_ms,
+        t_rerank_ms,
         len(rows),
     )
     return rows
@@ -372,13 +451,21 @@ async def search(
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Depends(get_pool_dep),
     embedder: EmbedderProtocol = Depends(get_embedder),
+    reranker: RerankerProtocol | None = Depends(get_reranker),
     user=Depends(_auth_dependency),
 ) -> SearchResponse:
     """Search indexed documentation by semantic similarity."""
     start = time.perf_counter()
 
     try:
-        rows = await perform_search(req=req, settings=settings, pool=pool, embedder=embedder)
+        rows = await perform_search(
+            req=req, settings=settings, pool=pool, embedder=embedder, reranker=reranker
+        )
+    except RerankerUnavailable as e:
+        # Reranker sidecar down — an upstream dependency, not the DB. Map to 502
+        # so callers/monitoring don't misread it as a database outage (503).
+        logger.error("Reranker unavailable during search: %s", e)
+        raise HTTPException(status_code=502, detail="reranker unavailable")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -392,7 +479,11 @@ async def search(
         [
             {
                 "rank": i,
+                # `score` stays the RRF (similarity) for historical continuity in
+                # the feedback loop; `rerank_score` carries the new CE score (None
+                # for non-reranked rows). .get — rows may be Records without it.
                 "score": float(row["similarity"]),
+                "rerank_score": row.get("rerank_score"),
                 "source_url": row["source_url"],
                 "source_title": row["source_title"],
                 "section_title": row["section_title"],
@@ -423,11 +514,18 @@ async def search(
             source_url=row["source_url"],
             source_tags=list(row["source_tags"] or []),
             similarity=float(row["similarity"]),
+            # rows are a mix of asyncpg.Record (off-path / tail) and dict
+            # (reranked head); both honor the mapping .get() protocol, returning
+            # None when the key is absent. Use .get, NOT row["rerank_score"] —
+            # the latter would KeyError on a Record that has no such column.
+            rerank_score=row.get("rerank_score"),
             debug=(
                 SearchResultDebug(
                     dense_rank=row["dense_rank"],
                     sparse_rank=row["sparse_rank"],
-                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
+                    # similarity is always the RRF value (the rerank seam no
+                    # longer overwrites it), so rrf_score reads it directly.
+                    rrf_score=float(row["similarity"]),
                 )
                 if req.debug
                 else None

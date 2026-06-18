@@ -175,6 +175,7 @@ async def run_queries_direct(
     from docforge.config import Settings
     from docforge.db import _init_connection
     from docforge.processors.embedder import Embedder
+    from docforge.processors.reranker import reranker_from_settings
 
     settings = Settings()
     # --direct mode is meant for production-DB investigation work; it requires
@@ -198,6 +199,10 @@ async def run_queries_direct(
     )
     try:
         embedder = await asyncio.to_thread(Embedder.from_settings, settings)
+        # None when reranker_url unset; --direct then matches the API's
+        # rerank-OFF path. When set, --direct exercises the SAME rerank seam
+        # as the live /search handler so both-modes parity holds.
+        reranker = reranker_from_settings(settings)
         try:
             results: list[QueryResult] = []
             # Sequential, not asyncio.gather: per-query latencies in query_log
@@ -216,7 +221,7 @@ async def run_queries_direct(
                     debug=debug,
                 )
                 rows = await perform_search(
-                    req=req, settings=settings, pool=pool, embedder=embedder
+                    req=req, settings=settings, pool=pool, embedder=embedder, reranker=reranker
                 )
                 titles = [r["source_title"] for r in rows]
                 scores = [float(r["similarity"]) for r in rows]
@@ -237,6 +242,8 @@ async def run_queries_direct(
         finally:
             if hasattr(embedder, "aclose"):
                 await embedder.aclose()
+            if reranker is not None and hasattr(reranker, "aclose"):
+                await reranker.aclose()
     finally:
         await pool.close()
 

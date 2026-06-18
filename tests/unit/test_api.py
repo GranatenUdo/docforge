@@ -148,6 +148,56 @@ class TestSearchEndpoint:
         assert resp.status_code == 500
 
     @pytest.mark.asyncio
+    async def test_reranker_outage_returns_502_not_503(self):
+        """A reranker sidecar outage maps to 502 (upstream dependency down),
+        NOT the generic 503 reserved for DB failures."""
+        import httpx
+
+        from docforge.api import get_reranker
+        from tests.conftest import FakeEmbedder
+
+        # One canned row so the rerank seam (which runs only when rows) fires.
+        rows = [
+            {
+                "text": "body",
+                "section_title": "sec",
+                "source_title": "Doc",
+                "source_url": "https://wiki/0",
+                "source_tags": ["ccl"],
+                "similarity": 0.9,
+                "dense_rank": 1,
+                "sparse_rank": 1,
+            }
+        ]
+
+        def _rerank_on_settings():
+            s = fake_settings()
+            s.rerank_enabled = True
+            s.rerank_top_n = 50
+            s.reranker_url = "https://rerank.invalid"
+            return s
+
+        class _DownReranker:
+            async def arerank(self, query, passages):
+                raise httpx.ConnectError("sidecar down")
+
+        app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+        app.dependency_overrides[get_pool_dep] = lambda: CapturingPool(rows=rows)
+        app.dependency_overrides[get_settings] = _rerank_on_settings
+        app.dependency_overrides[get_reranker] = lambda: _DownReranker()
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    "/search",
+                    json={"query": "q", "team_name": "ccl", "limit": 5},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 502
+        assert "reranker unavailable" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_search_rejects_limit_over_max(self):
         """limit > 50 returns 422 with the limit field in the error detail."""
         async with _client() as client:

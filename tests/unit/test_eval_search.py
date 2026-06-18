@@ -267,7 +267,7 @@ class TestDirectVsHttpParity:
         monkeypatch.setattr("httpx.AsyncClient", patched_async_client)
 
         # --- Direct path setup: stub perform_search to return the same row ---
-        async def fake_perform_search(*, req, settings, pool, embedder):
+        async def fake_perform_search(*, req, settings, pool, embedder, reranker=None):
             return [row]
 
         monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
@@ -321,6 +321,151 @@ class TestDirectVsHttpParity:
         # Sanity check: both produced the expected match at rank 1
         assert h.returned_titles == ["Departments in Product Development"]
         assert h.match_rank == 1
+
+
+class TestDirectForwardsReranker:
+    """Guards the load-bearing both-modes-parity link: run_queries_direct must
+    build a reranker via reranker_from_settings and forward it into
+    perform_search. Without this, --direct would silently run the rerank-OFF
+    path while the live /search handler reranks — a parity gap that no other
+    test catches because TestDirectVsHttpParity stubs perform_search to a fixed
+    row and never inspects the reranker kwarg.
+    """
+
+    @pytest.mark.asyncio
+    async def test_direct_forwards_remote_reranker_when_configured(self, monkeypatch):
+        """When reranker_url + reranker_token are set, run_queries_direct
+        forwards a NON-None reranker into perform_search and aclose()s it."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from docforge.processors.reranker import RemoteReranker
+        from docforge.scripts.eval_search import run_queries_direct
+        from tests.conftest import FakeEmbedder, fake_settings
+
+        row = {
+            "source_title": "Departments in Product Development",
+            "section_title": "Engineering",
+            "text": "Markus is VP Engineering.",
+            "similarity": 0.85,
+            "dense_rank": 1,
+            "sparse_rank": 1,
+        }
+        ground_truth = [{"q": "who is Markus", "expected_title_contains": "Departments"}]
+
+        captured: dict[str, object] = {}
+
+        async def capturing_perform_search(*, req, settings, pool, embedder, reranker=None):
+            captured["reranker"] = reranker
+            return [row]
+
+        monkeypatch.setattr("docforge.api.perform_search", capturing_perform_search)
+
+        def patched_settings():
+            s = fake_settings()
+            s.embedder_url = "https://embedder.example.test"
+            s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
+            # reranker_from_settings builds a RemoteReranker iff reranker_url is
+            # set AND reranker_token is non-empty.
+            s.reranker_url = "https://reranker.example.test"
+            s.reranker_token = SimpleNamespace(get_secret_value=lambda: "rr-token")
+            return s
+
+        monkeypatch.setattr("docforge.config.Settings", patched_settings)
+
+        async def fake_create_pool(*args, **kwargs):
+            return MagicMock(close=AsyncMock())
+
+        monkeypatch.setattr("asyncpg.create_pool", fake_create_pool)
+        monkeypatch.setattr(
+            "docforge.processors.embedder.Embedder.from_settings",
+            lambda settings: FakeEmbedder(),
+        )
+
+        # Spy on aclose so we can assert the reranker is closed on the way out.
+        aclose_calls = {"n": 0}
+        orig_aclose = RemoteReranker.aclose
+
+        async def spy_aclose(self):
+            aclose_calls["n"] += 1
+            return await orig_aclose(self)
+
+        monkeypatch.setattr(RemoteReranker, "aclose", spy_aclose)
+
+        await run_queries_direct(
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            debug=False,
+        )
+
+        assert "reranker" in captured, "perform_search was never called"
+        assert captured["reranker"] is not None, (
+            "--direct did not forward a reranker even though reranker_url was set"
+        )
+        assert isinstance(captured["reranker"], RemoteReranker)
+        assert aclose_calls["n"] == 1, "forwarded reranker was not aclose()d exactly once"
+
+    @pytest.mark.asyncio
+    async def test_direct_forwards_none_reranker_when_url_empty(self, monkeypatch):
+        """Companion off-path: with reranker_url='' the forwarded reranker is
+        None, so --direct matches the API's rerank-OFF path."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from docforge.scripts.eval_search import run_queries_direct
+        from tests.conftest import FakeEmbedder, fake_settings
+
+        row = {
+            "source_title": "Departments in Product Development",
+            "section_title": "Engineering",
+            "text": "Markus is VP Engineering.",
+            "similarity": 0.85,
+            "dense_rank": 1,
+            "sparse_rank": 1,
+        }
+        ground_truth = [{"q": "who is Markus", "expected_title_contains": "Departments"}]
+
+        captured: dict[str, object] = {}
+
+        async def capturing_perform_search(*, req, settings, pool, embedder, reranker=None):
+            captured["reranker"] = reranker
+            return [row]
+
+        monkeypatch.setattr("docforge.api.perform_search", capturing_perform_search)
+
+        def patched_settings():
+            s = fake_settings()  # reranker_url="" by default
+            s.embedder_url = "https://embedder.example.test"
+            s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
+            return s
+
+        monkeypatch.setattr("docforge.config.Settings", patched_settings)
+
+        async def fake_create_pool(*args, **kwargs):
+            return MagicMock(close=AsyncMock())
+
+        monkeypatch.setattr("asyncpg.create_pool", fake_create_pool)
+        monkeypatch.setattr(
+            "docforge.processors.embedder.Embedder.from_settings",
+            lambda settings: FakeEmbedder(),
+        )
+
+        await run_queries_direct(
+            ground_truth=ground_truth,
+            user_name="u",
+            team_name="t",
+            area_name="a",
+            k=5,
+            debug=False,
+        )
+
+        assert "reranker" in captured, "perform_search was never called"
+        assert captured["reranker"] is None, (
+            "--direct forwarded a non-None reranker even though reranker_url was empty"
+        )
 
 
 class TestFormatReportDebug:

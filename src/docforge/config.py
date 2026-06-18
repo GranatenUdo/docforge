@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -171,6 +171,46 @@ class Settings(BaseSettings):
     # RemoteEmbedder; when empty, an in-process Embedder is loaded.
     embedder_url: str = ""
     embedder_token: SecretStr = SecretStr("")
+
+    # Cross-encoder reranker (default OFF). When `rerank_enabled`, the top
+    # `rerank_top_n` hybrid candidates are re-scored by a cross-encoder served
+    # at `reranker_url` (RemoteReranker, bearer auth via `reranker_token`).
+    # `rerank_top_n` must not exceed `hybrid_pool_size` — you cannot rerank
+    # more candidates than the hybrid pool produces. It should also be >= the
+    # largest expected request limit, since positions beyond it in the search
+    # results are raw RRF (not reranked) — see the perform_search seam.
+    rerank_enabled: bool = False
+    # rerank_model: consumed by the reranker sidecar (reranker_api.py) to load
+    # the cross-encoder, NOT by the in-engine search path (which talks to the
+    # sidecar over HTTP via RemoteReranker).
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_top_n: int = Field(50, ge=1)
+    reranker_url: str = ""
+    reranker_token: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def _validate_reranker(self):
+        if self.rerank_enabled and not self.reranker_url:
+            raise ValueError(
+                "rerank_enabled is True but reranker_url is empty — "
+                "the cross-encoder reranker needs a sidecar URL. Set "
+                "RERANKER_URL via env or docforge.yml, or disable reranking."
+            )
+        if self.reranker_url and not self.reranker_token.get_secret_value():
+            raise ValueError(
+                "reranker_url is set but reranker_token is empty — "
+                "RemoteReranker requires a bearer token. Set RERANKER_TOKEN "
+                "via env or docforge.yml, or unset reranker_url."
+            )
+        # Only meaningful when reranking is on: lowering HYBRID_POOL_SIZE with
+        # rerank OFF must not break startup over an unused rerank_top_n.
+        if self.rerank_enabled and self.rerank_top_n > self.hybrid_pool_size:
+            raise ValueError(
+                f"rerank_top_n ({self.rerank_top_n}) must not exceed "
+                f"hybrid_pool_size ({self.hybrid_pool_size}) — cannot rerank "
+                "more candidates than the hybrid pool produces."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_embedder_sidecar(self):
