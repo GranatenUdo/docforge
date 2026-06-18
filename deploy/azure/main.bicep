@@ -157,6 +157,49 @@ param enableWorkloadProfiles bool = false
 @description('When true, adds the gpu-nc8as-t4 workload profile to the env. Only honored when enableWorkloadProfiles=true.')
 param enableGpuProfile bool = false
 
+@description('Cross-encoder reranking toggle for the search API (RERANK_ENABLED). Default "false" = off. Container Apps env values are strings; pydantic-settings parses to bool at runtime.')
+param rerankEnabled string = 'false'
+
+@description('Cross-encoder model loaded by the reranker sidecar (RERANK_MODEL / settings.rerank_model).')
+param rerankModel string = 'BAAI/bge-reranker-v2-m3'
+
+@description('Number of top hybrid candidates the search API re-scores via the reranker sidecar (RERANK_TOP_N). Must not exceed HYBRID_POOL_SIZE. Container Apps env values are strings; pydantic-settings parses to int at runtime.')
+param rerankTopN string = '50'
+
+@description('URL of the reranker sidecar the search API delegates to (RERANKER_URL). Empty string = reranking disabled, regardless of rerankEnabled. Wire to the reranker app FQDN when flipping reranking on.')
+param rerankerUrl string = ''
+
+@description('Full image reference for the reranker Container App. Empty string defers to "hello-world" placeholder, update post-deploy.')
+param rerankerImage string = ''
+
+@description('Workload profile name for the reranker Container App. Only relevant when enableWorkloadProfiles=true. Set "gpu-nc8as-t4" for Tesla T4 GPU; "Consumption" for CPU-only.')
+param rerankerWorkloadProfileName string = 'Consumption'
+
+@description('Min replicas for the reranker Container App. 0 = scale-to-zero (cheapest, eats cold start); 1 = always warm.')
+@minValue(0)
+@maxValue(10)
+param rerankerMinReplicas int = 0
+
+@description('Max replicas for the reranker Container App.')
+@minValue(1)
+@maxValue(30)
+param rerankerMaxReplicas int = 5
+
+@description('vCPUs allocated to the reranker Container App. GPU workload profiles require the full SKU vCPU count (NC8as_T4 = 8). Consumption-profile callers use fractional cpu (json("2.0")) via the conditional below.')
+@minValue(1)
+@maxValue(16)
+param rerankerCpu int = 2
+
+@description('Memory (Gi) allocated to the reranker Container App. GPU workload profiles require the full SKU memory (NC8as_T4 = 56). Consumption-profile callers typically use 4.')
+@minValue(1)
+@maxValue(64)
+param rerankerMemoryGi int = 4
+
+@description('Bearer token shared between the search API and the reranker service. The reranker reuses the embedder-token Key Vault secret today (single shared sidecar token), so this param is currently unwired — reserved for a future split where the reranker gets its own KV secret. Rotate the shared token via embedderToken until then.')
+@secure()
+#disable-next-line no-unused-params
+param rerankerToken string = ''
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
@@ -472,6 +515,32 @@ var realContainerEnv = [
     name: 'LOG_RESPONSES'
     value: logResponses
   }
+  {
+    name: 'RERANK_ENABLED'
+    value: rerankEnabled
+  }
+  {
+    name: 'RERANK_MODEL'
+    value: rerankModel
+  }
+  {
+    name: 'RERANK_TOP_N'
+    value: rerankTopN
+  }
+  {
+    // Default-OFF: rerankerUrl defaults to '' so the search API leaves
+    // reranking disabled until the flip. When enabling, set rerankerUrl to
+    // 'https://${rerankerApp.properties.configuration.ingress.fqdn}' — the
+    // same FQDN-output wiring EMBEDDER_URL uses for the embedder app.
+    name: 'RERANKER_URL'
+    value: rerankerUrl
+  }
+  {
+    // Reuses the embedder-token secret — the search API authenticates to both
+    // sidecars with the same shared bearer token; no separate KV secret.
+    name: 'RERANKER_TOKEN'
+    secretRef: 'embedder-token'
+  }
 ]
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -638,6 +707,116 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// ─── Reranker Container App ─────────────────────────────────────────────
+
+var rerankerAppName = '${namePrefix}-reranker${nameSuffix}'
+var hasRealRerankerImage = !empty(rerankerImage)
+var defaultRerankerImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var effectiveRerankerImage = hasRealRerankerImage ? rerankerImage : defaultRerankerImage
+
+var rerankerProbes = hasRealRerankerImage ? [
+  {
+    type: 'Startup'
+    httpGet: { path: '/health', port: 8002 }
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  }
+  {
+    type: 'Liveness'
+    httpGet: { path: '/health', port: 8002 }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  }
+] : []
+
+// Reuses the embedder-token secret rather than minting a new KV secret —
+// the search API and both sidecars share one bearer token.
+var rerankerRealSecrets = [
+  {
+    name: 'embedder-token'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/embedder-token'
+    identity: 'system'
+  }
+]
+
+var rerankerRealEnv = [
+  {
+    name: 'RERANKER_TOKEN'
+    secretRef: 'embedder-token'
+  }
+  {
+    name: 'RERANK_MODEL'
+    value: rerankModel
+  }
+  {
+    name: 'PYTORCH_CUDA_ALLOC_CONF'
+    value: 'expandable_segments:True'
+  }
+]
+
+resource rerankerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: rerankerAppName
+  location: location
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerAppsEnv.id
+    workloadProfileName: enableWorkloadProfiles ? rerankerWorkloadProfileName : null
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: hasRealRerankerImage ? 8002 : 80
+        allowInsecure: false
+        transport: 'http'
+      }
+      registries: hasRealRerankerImage ? [
+        {
+          server: acr.properties.loginServer
+          identity: 'system'
+        }
+      ] : []
+      secrets: hasRealRerankerImage ? rerankerRealSecrets : []
+    }
+    template: {
+      containers: [
+        {
+          name: 'docforge-reranker'
+          image: effectiveRerankerImage
+          resources: {
+            // GPU profile requires integer CPU equal to the full SKU vCPU count;
+            // Consumption profile uses fractional CPU via json(). Branch on the
+            // active workload profile name.
+            cpu: (enableWorkloadProfiles && rerankerWorkloadProfileName == 'gpu-nc8as-t4') ? rerankerCpu : json('2.0')
+            memory: (enableWorkloadProfiles && rerankerWorkloadProfileName == 'gpu-nc8as-t4') ? '${rerankerMemoryGi}Gi' : '4Gi'
+          }
+          env: hasRealRerankerImage ? rerankerRealEnv : []
+          probes: rerankerProbes
+        }
+      ]
+      scale: {
+        minReplicas: rerankerMinReplicas
+        maxReplicas: rerankerMaxReplicas
+        rules: [
+          {
+            name: 'http-rule'
+            http: {
+              metadata: {
+                concurrentRequests: '5'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ─── Role assignments ───────────────────────────────────────────────────
 
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
@@ -683,6 +862,26 @@ resource embedderAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
+resource rerankerKvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, rerankerApp.id, keyVaultSecretsUserRoleId)
+  properties: {
+    principalId: rerankerApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource rerankerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: acr
+  name: guid(acr.id, rerankerApp.id, acrPullRoleId)
+  properties: {
+    principalId: rerankerApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ─── Outputs ────────────────────────────────────────────────────────────
 
 output apiFqdn string = containerApp.properties.configuration.ingress.fqdn
@@ -694,3 +893,5 @@ output databaseName string = databaseName
 output containerAppName string = containerApp.name
 output embedderFqdn string = embedderApp.properties.configuration.ingress.fqdn
 output embedderAppName string = embedderApp.name
+output rerankerFqdn string = rerankerApp.properties.configuration.ingress.fqdn
+output rerankerAppName string = rerankerApp.name

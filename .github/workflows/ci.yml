@@ -92,6 +92,45 @@ jobs:
           secrets: |
             "hf_token=${{ secrets.HF_TOKEN }}"
 
+  build-reranker-image:
+    # Master-push-only so PR CI isn't gated on ACR secrets being wired up in
+    # the repo. Unlike the embedder, the reranker model (BAAI/bge-reranker-v2-m3)
+    # is PUBLIC, so no HF_TOKEN secret is needed — the image always builds on a
+    # master push and is pushed only when ACR secrets are present. Operator must
+    # set ACR_LOGIN_SERVER, ACR_USERNAME, ACR_PASSWORD repo secrets to enable
+    # the push — see README "Self-hosting / forking".
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret configuration
+        id: check
+        env:
+          ACR_PASSWORD_SET: ${{ secrets.ACR_PASSWORD != '' }}
+        run: |
+          if [ "$ACR_PASSWORD_SET" = "true" ]; then
+            echo "ACR secrets configured; reranker image will be pushed to registry."
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ACR secrets not set; reranker image will be built but not pushed (Dockerfile sanity check only)."
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to ACR
+        if: steps.check.outputs.push == 'true'
+        run: |
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login -u "${{ secrets.ACR_USERNAME }}" --password-stdin "${{ secrets.ACR_LOGIN_SERVER }}"
+      - name: Build reranker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.reranker
+          push: ${{ steps.check.outputs.push == 'true' }}
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-reranker:{1}', secrets.ACR_LOGIN_SERVER, github.sha) || format('docforge-reranker:{0}', github.sha) }}
+            ${{ secrets.ACR_LOGIN_SERVER && format('{0}/docforge-reranker:latest', secrets.ACR_LOGIN_SERVER) || '' }}
+
   integration:
     runs-on: ubuntu-latest
     steps:

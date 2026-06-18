@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.6
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY src/ src/
+
+# Pre-install torch from PyTorch's cu124 index BEFORE the main package install.
+# Azure Container Apps GPU workload profiles (T4) run host NVIDIA driver
+# version 12.4. Without this pin, pip resolves to torch with CUDA 13 nvidia
+# wheels, which then silently fall back to CPU at runtime — making cross-encoder
+# inference impractically slow. The `pip install .` step below sees torch is
+# already installed and leaves it alone.
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch==2.5.1+cu124
+
+RUN pip install --no-cache-dir "."
+
+# Pre-download the reranker model. BAAI/bge-reranker-v2-m3 is PUBLIC, so no
+# HuggingFace token is required — unlike the gated embedding model, this bakes
+# without a BuildKit secret mount. Loading the CrossEncoder here pulls the
+# weights into the image layer so the sidecar starts without a cold download.
+ARG RERANK_MODEL=BAAI/bge-reranker-v2-m3
+RUN HF_HOME=/app/.cache/huggingface \
+    python -c "from sentence_transformers import CrossEncoder; \
+    CrossEncoder('${RERANK_MODEL}')"
+
+RUN useradd -m -u 1000 docforge && \
+    chown -R docforge:docforge /app
+
+USER docforge
+
+ENV HF_HOME=/app/.cache/huggingface
+
+EXPOSE 8002
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health').read() else 1)"
+
+CMD ["uvicorn", "docforge.reranker_api:app", "--host", "0.0.0.0", "--port", "8002"]
