@@ -258,6 +258,4 @@ class TestFactory:
         # Mirror Embedder.from_settings: refuse to construct a remote client
         # without auth, even though the factory is only reached with a URL set.
         with pytest.raises(RuntimeError, match="refusing to construct"):
-            reranker_from_settings(
-                self._settings(url="https://rerank.internal", token="")
-            )
+            reranker_from_settings(self._settings(url="https://rerank.internal", token=""))
