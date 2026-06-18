@@ -28,7 +28,13 @@ async def lifespan(app: FastAPI):
             "reranker service requires RERANKER_TOKEN to be set "
             "(via Key Vault secret or env var) — refusing to start with no auth"
         )
-    reranker = await asyncio.to_thread(Reranker, settings.rerank_model)
+    reranker = await asyncio.to_thread(
+        Reranker,
+        settings.rerank_model,
+        "",
+        settings.rerank_batch_size,
+        settings.rerank_max_length,
+    )
     logger.info("Reranker ready: %s", reranker.model_name)
     yield {"reranker": reranker, "settings": settings}
 

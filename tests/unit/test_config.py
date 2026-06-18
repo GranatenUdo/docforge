@@ -286,6 +286,8 @@ class TestRerankerSettings:
         assert s.rerank_top_n == 50
         assert s.reranker_url == ""
         assert s.reranker_token.get_secret_value() == ""
+        assert s.rerank_batch_size == 8
+        assert s.rerank_max_length == 512
 
     def test_overrides_loadable_from_env(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

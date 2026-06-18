@@ -195,6 +195,16 @@ class Settings(BaseSettings):
     rerank_top_n: int = Field(50, ge=1, le=MAX_RERANK_BATCH)
     reranker_url: str = ""
     reranker_token: SecretStr = SecretStr("")
+    # Reranker sidecar GPU controls (consumed by reranker_api.py / the in-process
+    # Reranker, NOT the search path). They bound activation memory so a batch of
+    # long passages does not OOM the T4: rerank_max_length truncates each
+    # (query, passage) pair (bge-reranker-v2-m3 allows up to 8192 tokens, whose
+    # O(n^2) attention is the dominant OOM driver), and rerank_batch_size caps
+    # the per-forward batch. Mirrors the embedder's EMBEDDING_BATCH_SIZE fix and
+    # is tunable via the reranker app's env (RERANK_BATCH_SIZE / RERANK_MAX_LENGTH)
+    # without an image rebuild.
+    rerank_batch_size: int = Field(8, ge=1)
+    rerank_max_length: int = Field(512, ge=1)
 
     @model_validator(mode="after")
     def _validate_reranker(self):
