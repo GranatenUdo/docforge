@@ -108,6 +108,22 @@ class TestResponseValidation:
             await r.arerank("q", ["a", "b"])
         await r.aclose()
 
+    @pytest.mark.asyncio
+    async def test_non_json_body_raises_runtimeerror(self):
+        # A 200 with a non-JSON body (proxy/ingress HTML interstitial, partial
+        # write) must fail loud as RuntimeError (-> RerankerUnavailable/502),
+        # not escape as a JSONDecodeError into the generic 503 handler.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="<html>gateway error</html>")
+
+        transport = httpx.MockTransport(handler)
+        r = RemoteReranker("https://rerank.invalid", "t")
+        r._client = httpx.AsyncClient(transport=transport)
+
+        with pytest.raises(RuntimeError, match="non-JSON"):
+            await r.arerank("q", ["a", "b"])
+        await r.aclose()
+
 
 class TestRetryBehavior:
     @pytest.mark.asyncio

@@ -103,7 +103,7 @@ class TestRerankValidation:
     async def test_oversized_texts_returns_422(self):
         # A batch larger than MAX_RERANK_BATCH is rejected at the API layer
         # (parity with the embedder) before it can OOM the GPU.
-        from docforge.processors.reranker import MAX_RERANK_BATCH
+        from docforge.config import MAX_RERANK_BATCH
         from docforge.reranker_api import app
 
         async with _client(app) as c:

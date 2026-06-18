@@ -14,8 +14,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from docforge.config import Settings
-from docforge.processors.reranker import MAX_RERANK_BATCH, Reranker
+from docforge.config import MAX_RERANK_BATCH, Settings
+from docforge.processors.reranker import Reranker
 
 logger = logging.getLogger(__name__)
 

@@ -327,6 +327,18 @@ class TestRerankerSettings:
         with pytest.raises(ValueError, match="reranker_token"):
             Settings()
 
+    def test_top_n_above_max_rerank_batch_raises(self, tmp_path, monkeypatch):
+        # rerank_top_n is hard-bounded by MAX_RERANK_BATCH (the sidecar's batch
+        # cap), so a too-large value fails at construction rather than 502-ing
+        # at query time once reranking is on.
+        monkeypatch.chdir(tmp_path)
+        for var in self._RERANK_VARS:
+            monkeypatch.delenv(var, raising=False)
+        from docforge.config import MAX_RERANK_BATCH, Settings
+
+        with pytest.raises(ValueError):
+            Settings(rerank_top_n=MAX_RERANK_BATCH + 1)
+
     def test_top_n_exceeding_pool_size_raises_when_rerank_enabled(self, tmp_path, monkeypatch):
         # The pool-size guard is gated on rerank_enabled, so the raise-case must
         # turn reranking ON (plus url + token to clear the other validators).

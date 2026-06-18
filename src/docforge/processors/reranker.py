@@ -13,13 +13,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on (query, passage) pairs the sidecar will score in one request.
-# Mirrors the embedder's MAX_BATCH_SIZE. The search path only ever sends up to
-# rerank_top_n (<= hybrid_pool_size, default 100), so this never rejects a
-# legitimate call — it bounds an abusive or buggy oversized batch from OOMing
-# the GPU. Enforced at the API layer (reranker_api.RerankRequest).
-MAX_RERANK_BATCH = 256
-
 
 @runtime_checkable
 class RerankerProtocol(Protocol):
@@ -109,7 +102,16 @@ class RemoteReranker:
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
                 resp.raise_for_status()
-                payload = resp.json()
+                try:
+                    payload = resp.json()
+                except ValueError as e:
+                    # A 200 with a non-JSON body (e.g. a proxy/ingress HTML
+                    # interstitial, or a partial write) is a contract violation,
+                    # not a transient fault. Fail loud as RuntimeError so it
+                    # routes through perform_search -> RerankerUnavailable/502
+                    # like the wrong-shape case below, instead of escaping as
+                    # a JSONDecodeError that lands in the generic 503 handler.
+                    raise RuntimeError(f"reranker returned a non-JSON body: {e}") from e
                 scores = payload.get("scores") if isinstance(payload, dict) else None
                 # A 200 with a malformed/wrong-length body is a contract
                 # violation, not a transient fault — fail loud (RuntimeError,
