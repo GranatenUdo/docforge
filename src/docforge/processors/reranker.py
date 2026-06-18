@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import httpx
 
-from docforge.processors.embedder import _detect_cuda
-
 if TYPE_CHECKING:
     from docforge.config import Settings
 
@@ -42,19 +40,18 @@ class Reranker:
         self,
         model_name: str = "BAAI/bge-reranker-v2-m3",
         hf_token: str = "",
-        fp16: bool = True,
     ) -> None:
         from sentence_transformers import CrossEncoder
 
-        self._cuda_available = _detect_cuda()
-        logger.info("Loading reranker model: %s (fp16=%s)", model_name, fp16)
+        logger.info("Loading reranker model: %s", model_name)
         self._model = CrossEncoder(model_name, token=hf_token or None)
         self.model_name = model_name
-        if fp16 and self._cuda_available:
-            # Mirror the Embedder FP16 path: cast the underlying transformer
-            # to half precision so the cross-encoder fits alongside the
-            # embedding model on the same GPU.
-            self._model.model = self._model.model.half()
+        # Runs in fp32 — do NOT re-add an fp16 `.half()` cast. It silently
+        # breaks CrossEncoder.predict in sentence-transformers 5.x (the
+        # xlm-roberta position-id path raises AttributeError under half
+        # precision; the model still LOADS, so /health passes while /rerank
+        # 500s). It was also unnecessary: the reranker has its own dedicated
+        # T4 (16 GiB), so bge-reranker-v2-m3 (~2.3 GB) fits in full precision.
 
     def score(self, query: str, passages: list[str]) -> list[float]:
         """Return one relevance score per passage, in input order."""

@@ -243,7 +243,7 @@ class TestLocalReranker:
             type("M", (), {"CrossEncoder": FakeCrossEncoder})(),
         )
 
-        r = Reranker(model_name="some/reranker", hf_token="tok", fp16=False)
+        r = Reranker(model_name="some/reranker", hf_token="tok")
         scores = r.score("the query", ["passage one", "passage two"])
 
         assert scores == [0.3, 0.8]
@@ -281,7 +281,7 @@ class TestLocalReranker:
             type("M", (), {"CrossEncoder": FakeCrossEncoder})(),
         )
 
-        Reranker(model_name="m", hf_token="", fp16=False)
+        Reranker(model_name="m", hf_token="")
         assert captured["token"] is None
 
 
