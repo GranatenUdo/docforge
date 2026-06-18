@@ -8,8 +8,9 @@ These tests pin:
   1. rerank ON  -> top-`rerank_top_n` head reordered per the fake reranker, the
      un-reranked tail follows, final length == req.limit, and the captured `$6`
      bind value == max(req.limit, rerank_top_n) (pool expansion via the BIND,
-     not the SQL literal). Reranked head rows carry the cross-encoder score in
-     `similarity` (descending with rank), not the stale RRF score.
+     not the SQL literal). Reranked head rows KEEP their RRF `similarity` and
+     carry the cross-encoder score under the new `rerank_score` key (the rows
+     come back in rerank ORDER; nothing re-sorts by score downstream).
   2. rerank OFF -> output identical to no-rerank, captured `$6` bind == req.limit
      (regression guard for the default-OFF path).
   3. permutation guard -> a fake reranker returning fewer indices than len(head),
@@ -129,12 +130,24 @@ async def test_rerank_on_reorders_head_keeps_tail_and_expands_pool_bind():
     titles = [r["source_title"] for r in result]
     assert titles == ["Doc 2", "Doc 0", "Doc 1", "Doc 3", "Doc 4"]
     assert len(result) == req.limit
+    # Rows come back in rerank ORDER (verified by `titles` above); nothing
+    # downstream re-sorts by score, so the score fields need not be monotonic.
 
-    # Reranked head rows now carry the cross-encoder score in `similarity`
-    # (descending with rank), NOT the stale RRF score from the SQL.
+    # Reranked head rows KEEP the canned RRF value in `similarity` — the seam
+    # no longer overwrites it. _make_rows sets similarity = 1.0 - i/100, so the
+    # reordered head [Doc 2, Doc 0, Doc 1] carries RRF [0.98, 1.0, 0.99].
     head_sims = [r["similarity"] for r in result[:3]]
-    assert head_sims == [3.0, 2.0, 1.0]
-    assert head_sims == sorted(head_sims, reverse=True)
+    assert head_sims == [0.98, 1.0, 0.99]
+
+    # The cross-encoder score is surfaced under the new `rerank_score` key,
+    # in rerank order: index 2 -> 3.0, index 0 -> 2.0, index 1 -> 1.0.
+    head_rerank_scores = [r["rerank_score"] for r in result[:3]]
+    assert head_rerank_scores == [3.0, 2.0, 1.0]
+
+    # Tail rows (beyond rerank_top_n) were never reranked: no rerank_score, and
+    # similarity stays the raw RRF the SQL produced.
+    assert result[3].get("rerank_score") is None
+    assert result[3]["similarity"] == 1.0 - 3 / 100.0
 
     # The reranker saw the head's passages, built as title\nsection\ntext.
     assert len(reranker.calls) == 1
@@ -168,6 +181,9 @@ async def test_rerank_off_via_flag_is_identical_and_binds_req_limit():
     titles = [r["source_title"] for r in result]
     assert titles == ["Doc 0", "Doc 1", "Doc 2", "Doc 3", "Doc 4"]
     assert reranker.calls == []  # reranker untouched when flag off
+    # Rerank-OFF path adds no rerank_score and leaves similarity as raw RRF.
+    assert all(r.get("rerank_score") is None for r in result)
+    assert [r["similarity"] for r in result] == [1.0 - i / 100.0 for i in range(5)]
     # $6 bind == req.limit (regression guard for the default-OFF path).
     assert pool.captured["args"][5] == req.limit
 

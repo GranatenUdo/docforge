@@ -226,6 +226,10 @@ class SearchResult(BaseModel):
     source_url: str
     source_tags: list[str]
     similarity: float
+    # Cross-encoder rerank score, present only on reranked head rows. None when
+    # reranking is off or for any tail row beyond rerank_top_n. similarity stays
+    # the RRF value regardless; this is an additive signal, not a replacement.
+    rerank_score: float | None = None
     debug: SearchResultDebug | None = None
 
 
@@ -416,14 +420,14 @@ async def perform_search(
                 f"indices {sorted(indices)}, expected a permutation of "
                 f"range({len(head)})"
             )
-        # Carry the cross-encoder score back onto each reranked row: replace the
-        # stale RRF `similarity` (non-monotonic with the new rank) with the CE
-        # score so the LOG_RESPONSES feedback loop sees rank-consistent scores.
-        # asyncpg Records are read-only, so rebuild head rows as dicts (downstream
-        # only does row["key"], which works on dicts). Reranked head rows now
-        # carry CE scores while any surviving tail rows keep their RRF score —
-        # consistent for the common req.limit <= rerank_top_n case (head only).
-        reranked = [{**dict(head[i]), "similarity": float(score)} for i, score in ranked]
+        # Carry the cross-encoder score back onto each reranked row WITHOUT
+        # touching `similarity`: similarity stays the RRF value (preserving its
+        # scale and the debug.rrf_score readout), and the CE score lands under a
+        # new `rerank_score` key. Consumers trust the returned ORDER (nothing
+        # re-sorts by score downstream), so the two scores can coexist. asyncpg
+        # Records are read-only, so rebuild head rows as dicts; tail rows keep
+        # their RRF similarity and have no rerank_score (None on read via .get).
+        reranked = [{**dict(head[i]), "rerank_score": float(score)} for i, score in ranked]
         rows = reranked + rows[settings.rerank_top_n :]
         t_rerank_ms = int((time.perf_counter() - _rr_start) * 1000)
     # NOTE: positions beyond rerank_top_n are raw RRF, so rerank_top_n should be
@@ -475,7 +479,11 @@ async def search(
         [
             {
                 "rank": i,
+                # `score` stays the RRF (similarity) for historical continuity in
+                # the feedback loop; `rerank_score` carries the new CE score (None
+                # for non-reranked rows). .get — rows may be Records without it.
                 "score": float(row["similarity"]),
+                "rerank_score": row.get("rerank_score"),
                 "source_url": row["source_url"],
                 "source_title": row["source_title"],
                 "section_title": row["section_title"],
@@ -506,11 +514,18 @@ async def search(
             source_url=row["source_url"],
             source_tags=list(row["source_tags"] or []),
             similarity=float(row["similarity"]),
+            # rows are a mix of asyncpg.Record (off-path / tail) and dict
+            # (reranked head); both honor the mapping .get() protocol, returning
+            # None when the key is absent. Use .get, NOT row["rerank_score"] —
+            # the latter would KeyError on a Record that has no such column.
+            rerank_score=row.get("rerank_score"),
             debug=(
                 SearchResultDebug(
                     dense_rank=row["dense_rank"],
                     sparse_rank=row["sparse_rank"],
-                    rrf_score=float(row["similarity"]),  # similarity column is rrf in the SQL
+                    # similarity is always the RRF value (the rerank seam no
+                    # longer overwrites it), so rrf_score reads it directly.
+                    rrf_score=float(row["similarity"]),
                 )
                 if req.debug
                 else None
