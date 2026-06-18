@@ -40,12 +40,23 @@ class Reranker:
         self,
         model_name: str = "BAAI/bge-reranker-v2-m3",
         hf_token: str = "",
+        batch_size: int = 8,
+        max_length: int = 512,
     ) -> None:
         from sentence_transformers import CrossEncoder
 
-        logger.info("Loading reranker model: %s", model_name)
-        self._model = CrossEncoder(model_name, token=hf_token or None)
+        logger.info(
+            "Loading reranker model: %s (batch_size=%d, max_length=%d)",
+            model_name,
+            batch_size,
+            max_length,
+        )
+        # max_length truncates each (query, passage) pair. bge-reranker-v2-m3
+        # allows up to 8192 tokens, whose O(n^2) attention activations OOM the
+        # T4 on a realistic top-N batch; 512 is the standard reranker window.
+        self._model = CrossEncoder(model_name, token=hf_token or None, max_length=max_length)
         self.model_name = model_name
+        self._batch_size = batch_size
         # Runs in fp32 — do NOT re-add an fp16 `.half()` cast. It silently
         # breaks CrossEncoder.predict in sentence-transformers 5.x (the
         # xlm-roberta position-id path raises AttributeError under half
@@ -55,7 +66,18 @@ class Reranker:
 
     def score(self, query: str, passages: list[str]) -> list[float]:
         """Return one relevance score per passage, in input order."""
-        return self._model.predict([(query, p) for p in passages]).tolist()
+        scores = self._model.predict(
+            [(query, p) for p in passages], batch_size=self._batch_size
+        ).tolist()
+        # Release cached GPU blocks between requests so fragmentation from a
+        # large batch doesn't OOM a later one on the shared-capacity T4. No-op
+        # on CPU. torch is imported lazily (sync path, runs via to_thread) so
+        # the search-api process — which only uses RemoteReranker — never loads it.
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return scores
 
 
 class RemoteReranker:

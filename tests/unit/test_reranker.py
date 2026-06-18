@@ -228,12 +228,14 @@ class TestLocalReranker:
                 return list(self._values)
 
         class FakeCrossEncoder:
-            def __init__(self, model_name, token=None):
+            def __init__(self, model_name, token=None, max_length=None):
                 captured["model_name"] = model_name
                 captured["token"] = token
+                captured["max_length"] = max_length
 
-            def predict(self, pairs):
+            def predict(self, pairs, batch_size=None):
                 captured["pairs"] = pairs
+                captured["batch_size"] = batch_size
                 # Canned numpy-like return, one score per pair.
                 return FakeArray([0.3, 0.8])
 
@@ -255,6 +257,9 @@ class TestLocalReranker:
         ]
         assert captured["model_name"] == "some/reranker"
         assert captured["token"] == "tok"
+        # OOM controls flow through to the model (defaults: 8 / 512).
+        assert captured["max_length"] == 512
+        assert captured["batch_size"] == 8
 
     def test_default_model_is_bge_reranker(self):
         import inspect
@@ -269,10 +274,10 @@ class TestLocalReranker:
         captured: dict = {}
 
         class FakeCrossEncoder:
-            def __init__(self, model_name, token=None):
+            def __init__(self, model_name, token=None, max_length=None):
                 captured["token"] = token
 
-            def predict(self, pairs):
+            def predict(self, pairs, batch_size=None):
                 return MagicMock(tolist=lambda: [])
 
         monkeypatch.setitem(
