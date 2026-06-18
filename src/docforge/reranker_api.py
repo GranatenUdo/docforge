@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from docforge.config import Settings
-from docforge.processors.reranker import Reranker
+from docforge.processors.reranker import MAX_RERANK_BATCH, Reranker
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def _require_token(
 
 class RerankRequest(BaseModel):
     query: str
-    texts: list[str] = Field(..., min_length=1)
+    texts: list[str] = Field(..., min_length=1, max_length=MAX_RERANK_BATCH)
 
 
 class RerankResponse(BaseModel):

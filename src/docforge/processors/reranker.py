@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on (query, passage) pairs the sidecar will score in one request.
+# Mirrors the embedder's MAX_BATCH_SIZE. The search path only ever sends up to
+# rerank_top_n (<= hybrid_pool_size, default 100), so this never rejects a
+# legitimate call — it bounds an abusive or buggy oversized batch from OOMing
+# the GPU. Enforced at the API layer (reranker_api.RerankRequest).
+MAX_RERANK_BATCH = 256
+
 
 @runtime_checkable
 class RerankerProtocol(Protocol):
@@ -102,7 +109,21 @@ class RemoteReranker:
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
                 resp.raise_for_status()
-                return resp.json()["scores"]
+                payload = resp.json()
+                scores = payload.get("scores") if isinstance(payload, dict) else None
+                # A 200 with a malformed/wrong-length body is a contract
+                # violation, not a transient fault — fail loud (RuntimeError,
+                # which perform_search maps to RerankerUnavailable/502) instead
+                # of letting a KeyError/length mismatch escape as an opaque 503
+                # or trip the downstream permutation guard.
+                if not isinstance(scores, list) or len(scores) != len(passages):
+                    raise RuntimeError(
+                        f"reranker returned a malformed response: expected a list "
+                        f"of {len(passages)} scores, got "
+                        f"{type(scores).__name__}"
+                        + (f" of length {len(scores)}" if isinstance(scores, list) else "")
+                    )
+                return scores
             except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == 1:
                     await asyncio.sleep(0.15)

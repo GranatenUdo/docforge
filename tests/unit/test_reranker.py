@@ -75,6 +75,40 @@ class TestRerankHappyPath:
         await r.aclose()
 
 
+class TestResponseValidation:
+    @pytest.mark.asyncio
+    async def test_missing_scores_key_raises_runtimeerror(self):
+        # A 200 whose body lacks "scores" is a contract violation, not a
+        # transient fault: fail loud (RuntimeError -> RerankerUnavailable/502)
+        # rather than letting a KeyError escape as an opaque 503.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"unexpected": "shape"})
+
+        transport = httpx.MockTransport(handler)
+        r = RemoteReranker("https://rerank.invalid", "t")
+        r._client = httpx.AsyncClient(transport=transport)
+
+        with pytest.raises(RuntimeError, match="malformed"):
+            await r.arerank("q", ["a", "b"])
+        await r.aclose()
+
+    @pytest.mark.asyncio
+    async def test_wrong_length_scores_raises_runtimeerror(self):
+        # Exactly one score per passage is required; a mismatch must fail loud
+        # instead of tripping the downstream permutation guard with a confusing
+        # error.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"scores": [0.5]})  # 1 score, 2 passages
+
+        transport = httpx.MockTransport(handler)
+        r = RemoteReranker("https://rerank.invalid", "t")
+        r._client = httpx.AsyncClient(transport=transport)
+
+        with pytest.raises(RuntimeError, match="malformed"):
+            await r.arerank("q", ["a", "b"])
+        await r.aclose()
+
+
 class TestRetryBehavior:
     @pytest.mark.asyncio
     async def test_transport_error_then_success(self):
