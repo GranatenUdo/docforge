@@ -99,6 +99,21 @@ class TestRerankValidation:
             )
         assert resp.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_oversized_texts_returns_422(self):
+        # A batch larger than MAX_RERANK_BATCH is rejected at the API layer
+        # (parity with the embedder) before it can OOM the GPU.
+        from docforge.config import MAX_RERANK_BATCH
+        from docforge.reranker_api import app
+
+        async with _client(app) as c:
+            resp = await c.post(
+                "/rerank",
+                json={"query": "q", "texts": ["t"] * (MAX_RERANK_BATCH + 1)},
+                headers={"Authorization": "Bearer secret-tok"},
+            )
+        assert resp.status_code == 422
+
 
 class TestLifespanGuard:
     @pytest.mark.asyncio

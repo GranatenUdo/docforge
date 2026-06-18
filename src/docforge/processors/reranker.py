@@ -102,7 +102,30 @@ class RemoteReranker:
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
                 resp.raise_for_status()
-                return resp.json()["scores"]
+                try:
+                    payload = resp.json()
+                except ValueError as e:
+                    # A 200 with a non-JSON body (e.g. a proxy/ingress HTML
+                    # interstitial, or a partial write) is a contract violation,
+                    # not a transient fault. Fail loud as RuntimeError so it
+                    # routes through perform_search -> RerankerUnavailable/502
+                    # like the wrong-shape case below, instead of escaping as
+                    # a JSONDecodeError that lands in the generic 503 handler.
+                    raise RuntimeError(f"reranker returned a non-JSON body: {e}") from e
+                scores = payload.get("scores") if isinstance(payload, dict) else None
+                # A 200 with a malformed/wrong-length body is a contract
+                # violation, not a transient fault — fail loud (RuntimeError,
+                # which perform_search maps to RerankerUnavailable/502) instead
+                # of letting a KeyError/length mismatch escape as an opaque 503
+                # or trip the downstream permutation guard.
+                if not isinstance(scores, list) or len(scores) != len(passages):
+                    raise RuntimeError(
+                        f"reranker returned a malformed response: expected a list "
+                        f"of {len(passages)} scores, got "
+                        f"{type(scores).__name__}"
+                        + (f" of length {len(scores)}" if isinstance(scores, list) else "")
+                    )
+                return scores
             except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == 1:
                     await asyncio.sleep(0.15)

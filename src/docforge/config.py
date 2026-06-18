@@ -14,6 +14,14 @@ import yaml
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Hard upper bound on rerank_top_n AND the max (query, passage) pairs the
+# reranker sidecar will score in one request (the sidecar's RerankRequest.texts
+# uses this as max_length). The search path sends head = rows[:rerank_top_n],
+# so bounding rerank_top_n here guarantees a legitimate call never exceeds the
+# sidecar cap — a too-large RERANK_TOP_N fails fast at startup instead of
+# 502-ing at query time. Mirrors the embedder's MAX_BATCH_SIZE.
+MAX_RERANK_BATCH = 256
+
 
 class AuthSettings(BaseModel):
     mode: Literal["none", "entra"] = "none"
@@ -184,7 +192,7 @@ class Settings(BaseSettings):
     # the cross-encoder, NOT by the in-engine search path (which talks to the
     # sidecar over HTTP via RemoteReranker).
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
-    rerank_top_n: int = Field(50, ge=1)
+    rerank_top_n: int = Field(50, ge=1, le=MAX_RERANK_BATCH)
     reranker_url: str = ""
     reranker_token: SecretStr = SecretStr("")
 
