@@ -160,7 +160,7 @@ param enableGpuProfile bool = false
 @description('Cross-encoder reranking toggle for the search API (RERANK_ENABLED). Default "false" = off. Container Apps env values are strings; pydantic-settings parses to bool at runtime.')
 param rerankEnabled string = 'false'
 
-@description('Cross-encoder model loaded by the reranker sidecar (RERANK_MODEL / settings.rerank_model).')
+@description('Cross-encoder model loaded by the reranker sidecar (RERANK_MODEL / settings.rerank_model). Only the default is baked into Dockerfile.reranker; setting any other model triggers a multi-GB runtime download on the GPU container at first request, which can exceed the cold-start probe and the search API rerank timeout. To change the model, rebuild the reranker image with the new model baked in rather than only overriding this param.')
 param rerankModel string = 'BAAI/bge-reranker-v2-m3'
 
 @description('Number of top hybrid candidates the search API re-scores via the reranker sidecar (RERANK_TOP_N). Must not exceed HYBRID_POOL_SIZE. Container Apps env values are strings; pydantic-settings parses to int at runtime.')
