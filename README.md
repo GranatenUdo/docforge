@@ -75,10 +75,11 @@ docforge serve
 2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (1024-dim).
 3. **Serve** exposes an MCP server that AI assistants query automatically.
 
-When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution.
+When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse BM25, fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
 
 ### Architecture
 
+<!-- TODO: regenerate docs/assets/architecture.svg to show the cross-encoder reranker GPU Container App sidecar (BAAI/bge-reranker-v2-m3) between the hybrid retrieval pool and the MCP server. -->
 ![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
 
 ## Commands
@@ -100,6 +101,7 @@ For team-wide use, deploy the search API to Azure (~€900/month at default SKUs
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
 - Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image) on a GPU workload profile (NC8as_T4).
+- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) on a serverless GPU profile (gpu-nc8as-t4), kept warm at `minReplicas: 1`.
 - Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
@@ -199,6 +201,8 @@ Contributions welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development 
 ## Evaluation & retrieval quality
 
 docforge ships with a retrieval-quality eval harness at [`src/docforge/scripts/eval_search.py`](src/docforge/scripts/eval_search.py). It measures recall@1, recall@k, and MRR against a ground-truth query set you maintain. The harness is designed for **drift detection** — run it after `sources.yml` changes, embedding-model updates, or ranking tweaks, and compare against your baseline. There is no absolute quality threshold; the metric magnitude depends on how closely your ground-truth queries match source titles. See [`src/docforge/scripts/README.md`](src/docforge/scripts/README.md) for details.
+
+Adding the cross-encoder reranker moved the canonical 60-query org-wide baseline from recall@1 43% to 65%, recall@20 87% to 92%, and MRR 0.564 to 0.735 (current baseline tracked in `rag/eval/CURRENT_BASELINE.md`).
 
 ## FAQ
 

@@ -16,7 +16,7 @@ If your deployment has any of those needs, they require a separate system with a
 
 ## Retention
 
-Default: **60 days**.
+Default: **180 days**.
 
 Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`.
 

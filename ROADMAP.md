@@ -4,9 +4,19 @@ docforge follows a signal-over-ritual roadmap: we list what we're actively
 working on and what's explicitly out of scope. Dates are aspirational, not
 committed.
 
-## Next up (0.3.x)
+## Recently shipped (0.5.x–0.7.x)
 
-- **Hybrid retrieval** (BM25 + dense) — Postgres `tsvector` + weighted fusion.
+- **Hybrid retrieval** (BM25 + dense) — dense pgvector + sparse BM25 fused with
+  RRF plus tag boost (v0.5.0).
+- **Cross-encoder reranker** — re-scores the top `RERANK_TOP_N` (default 50)
+  hybrid candidates with `BAAI/bge-reranker-v2-m3` on a serverless T4 GPU
+  sidecar (v0.7.16). Lifted recall@1 43→65% and MRR 0.564→0.735 on the 60-query
+  org-wide ground truth.
+
+## Next up (0.8.x)
+
+- **Reranker latency tuning** — trim the warm-path overhead and sweep
+  `RERANK_TOP_N` / `RERANK_BATCH_SIZE` for the recall-vs-latency sweet spot.
 - **Chunk overlap** — small token overlap between consecutive chunks.
 - **MCP identity via session**, not per-call args — remove `user_name` /
   `team_name` from the tool signature.

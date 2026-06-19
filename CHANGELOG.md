@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.16] - 2026-06-19
+
+### Added
+- **Cross-encoder reranker** — a second-stage re-scorer over the top
+  `rerank_top_n` (default 50) candidates from the hybrid pool (dense pgvector +
+  sparse BM25 + RRF + tag boost), using `BAAI/bge-reranker-v2-m3` (an
+  xlm-roberta cross-encoder via sentence-transformers `CrossEncoder`).
+- **Reranker GPU sidecar** — runs as its own GPU Container App (built from new
+  `Dockerfile.reranker`) on a serverless Tesla-T4 profile (`gpu-nc8as-t4`,
+  `cpu=8` / `mem=56Gi`), kept warm at `minReplicas=1`.
+- New `RERANKER_URL` / `RERANKER_TOKEN` settings: the search API delegates
+  reranking to the sidecar over a shared bearer token. `RERANKER_TOKEN` reuses
+  the existing `embedder-token` Key Vault secret (no new secret to provision).
+- `RERANK_*` config/env: `RERANK_ENABLED`, `RERANK_MODEL`, `RERANK_TOP_N`,
+  `RERANK_BATCH_SIZE` (default 8), `RERANK_MAX_LENGTH` (default 512). The
+  `max_length=512` + `batch_size=8` bounds keep T4 activation memory in check.
+- search-api image `docforge:v0.7.16`, reranker image
+  `docforge-reranker:v0.3.0`.
+
+### Changed
+- **Ranking pipeline:** hybrid retrieval now runs RRF first, then cross-encoder
+  reranks the top 50 candidates. **Result ordering and score semantics
+  changed** — `SearchResult.similarity` now carries the cross-encoder relevance
+  score, not the fused RRF value, and the final order is the reranker's. Consumers
+  should continue to rely on rank, not absolute score.
+
+### Notes
+- **fp32 only.** The reranker runs full fp32. The `.half()` fp16 cast broke
+  `CrossEncoder.predict` on sentence-transformers 5.x: the model loads (so
+  `/health` passes) but `/rerank` 500s. Do not re-enable fp16 without a
+  sentence-transformers compatibility fix.
+- **Eval impact** (60-query org-wide ground truth): recall@1 43 → 65%,
+  recall@20 87 → 92%, MRR 0.564 → 0.735. New canonical baseline lives in
+  `rag/eval/CURRENT_BASELINE.md`. The reranker sidecar only exists in the
+  deployed topology, so this gain must be eval-ed via `eval_search --api-url`
+  (a `--direct` run has no reranker and reproduces the old RRF-only numbers).
+
 ## [0.7.15] - 2026-06-01
 
 ### Added

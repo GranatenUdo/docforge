@@ -81,9 +81,9 @@ param minReplicas int = 1
 @maxValue(30)
 param maxReplicas int = 3
 
-@description('HuggingFace token for gated-model access (EmbeddingGemma-300M).')
+@description('HuggingFace token. The default embedder Qwen3-Embedding-4B is Apache-2.0 (ungated), so this is optional and defaults to empty; only needed if an operator swaps to a gated embedding model.')
 @secure()
-param hfToken string
+param hfToken string = ''
 
 @description('Confluence API token for page crawling.')
 @secure()

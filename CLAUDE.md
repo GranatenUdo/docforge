@@ -6,13 +6,16 @@ This file provides guidance to Claude Code when working in this repository.
 
 docforge is a CLI tool that forges searchable context from Confluence and git repos for AI coding assistants. It crawls documentation, chunks and embeds the content, stores it in PostgreSQL with pgvector, and serves it via MCP server.
 
+In production the engine runs as three services: the **search-api** plus two GPU Container App sidecars — an **embedder** sidecar (Qwen3-Embedding-4B) and a **reranker** sidecar (BAAI/bge-reranker-v2-m3). Retrieval is hybrid-then-cross-encoder-rerank: the hybrid pool (dense pgvector + sparse BM25 + RRF + tag boost) produces candidates, then the cross-encoder reranker re-scores the top `rerank_top_n` (default 50) of them.
+
 ## Tech Stack
 
 - **Language**: Python 3.13+
 - **CLI**: Typer
 - **API**: FastAPI (for hosted deployment)
 - **Database**: PostgreSQL + pgvector
-- **Embeddings**: Qwen3-Embedding-4B (1024-dim, Apache 2.0)
+- **Embeddings**: Qwen3-Embedding-4B (1024-dim, Apache 2.0), served by a GPU Container App sidecar (Tesla-T4)
+- **Reranker**: BAAI/bge-reranker-v2-m3 (xlm-roberta cross-encoder via sentence-transformers `CrossEncoder`), served by its own GPU Container App sidecar (Tesla-T4, `gpu-nc8as-t4`, built from `Dockerfile.reranker`, kept warm at `minReplicas=1`); runs fp32 (the fp16 `.half()` cast breaks `CrossEncoder.predict` in sentence-transformers 5.x)
 - **MCP**: FastMCP
 - **Config**: pydantic-settings + YAML
 
@@ -59,7 +62,11 @@ nearest internal API. The cheapest mistakes have been:
    `Settings` default — inspect with
    `az containerapp show --name <app> --query "properties.template.containers[0].env"`.
    Incident 2026-05-28: `SPARSE_WEIGHT=0.5` from bicepparam masked a 15-query
-   quality gap behind a green `--direct` eval.
+   quality gap behind a green `--direct` eval. Ranking changes must also confirm
+   the **reranker path**: verify `RERANK_ENABLED` and `RERANKER_URL` are set on
+   the deployed search-api, and smoke the reranker sidecar's `/rerank` endpoint
+   (not just `/health`) on a representative query — the model loads so `/health`
+   passes even when `/rerank` 500s (e.g. the fp16 `.half()` regression).
 2. **MCP changes** — call the actual MCP tool (`search_documentation`, as
    registered in `mcp_server.py:@mcp.tool()`) on a representative query and
    confirm the expected page appears. From a Claude Code session this surfaces
@@ -90,10 +97,11 @@ docforge/
     config.py           # Settings from docforge.yml + .env
     db.py               # asyncpg pool + pgvector
     api.py              # FastAPI search API
+    reranker_api.py     # FastAPI cross-encoder reranker (GPU sidecar)
     mcp_server.py       # MCP tools for AI assistants
     ingest.py           # Crawl → parse → chunk → embed → store
     sources.py          # Load sources from YAML
     crawlers/           # Confluence + git crawlers
-    processors/         # Parser, chunker, embedder
+    processors/         # Parser, chunker, embedder, reranker
     templates/          # Files copied during docforge init
 ```

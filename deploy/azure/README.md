@@ -4,28 +4,46 @@ Bicep template to deploy docforge as a hosted service on Azure Container Apps, b
 
 ## What gets deployed
 
-Seven resources in a single resource group (~$90/month at default SKUs with embedder always-on; less with `embedderMinReplicas=0`):
+Eight resources in a single resource group. Cost depends on the workload
+profile (see [Cost](#cost) below): the template **defaults** both GPU-capable
+sidecars to the cheap Consumption (CPU) profile, with the reranker scaled to
+zero and reranking off — a few dollars/month. **Production** deployments (e.g.
+the DocuWare CCL config) set the `gpu-nc8as-t4` Tesla-T4 profile and keep
+replicas warm, which is roughly ~$430/month with both sidecars always-warm on
+GPU (rough estimate — see Cost).
 
-| Resource | Purpose | Default SKU |
+| Resource | Purpose | Default SKU (template) |
 |---|---|---|
-| Key Vault | Runtime secrets (`hf-token`, `confluence-api-token`, `database-url`, `embedder-token`) | Standard |
-| Container Registry | Hosts the docforge Docker image **and** the embedder image (~13.6 GB) | Standard (NOT Basic — embedder image exceeds Basic's 10 GB quota) |
+| Key Vault | Runtime secrets (`confluence-api-token`, `database-url`, `embedder-token`) | Standard |
+| Container Registry | Hosts the docforge Docker image, the embedder image, **and** the reranker image | Standard (NOT Basic — embedder image exceeds Basic's 10 GB quota) |
 | Postgres Flexible Server | Vector store + metadata, pgvector extension enabled | Burstable B1ms, 32 GB |
 | Log Analytics workspace | Container App logs | PerGB2018, 30-day retention |
-| Container Apps managed environment | Compute host for both container apps | Consumption plan |
+| Container Apps managed environment | Compute host for all container apps; optional `gpu-nc8as-t4` GPU profile for the sidecars (when `enableGpuProfile=true`) | Consumption plan |
 | Container App: search-api | Runs `docforge serve --api`; `minReplicas=1` by default | 1 CPU, 1 GiB |
-| Container App: embedder | Runs the EmbeddingGemma sidecar; `embedderMinReplicas=0` by default (set 1 for production) | 2 CPU, 4 GiB |
+| Container App: embedder | Runs the Qwen3-Embedding-4B sidecar; `embedderMinReplicas=0` by default (scale-to-zero) | Consumption (2 CPU, 4 GiB) by default; set `gpu-nc8as-t4` (1 T4) for production — Qwen3-4B is impractically slow on CPU |
+| Container App: reranker | Runs the BAAI/bge-reranker-v2-m3 cross-encoder sidecar; **off by default** (`RERANKER_URL` unset), `minReplicas=0` | Consumption by default; set `gpu-nc8as-t4` (1 T4) + `minReplicas=1` + `RERANKER_URL` for production |
 
-The split into two Container Apps is the v0.3 Phase 4b architecture: the
+The split into separate Container Apps is the v0.3 Phase 4b architecture: the
 embedder service hosts the model and exposes a `POST /embed` endpoint; the
 search API and ingest workers call into it via `EMBEDDER_URL` instead of
 loading the model in-process. Search API replicas drop from ~2 GB RSS to
 ~400 MB and cold-start in ~30s (just container spin-up; no model load).
-The embedder defaults to `embedderMinReplicas=0` (scale-to-zero); on cold
-start it spins up in ~5–10s with the baked model weights (the
-`Dockerfile.embedder` bakes EmbeddingGemma at build time, so there is no
-runtime model download). For production traffic, set `embedderMinReplicas=1`
-to keep the model warm and avoid that 5–10s on the first request after idle.
+The embedder runs Qwen3-Embedding-4B (Apache-2.0, ungated). The template
+defaults it to the Consumption (CPU) profile and `embedderMinReplicas=0`
+(scale-to-zero); production sets the `gpu-nc8as-t4` Tesla-T4 profile (the 4B
+model is impractically slow on CPU) and `embedderMinReplicas=1` to keep the
+model warm. The model weights are baked into the image (`Dockerfile.embedder`),
+so there is no runtime download on cold start.
+
+Since engine 0.7.16 a third Container App, the **reranker**, can complete the
+retrieval pipeline. The hybrid pool (dense pgvector + sparse BM25 + RRF + tag
+boost) produces candidates, then the reranker cross-encoder re-scores the top
+`rerank_top_n` (default 50) of them. The template ships it **off** (the search
+API only calls it when `RERANKER_URL` is set) and scaled to zero on the
+Consumption profile; production runs it as its own GPU sidecar (built from
+`Dockerfile.reranker`) on the `gpu-nc8as-t4` Tesla-T4 profile, kept warm at
+`minReplicas=1`, with `RERANKER_URL` wired to flip reranking on. See the
+Reranker service section below.
 
 Both Container Apps use a system-assigned managed identity with:
 - **Key Vault Secrets User** on the Key Vault — reads secrets at runtime via identity, no connection strings stored in env vars.
@@ -35,21 +53,19 @@ No admin credentials are stored anywhere except Key Vault.
 
 ## Embedder service (v0.3 Phase 4b)
 
-The embedder is a separate Container App that hosts the EmbeddingGemma-300M
-model and exposes a `POST /embed` endpoint protected by a shared-secret
-bearer token. The search API, MCP server, and ingest worker call this
-endpoint instead of loading the 1.2 GB model in-process.
+The embedder is a separate Container App that hosts the Qwen3-Embedding-4B
+model (Apache-2.0, ungated) on a Tesla-T4 GPU and exposes a `POST /embed`
+endpoint protected by a shared-secret bearer token. The search API, MCP
+server, and ingest worker call this endpoint instead of loading the model
+in-process.
 
 **Image build.** A separate `Dockerfile.embedder` at the repo root builds
-the embedder image. The model is baked in at build time using BuildKit's
-secret mount (`--mount=type=secret,id=hf_token`); the HuggingFace token
-never enters any image layer. Export your token before running the build
-(`export HF_TOKEN="hf_..."` on Linux/macOS; `$env:HF_TOKEN = "hf_..."` in
-PowerShell; `set HF_TOKEN=hf_...` in cmd), then:
+the embedder image. The Qwen3-Embedding-4B model is ungated (Apache-2.0), so
+it is baked in at build time with a plain layer download — no HuggingFace
+token or BuildKit secret mount is required:
 
 ```bash
 docker build \
-  --secret id=hf_token,env=HF_TOKEN \
   -f Dockerfile.embedder \
   -t docforge-embedder:latest .
 ```
@@ -75,13 +91,65 @@ Pass the value as a Bicep parameter (`embedderToken=...`); the deploy
 template stores it in Key Vault and references it from both Container Apps.
 Rotate by re-deploying with a new value.
 
-**Cost.** Embedder Container App at 2 CPU / 4 GiB always-on
-(`embedderMinReplicas=1`) adds ~$35/month at West Europe Consumption pricing
-(roughly $25/mo for 2 vCPU-month plus ~$10/mo for 4 GiB-month, before
-request-driven CPU scaling). The default `embedderMinReplicas=0` scales to
-zero between requests — saves the full ~$35/month, at the cost of a ~5–10s
-cold-start on the first query after idle (just container spin-up; the model
-weights are baked into the image so there is no runtime download).
+**Cost.** On the production `gpu-nc8as-t4` Tesla-T4 profile, an always-warm
+embedder (`embedderMinReplicas=1`) is on the order of ~$190/month at West
+Europe Consumption GPU pricing (rough estimate — verify against current Azure
+Container Apps GPU pricing for your region). The template default
+(`embedderMinReplicas=0`, Consumption profile) scales to zero and costs a few
+dollars/month, at the cost of a cold-start on the first query after idle (the
+model weights are baked into the image, so there is no runtime download).
+
+## Reranker service (engine 0.7.16)
+
+The reranker is a separate GPU Container App that hosts the
+**BAAI/bge-reranker-v2-m3** cross-encoder (an xlm-roberta model loaded via the
+sentence-transformers `CrossEncoder` API) and exposes a `POST /rerank`
+endpoint. After the hybrid pool (dense pgvector + sparse BM25 + RRF + tag
+boost) produces candidates, the search API sends the top `rerank_top_n`
+(default 50) to the reranker, which re-scores them with the cross-encoder. On
+the 60-query org-wide ground truth this lifted recall@1 from 43% to 65%,
+recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (canonical baseline:
+`rag/eval/CURRENT_BASELINE.md`).
+
+Reranking is **off until wired up**: the search API only calls the reranker
+when `RERANKER_URL` is set. Leave it unset and the engine returns the hybrid
+ordering unchanged; set it to the reranker app's FQDN to flip reranking on.
+
+**Image build.** A separate `Dockerfile.reranker` at the repo root builds the
+reranker image. The default `RERANK_MODEL` (BAAI/bge-reranker-v2-m3) is baked
+into the image at build time. You *can* override `RERANK_MODEL` at runtime, but
+a non-baked model triggers a multi-GB download on the GPU container at first
+request (which can exceed the startup probe and the rerank timeout), so to use
+a different model, rebuild the image with it baked in rather than only setting
+the env var:
+
+```bash
+docker build \
+  -f Dockerfile.reranker \
+  -t docforge-reranker:latest .
+```
+
+**fp32 only.** The reranker runs the model in fp32. The fp16 `.half()` cast
+breaks `CrossEncoder.predict` in sentence-transformers 5.x: the model loads (so
+`/health` passes) but `/rerank` returns 500. `RERANK_MAX_LENGTH` (512) and
+`RERANK_BATCH_SIZE` (8) bound T4 activation memory.
+
+**Shared-secret auth.** The reranker reuses the embedder's bearer token — it
+references the same `embedder-token` Key Vault secret, passed as
+`RERANKER_TOKEN`. No separate secret to generate.
+
+**GPU quota.** The serverless `gpu-nc8as-t4` Tesla-T4 profile requires the
+**NC8as_T4_v3** GPU quota in your subscription/region. Both the embedder and
+the reranker run on this profile, so request enough quota for two always-warm
+T4 replicas before deploying with reranking enabled.
+
+**Cost.** The template defaults the reranker to the Consumption profile with
+`minReplicas=0` and reranking off, so out of the box it costs essentially
+nothing. In production (the recommended config), the reranker runs on the
+always-warm `gpu-nc8as-t4` Tesla-T4 profile (`minReplicas=1`) — on the order of
+~$190/month at West Europe Consumption GPU pricing (rough estimate; a second
+always-warm T4 alongside the embedder). Keeping it warm avoids a GPU cold-start
+on the first query after idle once `RERANKER_URL` is wired and reranking is on.
 
 ## Optional: Entra ID authentication
 
@@ -114,7 +182,7 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
   az provider register --namespace Microsoft.DBforPostgreSQL --wait
   az provider register --namespace Microsoft.ContainerRegistry --wait
   ```
-- A Hugging Face token with access to the gated `google/embeddinggemma-300m` model (accept the license at https://huggingface.co/google/embeddinggemma-300m first). **Export this token in your shell before running the `docker build` commands below**: `export HF_TOKEN="hf_..."` (Linux/macOS), `$env:HF_TOKEN = "hf_..."` (PowerShell), or `set HF_TOKEN=hf_...` (cmd). The BuildKit `--secret id=hf_token,env=HF_TOKEN` flag reads from this environment variable and never persists the token in any image layer.
+- **NC8as_T4_v3** GPU quota in your subscription and region — the embedder and reranker each run on the serverless `gpu-nc8as-t4` Tesla-T4 profile, so deploying both always-warm needs quota for two T4 replicas. No Hugging Face token is required: Qwen3-Embedding-4B (embedder) and BAAI/bge-reranker-v2-m3 (reranker) are both ungated and are baked into their images at build time.
 - A Confluence API token (if indexing Confluence pages).
 - A strong Postgres admin password.
 
@@ -140,7 +208,6 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
      --template-file main.bicep \
      --parameters main.bicepparam \
      --parameters \
-       hfToken="<your-hf-token>" \
        confluenceApiToken="<your-confluence-token>" \
        postgresAdminPassword="<strong-password>"
    ```
@@ -166,10 +233,9 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
    docker push $ACR_SERVER/docforge:latest
    ```
 
-6. Build and push the embedder image:
+6. Build and push the embedder image (Qwen3-Embedding-4B is ungated, so no HF token / secret mount is needed):
    ```bash
    docker build \
-     --secret id=hf_token,env=HF_TOKEN \
      -f Dockerfile.embedder \
      -t docforge-embedder:latest .
 
@@ -177,14 +243,24 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
    docker push $ACR_SERVER/docforge-embedder:latest
    ```
 
-7. Point the Container App at the new image:
+7. Build and push the reranker image (`RERANK_MODEL` = BAAI/bge-reranker-v2-m3 is baked in at build time):
+   ```bash
+   docker build \
+     -f Dockerfile.reranker \
+     -t docforge-reranker:latest .
+
+   docker tag docforge-reranker:latest $ACR_SERVER/docforge-reranker:latest
+   docker push $ACR_SERVER/docforge-reranker:latest
+   ```
+
+8. Point the Container App at the new image:
    ```bash
    az containerapp update \
      --name docforge-search-api --resource-group <rg-name> \
      --image $ACR_SERVER/docforge:latest
    ```
 
-8. Initialize the database and ingest:
+9. Initialize the database and ingest:
    ```bash
    # Construct DATABASE_URL from Step 4 outputs
    export DATABASE_URL="postgresql://dfadmin:<password>@<databaseHost>:5432/docforge?sslmode=require"
@@ -193,10 +269,10 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
    docforge ingest
    ```
 
-9. Smoke test:
+10. Smoke test:
    ```bash
    curl -fsS https://<apiFqdn>/health
-   # → {"status":"ok", "model":"google/embeddinggemma-300m"}
+   # → {"status":"ok", "model":"Qwen/Qwen3-Embedding-4B"}
 
    curl -X POST https://<apiFqdn>/search \
      -H "Content-Type: application/json" \
@@ -220,38 +296,50 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 | `minReplicas` / `maxReplicas` | 1 / 3 | Search-api scaling. `minReplicas=1` avoids container cold-starts on first request after idle. The 5-minute model-download cold-start was eliminated by the Phase 4b embedder split; search-api no longer loads the model. Set to 0 for dev to save ~$12/mo at the cost of ~30s container spin-up on the first request. |
 | `embedderImage` | `''` | Embedder image reference. Leave empty first time; set after pushing. |
 | `embedderToken` | *(required)* | Shared-secret bearer for embedder auth. Generate via `openssl rand -hex 32` (Linux/macOS), `python -c "import secrets; print(secrets.token_hex(32))"` (cross-platform), or `[Convert]::ToHexString((1..32 \| %{[byte](Get-Random -Max 256)}))` (PowerShell). |
-| `embedderMinReplicas` / `embedderMaxReplicas` | 0 / 5 | Embedder app scaling. Default `0` is scale-to-zero (cheapest; ~5–10s cold-start with baked model). Set `embedderMinReplicas=1` for production to keep the embedder warm. |
+| `embedderMinReplicas` / `embedderMaxReplicas` | 0 / 5 | Embedder app scaling on the `gpu-nc8as-t4` Tesla-T4 profile. Default `0` is scale-to-zero (cheapest; GPU cold-start with baked model). Set `embedderMinReplicas=1` for production to keep the embedder warm. |
+| `rerankerImage` | `''` | Reranker image reference. Leave empty first time; set after pushing. |
+| `RERANK_ENABLED` | `false` | Master switch for the reranking stage on the search API. |
+| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model. The default is **baked into the reranker image**; overriding to a non-baked model triggers a multi-GB runtime download, so rebuild `Dockerfile.reranker` with the new model rather than only overriding the env var. |
+| `RERANK_TOP_N` | 50 | How many top hybrid candidates the reranker re-scores per query. |
+| `RERANKER_URL` | `''` | Reranker app FQDN. **Reranking is off until this is set** — wire it to the reranker Container App to flip reranking on. |
+| `RERANKER_TOKEN` | *(reuses embedder)* | Shared-secret bearer for reranker auth. Reuses the `embedder-token` Key Vault secret; no separate value to generate. |
+| `RERANK_BATCH_SIZE` | 8 | Cross-encoder batch size; bounds T4 activation memory. |
+| `RERANK_MAX_LENGTH` | 512 | Max sequence length per pair; bounds T4 activation memory. |
 | `acrSku` | `Standard` | ACR pricing tier. **Must be `Standard` or `Premium`** — embedder image exceeds Basic's 10 GB quota. |
 
 ## Cost
 
 At default SKUs in West Europe Consumption pricing, the rough ballpark is
-~$90/month if you set `embedderMinReplicas=1` (always-on embedder for
-production traffic), or ~$55/month with the default `embedderMinReplicas=0`
-(scale-to-zero embedder; you pay only when requests arrive plus a ~5–10s
-cold-start on the first request after idle):
+~$430/month with both GPU sidecars always warm (`embedderMinReplicas=1` plus
+the reranker at `minReplicas=1` for production traffic), or ~$55/month with
+the default `embedderMinReplicas=0` and reranking disabled (scale-to-zero
+embedder, no reranker; you pay only when requests arrive plus a GPU cold-start
+on the first request after idle):
 
 | Resource | Monthly |
 |---|---|
 | Postgres B1ms + 32 GB | ~$19 |
 | Container Apps: search-api (1 replica always on, 1 vCPU / 1 GiB) | ~$12 |
-| Container Apps: embedder (1 replica always on, 2 vCPU / 4 GiB) | ~$35 |
+| Container Apps: embedder (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$190 |
+| Container Apps: reranker (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$190 |
 | Container Registry Standard | ~$20 (full month) — note: Basic at $5 is too small for the embedder image |
 | Key Vault Standard | <$1 |
 | Log Analytics (low volume) | ~$2 |
 
 Setting `minReplicas=0` on search-api drops ~$12/month at the cost of ~30s
-container cold-start. Setting `embedderMinReplicas=0` (the default) drops
-~$35/month at the cost of a ~5–10s cold-start on the first request after
-idle (container spin-up only — the model weights are baked into the image).
-For development and low-volume deployments, scale-to-zero on both is a
-reasonable default; for production traffic, set `embedderMinReplicas=1` to
-avoid the cold-start hop on every idle period.
+container cold-start. Setting `embedderMinReplicas=0` (the default) drops the
+embedder's ~$190/month at the cost of a GPU cold-start on the first request
+after idle (container spin-up only — the model weights are baked into the
+image). Leaving `RERANKER_URL` unset (reranking disabled) avoids the reranker's
+~$190/month entirely. For development and low-volume deployments, scale-to-zero
+embedder with reranking off is a reasonable default; for production traffic,
+set `embedderMinReplicas=1` and wire `RERANKER_URL` to keep both GPU sidecars
+warm and avoid the cold-start hop on every idle period.
 
 ## Architecture notes
 
 - **pgvector**: enabled via the `azure.extensions = 'VECTOR'` server parameter. The docforge `init-db` command runs `CREATE EXTENSION vector` inside the `docforge` database.
-- **Cold start**: search-api Container App cold-start takes ~30 seconds for the container itself. Since v0.3 Phase 4b, the search API does NOT load the model in-process — embedding is delegated to the embedder Container App. The embedder cold-starts in ~5–10s with the baked model (`Dockerfile.embedder` bakes EmbeddingGemma at build time, no runtime download). search-api `minReplicas` defaults to 1 (always warm); embedder `embedderMinReplicas` defaults to 0 (scale-to-zero). Set `embedderMinReplicas=1` to also keep the embedder warm for production deployments.
+- **Cold start**: search-api Container App cold-start takes ~30 seconds for the container itself. Since v0.3 Phase 4b, the search API does NOT load the model in-process — embedding is delegated to the embedder Container App. The embedder runs Qwen3-Embedding-4B on a Tesla-T4 GPU and cold-starts with the baked model (`Dockerfile.embedder` bakes Qwen3-Embedding-4B at build time, no runtime download). search-api `minReplicas` defaults to 1 (always warm); embedder `embedderMinReplicas` defaults to 0 (scale-to-zero). Set `embedderMinReplicas=1` to also keep the embedder warm for production deployments. The reranker Container App (BAAI/bge-reranker-v2-m3, also on a Tesla-T4) is kept warm at `minReplicas=1` and is only called when `RERANKER_URL` is set.
 - **Public Postgres**: the server has `publicNetworkAccess: Enabled` with firewall rules restricting access to Azure services + your admin IPs. Private endpoint / VNet integration is out of scope for this template.
 - **Secret rotation**: to rotate a secret, update the Key Vault secret value (new version). The Container App references the secret name, not a specific version, so restarting replicas picks up the new value. Trigger a restart via `az containerapp revision restart` or update any non-critical property to force a new revision.
 
@@ -263,7 +351,7 @@ az deployment group what-if \
   --resource-group <rg-name> \
   --template-file main.bicep \
   --parameters main.bicepparam \
-  --parameters hfToken="x" confluenceApiToken="x" postgresAdminPassword="x"
+  --parameters confluenceApiToken="x" postgresAdminPassword="x"
 ```
 
 ## Limitations
