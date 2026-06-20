@@ -21,6 +21,7 @@
 | Embedder bearer token (`embedder-token`) | Azure Key Vault | Secret (shared with reranker; see threat surface) |
 | Confluence API token | Azure Key Vault | Secret |
 | DB connection string | Azure Key Vault | Secret |
+| HuggingFace token (`hf-token`) | Azure Key Vault | Secret (empty by default — Qwen3-Embedding-4B is ungated; only populated when swapping to a gated embedding model) |
 | Embedder GPU Container App (Qwen3-Embedding-4B) | Azure Container Apps (externally ingressed, GPU `gpu-nc8as-t4`) | Internal service (bearer-authed public HTTPS endpoint) |
 | Reranker GPU Container App (BAAI/bge-reranker-v2-m3) | Azure Container Apps (externally ingressed, GPU `gpu-nc8as-t4`) | Internal service (bearer-authed public HTTPS endpoint) |
 | Container image | Azure Container Registry | Non-secret (distribution-controlled) |

@@ -10,7 +10,7 @@ For a single developer, `docforge serve` on stdio is enough — Claude Code or C
 Eight Azure resources in one resource group. The template defaults to cheap Consumption/CPU with scale-to-zero (a few dollars/month); a production deployment that keeps the Qwen3-Embedding-4B embedder and the cross-encoder reranker warm on Tesla-T4 GPUs runs ~$930/month per always-warm T4 (≈ €860; ~$1,860 for both — approximate, verify in Azure):
 
 - **Postgres Flexible Server** (Burstable B1ms, 32 GB) with `pgvector` enabled at provisioning time.
-- **Container App** running `docforge serve --api` with Entra ID authentication enabled (1 vCPU / 1 GiB).
+- **Container App** running `docforge serve --api` with Entra ID authentication enabled (1 vCPU / 2 GiB).
 - **Container App: embedder** running the Qwen3-Embedding-4B model on a GPU workload profile (NC8as_T4). The search API delegates embedding to this service via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
 - **Container App: reranker** running the BAAI/bge-reranker-v2-m3 cross-encoder (built from `Dockerfile.reranker`) on a GPU workload profile (NC8as_T4). Off by default; the search API re-scores the top hybrid candidates through it when `RERANKER_URL` is set.
 - **Container Registry** (Standard — required for the ~13.6 GB embedder image; ACR Basic's 10 GB quota is too small).
