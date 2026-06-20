@@ -96,12 +96,12 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ## Deploy to your infrastructure
 
-For team-wide use, deploy the search API to Azure (~€900/month at default SKUs with the Qwen3-Embedding-4B GPU embedder on a workload-profile environment):
+For team-wide use, deploy the search API to Azure. Cost depends on the workload profile: the template defaults to cheap Consumption/CPU with scale-to-zero (a few dollars/month), while a production deployment that keeps the Qwen3-Embedding-4B embedder and the reranker warm on Tesla-T4 GPUs runs ~$930/month per always-warm T4 (≈ €860; ~$1,860 for both) — approximate; see `deploy/azure/README.md`:
 
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
-- Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image) on a GPU workload profile (NC8as_T4).
-- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) on a serverless GPU profile (gpu-nc8as-t4), kept warm at `minReplicas: 1`.
+- Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image); Consumption/CPU + scale-to-zero by default, set to a GPU workload profile (NC8as_T4) and kept warm for production.
+- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) — **off by default** in the template; production runs it warm on the GPU profile (`gpu-nc8as-t4`, `minReplicas: 1`) and sets `RERANKER_URL` to turn reranking on.
 - Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
