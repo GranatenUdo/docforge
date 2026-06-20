@@ -39,15 +39,18 @@ The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus un
 Two surfaces, one in-process (CLI) and one hosted (multi-user team deployment):
 
 - **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process.
-- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); the GPU-backed Qwen3-Embedding-4B embedder loads the ~10 GB model into VRAM in 2-3 minutes — run with `minReplicas: 2` to avoid cold starts in production.
+- **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); the GPU-backed Qwen3-Embedding-4B embedder loads the ~10 GB model into VRAM in 2-3 minutes — run with `minReplicas: 1` to keep it warm and avoid cold starts in production.
 
 Both surfaces expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
+
+### 5. Retrieval and reranking
+
+A query runs a **hybrid** retrieval pass: dense pgvector similarity (HNSW, cosine) plus sparse BM25 full-text, fused with Reciprocal Rank Fusion (RRF) and a small tag boost. The top `rerank_top_n` (default 50) candidates from that pool are then re-scored by a **cross-encoder reranker** ([BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)), served by its own GPU `/rerank` sidecar in the hosted deployment. Reranking is opt-in: the search API only calls the sidecar when `RERANKER_URL` is set, otherwise it returns the fused hybrid ordering.
 
 ## What docforge is **not**
 
 - A chat UI. docforge has no frontend; it hands context to whatever assistant calls it.
 - A multi-tenant SaaS. docforge assumes a single-company trust boundary — authenticated users can query any indexed source.
-- A hybrid retrieval engine. Retrieval is dense-only today (cosine similarity on embeddings). BM25 fusion is on the [roadmap](https://github.com/GranatenUdo/docforge/blob/master/ROADMAP.md).
 - A permission-aware RAG. There are no per-document ACLs at query time.
 
 These are conscious scope decisions. If you need any of them, [Onyx](https://github.com/onyx-dot-app/onyx) is likely a better fit.
