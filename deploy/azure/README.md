@@ -21,7 +21,7 @@ verify against Azure Cost Management).
 | Postgres Flexible Server | Vector store + metadata, pgvector extension enabled | Burstable B1ms, 32 GB |
 | Log Analytics workspace | Container App logs | PerGB2018, 30-day retention |
 | Container Apps managed environment | Compute host for all container apps; optional `gpu-nc8as-t4` GPU profile for the sidecars (when `enableGpuProfile=true`) | Consumption plan |
-| Container App: search-api | Runs `docforge serve --api`; `minReplicas=1` by default | 1 CPU, 1 GiB |
+| Container App: search-api | Runs `docforge serve --api`; `minReplicas=1` by default | 1 CPU, 2 GiB |
 | Container App: embedder | Runs the Qwen3-Embedding-4B sidecar; `embedderMinReplicas=0` by default (scale-to-zero) | Consumption (2 CPU, 4 GiB) by default; set `gpu-nc8as-t4` (1 T4) for production — Qwen3-4B is impractically slow on CPU |
 | Container App: reranker | Runs the BAAI/bge-reranker-v2-m3 cross-encoder sidecar; **off by default** (`RERANKER_URL` unset), `minReplicas=0` | Consumption by default; set `gpu-nc8as-t4` (1 T4) + `minReplicas=1` + `RERANKER_URL` for production |
 
@@ -350,7 +350,7 @@ and confirm against Azure Cost Management:
 | Resource | Monthly |
 |---|---|
 | Postgres B1ms + 32 GB | ~$19 |
-| Container Apps: search-api (1 replica always on, 1 vCPU / 1 GiB) | ~$12 |
+| Container Apps: search-api (1 replica always on, 1 vCPU / 2 GiB) | ~$12 |
 | Container Apps: embedder (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$930 (≈ €860; estimate) |
 | Container Apps: reranker (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$930 (≈ €860; estimate) |
 | Container Registry Standard | ~$20 (full month) — note: Basic at $5 is too small for the embedder image |

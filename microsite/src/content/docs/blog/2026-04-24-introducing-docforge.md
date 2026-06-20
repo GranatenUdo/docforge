@@ -4,6 +4,8 @@ description: "Why I built it, where it fits, and what's still shaky."
 date: 2026-04-24
 ---
 
+> **Note:** the cost and topology figures in this post are as of its 2026-04-24 publication date. docforge has since moved to a hybrid retrieval pipeline with a GPU embedder and a cross-encoder reranker; for current deployment sizing and cost see the deployment guide and `deploy/azure/README.md`.
+
 AI coding assistants are extraordinary at general code, and somewhere between helpful and dangerous at *your* code — the code shaped by the Confluence decisions nobody remembers, the CLAUDE.md files scattered across repos, the internal architecture docs that encode five years of scar tissue. The model does not know any of it. The model cannot know any of it. That is a **retrieval problem, not a model problem**.
 
 docforge is a small tool that closes that gap. It points at your Confluence spaces and local git repositories, indexes them, and serves them over [MCP](https://modelcontextprotocol.io/) so Claude Code, Cursor, Copilot, and any assistant with an MCP client can search your team's knowledge. Self-hosted, small enough to read in an afternoon, MIT-licensed.

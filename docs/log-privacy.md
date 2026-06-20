@@ -78,14 +78,14 @@ Operational runbook:
 
 | Item | Status |
 |---|---|
-| Retention configurable, hourly cleanup | ✓ Implemented (`docforge.api._query_log_cleanup_loop`) |
-| Default retention 180 days | ✓ Implemented (`Settings.query_log_retention_days = 180`) |
-| Redaction at insert | ✗ Not yet; Phase 5 implements `query_log.log_query` redaction |
-| `docforge_app` + `docforge_log_reader` roles | ~ Operator-provided; not enforced by docforge |
-| Right-to-erasure SQL | ✓ Works today (manual SQL) |
-| Right-to-erasure CLI command | ✗ Not yet; manual SQL is the supported path |
+| Retention configurable, hourly cleanup | Implemented (`docforge.api._query_log_cleanup_loop`) |
+| Default retention 180 days | Implemented (`Settings.query_log_retention_days = 180`) |
+| Redaction at insert | Not yet; Phase 5 implements `query_log.log_query` redaction |
+| `docforge_app` + `docforge_log_reader` roles | Partial — operator-provided; not enforced by docforge |
+| Right-to-erasure SQL | Implemented; works today (manual SQL) |
+| Right-to-erasure CLI command | Not yet; manual SQL is the supported path |
 
-Items marked ✗ ship in v0.3 Phase 5. Until they land, the policy describes the deployer's commitment; the implementation hasn't fully met it. Operators deploying v0.3 between Phase 3 and Phase 5 should assume queries are stored verbatim with 180-day retention by default and adjust `query_log_retention_days` accordingly.
+The items marked "Not yet" above ship in v0.3 Phase 5. Until they land, the policy describes the deployer's commitment; the implementation hasn't fully met it. Operators deploying v0.3 between Phase 3 and Phase 5 should assume queries are stored verbatim with 180-day retention by default and adjust `query_log_retention_days` accordingly.
 
 ## Review cadence
 

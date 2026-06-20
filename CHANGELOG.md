@@ -27,11 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docforge-reranker:v0.3.0`.
 
 ### Changed
-- **Ranking pipeline:** hybrid retrieval now runs RRF first, then cross-encoder
-  reranks the top 50 candidates. **Result ordering and score semantics
-  changed** — `SearchResult.similarity` now carries the cross-encoder relevance
-  score, not the fused RRF value, and the final order is the reranker's. Consumers
-  should continue to rely on rank, not absolute score.
+- **Ranking pipeline:** hybrid retrieval now runs RRF first, then the
+  cross-encoder reranks the top 50 candidates. **Result ordering changed** — the
+  final order of the top `rerank_top_n` rows is the reranker's. `SearchResult.similarity`
+  continues to carry the fused RRF value; the cross-encoder score is exposed
+  separately in a new additive `rerank_score` field (null for non-reranked tail
+  rows). Consumers should rely on rank, not absolute score.
 
 ### Notes
 - **fp32 only.** The reranker runs full fp32. The `.half()` fp16 cast broke

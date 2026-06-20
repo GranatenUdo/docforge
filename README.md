@@ -41,7 +41,7 @@ docforge is the narrow, focused option in this landscape: minimal footprint, MCP
 - You need a chat UI for non-developers → docforge has no UI; use **Onyx**, **Glean**, or **Cody**.
 - You're on Atlassian Cloud and happy with SaaS → **[Atlassian Rovo MCP](https://www.atlassian.com/blog/announcements/atlassian-rovo-mcp-ga)** is free and official.
 - You need SSO / SCIM / RBAC → out of scope; docforge authenticates but doesn't authorize per-resource.
-- Your corpus is very large (>100K pages/chunks) → dense-only retrieval without hybrid starts to degrade; on the [roadmap](ROADMAP.md).
+- Your corpus is very large (>100K pages/chunks) → docforge indexes into a single Postgres + pgvector instance (HNSW) with no built-in sharding, so very large corpora need a vertically larger Postgres or a distributed vector store.
 - You need near-real-time updates → ingest is batch; no webhook-driven continuous sync yet.
 - You need multilingual search evaluated → Qwen3-Embedding-4B is multilingual, but docforge has no eval coverage on non-English corpora yet.
 
