@@ -20,7 +20,7 @@ Default: **180 days**.
 
 Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`.
 
-Rationale: 60 days is long enough to catch drift across a typical model-swap or chunker-tweak cycle, short enough to limit privacy exposure. Shorter retention is fine (down to 30 days; below that, drift signals become statistically thin); longer retention should be paired with stricter redaction (see below) and a documented operational reason.
+Rationale: 180 days is long enough to catch drift across several model-swap or chunker-tweak cycles, while bounding privacy exposure. Shorter retention is fine (down to ~30 days; below that, drift signals become statistically thin); longer retention should be paired with stricter redaction (see below) and a documented operational reason.
 
 ## Redaction
 
@@ -79,7 +79,7 @@ Operational runbook:
 | Item | Status |
 |---|---|
 | Retention configurable, hourly cleanup | ✓ Implemented (`docforge.api._query_log_cleanup_loop`) |
-| Default retention 60 days | ✗ Default is 180 days; Phase 5 changes the default |
+| Default retention 180 days | ✓ Implemented (`Settings.query_log_retention_days = 180`) |
 | Redaction at insert | ✗ Not yet; Phase 5 implements `query_log.log_query` redaction |
 | `docforge_app` + `docforge_log_reader` roles | ~ Operator-provided; not enforced by docforge |
 | Right-to-erasure SQL | ✓ Works today (manual SQL) |
