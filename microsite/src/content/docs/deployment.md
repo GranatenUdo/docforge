@@ -11,8 +11,8 @@ Eight Azure resources in one resource group. The template defaults to cheap Cons
 
 - **Postgres Flexible Server** (Burstable B1ms, 32 GB) with `pgvector` enabled at provisioning time.
 - **Container App** running `docforge serve --api` with Entra ID authentication enabled (1 vCPU / 2 GiB).
-- **Container App: embedder** running the Qwen3-Embedding-4B model on a GPU workload profile (NC8as_T4). The search API delegates embedding to this service via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
-- **Container App: reranker** running the BAAI/bge-reranker-v2-m3 cross-encoder (built from `Dockerfile.reranker`) on a GPU workload profile (NC8as_T4). Off by default; the search API re-scores the top hybrid candidates through it only when both `RERANK_ENABLED=true` and `RERANKER_URL` are set.
+- **Container App: embedder** running the Qwen3-Embedding-4B model — Consumption/CPU with scale-to-zero by default in the template, set to the `gpu-nc8as-t4` Tesla-T4 profile and kept warm for production. The search API delegates embedding to it via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
+- **Container App: reranker** running the BAAI/bge-reranker-v2-m3 cross-encoder (built from `Dockerfile.reranker`) — Consumption with scale-to-zero by default, set to the `gpu-nc8as-t4` Tesla-T4 profile and kept warm for production. Off by default; the search API re-scores the top hybrid candidates through it only when both `RERANK_ENABLED=true` and `RERANKER_URL` are set.
 - **Container Registry** (Standard — required for the ~13.6 GB embedder image; ACR Basic's 10 GB quota is too small).
 - **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
 - **Log Analytics workspace** (30-day retention) for Container App logs.
@@ -27,7 +27,7 @@ Teammates use a lightweight MCP client that shells out to the hosted API.
 Bicep templates under [`deploy/azure/`](https://github.com/GranatenUdo/docforge/tree/master/deploy/azure) in the repo cover:
 
 - Postgres Flexible Server with `pgvector` installed at provisioning time.
-- Container App environment with 1 always-on search-api replica (cold-start ~30 s for container spin-up; the search API no longer loads the model in-process since the v0.3 Phase 4b embedder split). The GPU-backed Qwen3-Embedding-4B embedder runs with `minReplicas: 1` — the ~10 GB model loads into VRAM in 2-3 minutes (Qwen-4B on T4 GPU); always-on avoids this cold start in production.
+- Container App environment with 1 always-on search-api replica (cold-start ~30 s for container spin-up; the search API no longer loads the model in-process since the v0.3 Phase 4b embedder split). The GPU-backed Qwen3-Embedding-4B embedder defaults to `embedderMinReplicas: 0` (scale-to-zero); set it to `1` in production to keep the ~10 GB model warm (it loads into VRAM in 2-3 minutes on a T4), avoiding that cold start on the first query after idle.
 - Managed identity for pulling from Key Vault.
 
 ### 2. Configure authentication
