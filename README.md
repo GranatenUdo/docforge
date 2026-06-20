@@ -217,7 +217,7 @@ The default embedding model `Qwen/Qwen3-Embedding-4B` is Apache 2.0 and publicly
 
 ### First ingest / first container start is very slow
 
-The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`. In the GPU-backed hosted deployment the model loads into VRAM in 2-3 minutes; the API runs with `minReplicas: 2` so there is no scale-to-zero cold start in normal operation.
+The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`. In the GPU-backed hosted deployment it is the **embedder** sidecar (not the search-api) that loads the model into VRAM in 2-3 minutes; the search-api runs `minReplicas=1` and loads no model in-process (~30 s container cold-start only). Keep the embedder warm in production (set `embedderMinReplicas` >= 1; the template defaults it to 0 / scale-to-zero) so there is no cold start on the first query after idle.
 
 ### "Cannot connect to PostgreSQL"
 

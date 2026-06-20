@@ -14,7 +14,7 @@ Eight Azure resources in one resource group. The template defaults to cheap Cons
 - **Container App: embedder** running the Qwen3-Embedding-4B model — Consumption/CPU with scale-to-zero by default in the template, set to the `gpu-nc8as-t4` Tesla-T4 profile and kept warm for production. The search API delegates embedding to it via `EMBEDDER_URL`, keeping the API replicas small and fast to start.
 - **Container App: reranker** running the BAAI/bge-reranker-v2-m3 cross-encoder (built from `Dockerfile.reranker`) — Consumption with scale-to-zero by default, set to the `gpu-nc8as-t4` Tesla-T4 profile and kept warm for production. Off by default; the search API re-scores the top hybrid candidates through it only when both `RERANK_ENABLED=true` and `RERANKER_URL` are set.
 - **Container Registry** (Standard — required for the ~13.6 GB embedder image; ACR Basic's 10 GB quota is too small).
-- **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, and database credentials.
+- **Key Vault** (Standard) holding `CONFLUENCE_API_TOKEN`, `HF_TOKEN`, `EMBEDDER_TOKEN` (the shared bearer token the embedder and reranker sidecars both use), and database credentials.
 - **Log Analytics workspace** (30-day retention) for Container App logs.
 - **Container Apps managed environment** (Consumption plan).
 
