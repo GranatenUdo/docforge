@@ -40,9 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sentence-transformers compatibility fix.
 - **Eval impact** (60-query org-wide ground truth): recall@1 43 → 65%,
   recall@20 87 → 92%, MRR 0.564 → 0.735. New canonical baseline lives in
-  `rag/eval/CURRENT_BASELINE.md`. The reranker sidecar only exists in the
-  deployed topology, so this gain must be eval-ed via `eval_search --api-url`
-  (a `--direct` run has no reranker and reproduces the old RRF-only numbers).
+  `rag/eval/CURRENT_BASELINE.md`. Verify the gain with rerank enabled in BOTH
+  eval modes: `eval_search --api-url` against the deployed search-api, and
+  `eval_search --direct` with `RERANKER_URL` (+ `RERANKER_TOKEN`) set — `--direct`
+  constructs a `RemoteReranker`, the same client the API uses, so both modes
+  exercise the reranker and should agree. With `RERANKER_URL` unset, `--direct`
+  falls back to the RRF-only ordering.
 
 ## [0.7.15] - 2026-06-01
 
