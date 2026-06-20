@@ -101,7 +101,7 @@ For team-wide use, deploy the search API to Azure. Cost depends on the workload 
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
 - Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image); Consumption/CPU + scale-to-zero by default, set to a GPU workload profile (NC8as_T4) and kept warm for production.
-- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) — **off by default** in the template; production runs it warm on the GPU profile (`gpu-nc8as-t4`, `minReplicas: 1`) and sets `RERANKER_URL` to turn reranking on.
+- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) — **off by default** in the template; production runs it warm on the GPU profile (`gpu-nc8as-t4`, `minReplicas: 1`) and sets both `RERANK_ENABLED=true` and `RERANKER_URL` to turn reranking on.
 - Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 

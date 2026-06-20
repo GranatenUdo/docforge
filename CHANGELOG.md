@@ -43,10 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recall@20 87 → 92%, MRR 0.564 → 0.735. New canonical baseline lives in
   `rag/eval/CURRENT_BASELINE.md`. Verify the gain with rerank enabled in BOTH
   eval modes: `eval_search --api-url` against the deployed search-api, and
-  `eval_search --direct` with `RERANKER_URL` (+ `RERANKER_TOKEN`) set — `--direct`
-  constructs a `RemoteReranker`, the same client the API uses, so both modes
-  exercise the reranker and should agree. With `RERANKER_URL` unset, `--direct`
-  falls back to the RRF-only ordering.
+  `eval_search --direct` with `RERANK_ENABLED=true` + `RERANKER_URL` +
+  `RERANKER_TOKEN` set — `--direct` then constructs and invokes a `RemoteReranker`,
+  the same client the API uses, so both modes exercise the reranker and should
+  agree. Leave `RERANK_ENABLED` at its default (or `RERANKER_URL` unset) and
+  `--direct` falls back to the RRF-only ordering.
 
 ## [0.7.15] - 2026-06-01
 

@@ -45,7 +45,7 @@ Both surfaces expose a single primary tool: `search_documentation(query, user_na
 
 ### 5. Retrieval and reranking
 
-A query runs a **hybrid** retrieval pass: dense pgvector similarity (HNSW, cosine) plus sparse BM25 full-text, fused with Reciprocal Rank Fusion (RRF) and a small tag boost. The top `rerank_top_n` (default 50) candidates from that pool are then re-scored by a **cross-encoder reranker** ([BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)), served by its own GPU `/rerank` sidecar in the hosted deployment. Reranking is opt-in: the search API only calls the sidecar when `RERANKER_URL` is set, otherwise it returns the fused hybrid ordering.
+A query runs a **hybrid** retrieval pass: dense pgvector similarity (HNSW, cosine) plus sparse BM25 full-text, fused with Reciprocal Rank Fusion (RRF) and a small tag boost. The top `rerank_top_n` (default 50) candidates from that pool are then re-scored by a **cross-encoder reranker** ([BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)), served by its own GPU `/rerank` sidecar in the hosted deployment. Reranking is opt-in and needs BOTH switches: it runs only when `RERANK_ENABLED=true` AND `RERANKER_URL` is set. With either missing, the search API returns the fused hybrid ordering.
 
 ## What docforge is **not**
 

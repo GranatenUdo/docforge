@@ -40,11 +40,13 @@ so there is no runtime download on cold start.
 Since engine 0.7.16 a third Container App, the **reranker**, can complete the
 retrieval pipeline. The hybrid pool (dense pgvector + sparse BM25 + RRF + tag
 boost) produces candidates, then the reranker cross-encoder re-scores the top
-`rerank_top_n` (default 50) of them. The template ships it **off** (the search
-API only calls it when `RERANKER_URL` is set) and scaled to zero on the
-Consumption profile; production runs it as its own GPU sidecar (built from
-`Dockerfile.reranker`) on the `gpu-nc8as-t4` Tesla-T4 profile, kept warm at
-`minReplicas=1`, with `RERANKER_URL` wired to flip reranking on. See the
+`rerank_top_n` (default 50) of them. The template ships it **off** (reranking
+turns on only when BOTH `rerankEnabled='true'` and `rerankerUrl` are set; the
+template defaults `rerankEnabled='false'` and `rerankerUrl=''`) and scaled to
+zero on the Consumption profile; production runs it as its own GPU sidecar (built
+from `Dockerfile.reranker`) on the `gpu-nc8as-t4` Tesla-T4 profile, kept warm at
+`minReplicas=1`, with both `rerankEnabled='true'` and `rerankerUrl` set to turn
+reranking on. See the
 Reranker service section below.
 
 Both Container Apps use a system-assigned managed identity with:
@@ -132,9 +134,13 @@ the 60-query org-wide ground truth this lifted recall@1 from 43% to 65%,
 recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (canonical baseline:
 `rag/eval/CURRENT_BASELINE.md`).
 
-Reranking is **off until wired up**: the search API only calls the reranker
-when `RERANKER_URL` is set. Leave it unset and the engine returns the hybrid
-ordering unchanged; set it to the reranker app's FQDN to flip reranking on.
+Reranking is **off until wired up**, and turning it on takes BOTH settings:
+`RERANK_ENABLED=true` (the master switch; bicep `rerankEnabled`) AND `RERANKER_URL`
+set to the reranker app's FQDN (bicep `rerankerUrl`). With `RERANK_ENABLED` at its
+`false` default the search API returns the hybrid ordering unchanged even when
+`RERANKER_URL` is set; conversely `RERANK_ENABLED=true` with an empty `RERANKER_URL`
+is rejected at startup. (`RERANKER_TOKEN` is also required whenever `RERANKER_URL`
+is set.)
 
 **Image build.** A separate `Dockerfile.reranker` at the repo root builds the
 reranker image. The default `RERANK_MODEL` (BAAI/bge-reranker-v2-m3) is baked
@@ -322,10 +328,10 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 | `embedderToken` | *(required)* | Shared-secret bearer for embedder auth. Generate via `openssl rand -hex 32` (Linux/macOS), `python -c "import secrets; print(secrets.token_hex(32))"` (cross-platform), or `[Convert]::ToHexString((1..32 \| %{[byte](Get-Random -Max 256)}))` (PowerShell). |
 | `embedderMinReplicas` / `embedderMaxReplicas` | 0 / 5 | Embedder app scaling on the `gpu-nc8as-t4` Tesla-T4 profile. Default `0` is scale-to-zero (cheapest; GPU cold-start with baked model). Set `embedderMinReplicas=1` for production to keep the embedder warm. |
 | `rerankerImage` | `''` | Reranker image reference. Leave empty first time; set after pushing. |
-| `rerankEnabled` | `'false'` | Master switch for the reranking stage on the search API (sets `RERANK_ENABLED`). |
+| `rerankEnabled` | `'false'` | Master switch for the reranking stage on the search API (sets `RERANK_ENABLED`). Reranking is on only when this is `'true'` AND `rerankerUrl` is set. |
 | `rerankModel` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model (sets `RERANK_MODEL`). The default is **baked into the reranker image**; overriding to a non-baked model triggers a multi-GB runtime download, so rebuild `Dockerfile.reranker` with the new model rather than only overriding it. |
 | `rerankTopN` | `'50'` | How many top hybrid candidates the reranker re-scores per query (sets `RERANK_TOP_N`). |
-| `rerankerUrl` | `''` | Reranker app FQDN (sets `RERANKER_URL`). **Reranking is off until this is set** — wire it to the reranker Container App to flip reranking on. |
+| `rerankerUrl` | `''` | Reranker app FQDN (sets `RERANKER_URL`). Required to rerank but not sufficient alone — reranking is on only when `rerankEnabled='true'` AND this is set (plus `rerankerToken`/`RERANKER_TOKEN`). |
 | `acrSku` | `Standard` | ACR pricing tier. **Must be `Standard` or `Premium`** — embedder image exceeds Basic's 10 GB quota. |
 
 The reranker reuses the embedder's bearer token: `RERANKER_TOKEN` is wired from
@@ -361,11 +367,13 @@ Setting `minReplicas=0` on search-api drops ~$12/month at the cost of ~30s
 container cold-start. Setting `embedderMinReplicas=0` (the default) drops the
 embedder's ~$930/month at the cost of a GPU cold-start on the first request
 after idle (container spin-up only — the model weights are baked into the
-image). Leaving `RERANKER_URL` unset (reranking disabled) avoids the reranker's
-~$930/month entirely. For development and low-volume deployments, scale-to-zero
-embedder with reranking off is a reasonable default; for production traffic,
-set `embedderMinReplicas=1` and wire `RERANKER_URL` to keep both GPU sidecars
-warm and avoid the cold-start hop on every idle period.
+image). Leaving the reranker scaled to zero (its template default
+`rerankerMinReplicas=0`, reranking off) avoids the reranker's ~$930/month
+entirely. For development and low-volume deployments, scale-to-zero embedder with
+reranking off is a reasonable default; for production traffic, set
+`embedderMinReplicas=1`, run the reranker warm (`rerankerMinReplicas=1`), and
+enable reranking (`rerankEnabled='true'` + `rerankerUrl`) to keep both GPU
+sidecars warm and avoid the cold-start hop on every idle period.
 
 ## Architecture notes
 
