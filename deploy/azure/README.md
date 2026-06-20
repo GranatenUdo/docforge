@@ -9,12 +9,14 @@ profile (see [Cost](#cost) below): the template **defaults** both GPU-capable
 sidecars to the cheap Consumption (CPU) profile, with the reranker scaled to
 zero and reranking off — a few dollars/month. **Production** deployments (e.g.
 the DocuWare CCL config) set the `gpu-nc8as-t4` Tesla-T4 profile and keep
-replicas warm, which is roughly ~$430/month with both sidecars always-warm on
-GPU (rough estimate — see Cost).
+replicas warm, which is roughly ~$1,900/month with both sidecars always-warm on
+GPU — the two GPU sidecars dominate that figure and it is only a rough estimate
+(see Cost; the serverless-GPU meter is not in the Azure pricing calculator, so
+verify against Azure Cost Management).
 
 | Resource | Purpose | Default SKU (template) |
 |---|---|---|
-| Key Vault | Runtime secrets (`confluence-api-token`, `database-url`, `embedder-token`) | Standard |
+| Key Vault | Runtime secrets (`hf-token`, `confluence-api-token`, `database-url`, `embedder-token`) | Standard |
 | Container Registry | Hosts the docforge Docker image, the embedder image, **and** the reranker image | Standard (NOT Basic — embedder image exceeds Basic's 10 GB quota) |
 | Postgres Flexible Server | Vector store + metadata, pgvector extension enabled | Burstable B1ms, 32 GB |
 | Log Analytics workspace | Container App logs | PerGB2018, 30-day retention |
@@ -70,6 +72,24 @@ docker build \
   -t docforge-embedder:latest .
 ```
 
+**Using a gated embedding model instead?** `Dockerfile.embedder` reads the
+token from a BuildKit secret mount (`--mount=type=secret,id=hf_token`), so the
+token never lands in an image layer. The default Qwen3-Embedding-4B needs none
+of this; but if you swap in a gated model, export the token and pass the secret
+flag at build time, and pass `hfToken=...` at deploy:
+
+```bash
+export HF_TOKEN="hf_..."   # ($env:HF_TOKEN / set HF_TOKEN on Windows)
+docker build \
+  -f Dockerfile.embedder \
+  --secret id=hf_token,env=HF_TOKEN \
+  -t docforge-embedder:latest .
+```
+
+The Bicep template still provisions the `hf-token` Key Vault secret and wires
+`HF_TOKEN` into the search-api; it is simply empty by default since the default
+embedder is ungated.
+
 **ACR SKU note.** The baked-in model makes the embedder image ~13.6 GB. Azure
 Container Registry Basic has a 10 GB storage quota, which means **the
 default ACR SKU must be Standard or Premium for this deployment.** The
@@ -92,12 +112,13 @@ template stores it in Key Vault and references it from both Container Apps.
 Rotate by re-deploying with a new value.
 
 **Cost.** On the production `gpu-nc8as-t4` Tesla-T4 profile, an always-warm
-embedder (`embedderMinReplicas=1`) is on the order of ~$190/month at West
-Europe Consumption GPU pricing (rough estimate — verify against current Azure
-Container Apps GPU pricing for your region). The template default
-(`embedderMinReplicas=0`, Consumption profile) scales to zero and costs a few
-dollars/month, at the cost of a cold-start on the first query after idle (the
-model weights are baked into the image, so there is no runtime download).
+embedder (`embedderMinReplicas=1`) is on the order of ~$930/month (≈ €860, the
+DocuWare CCL production figure) — approximate, since the serverless-GPU meter is
+not exposed in the Azure pricing calculator; verify against Azure Cost
+Management for your region. The template default (`embedderMinReplicas=0`,
+Consumption profile) scales to zero and costs a few dollars/month, at the cost
+of a cold-start on the first query after idle (the model weights are baked into
+the image, so there is no runtime download).
 
 ## Reranker service (engine 0.7.16)
 
@@ -147,9 +168,9 @@ T4 replicas before deploying with reranking enabled.
 `minReplicas=0` and reranking off, so out of the box it costs essentially
 nothing. In production (the recommended config), the reranker runs on the
 always-warm `gpu-nc8as-t4` Tesla-T4 profile (`minReplicas=1`) — on the order of
-~$190/month at West Europe Consumption GPU pricing (rough estimate; a second
-always-warm T4 alongside the embedder). Keeping it warm avoids a GPU cold-start
-on the first query after idle once `RERANKER_URL` is wired and reranking is on.
+~$930/month (≈ €860; a second always-warm T4 alongside the embedder),
+approximate as above. Keeping it warm avoids a GPU cold-start on the first query
+after idle once `RERANKER_URL` is wired and reranking is on.
 
 ## Optional: Entra ID authentication
 
@@ -272,7 +293,10 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 10. Smoke test:
    ```bash
    curl -fsS https://<apiFqdn>/health
-   # → {"status":"ok", "model":"Qwen/Qwen3-Embedding-4B"}
+   # → {"status":"ok", "model":"remote"}
+   # (the search-api delegates embedding to the embedder sidecar via
+   #  EMBEDDER_URL, so its /health reports model: "remote", not the
+   #  underlying model name)
 
    curl -X POST https://<apiFqdn>/search \
      -H "Content-Type: application/json" \
@@ -298,40 +322,47 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 | `embedderToken` | *(required)* | Shared-secret bearer for embedder auth. Generate via `openssl rand -hex 32` (Linux/macOS), `python -c "import secrets; print(secrets.token_hex(32))"` (cross-platform), or `[Convert]::ToHexString((1..32 \| %{[byte](Get-Random -Max 256)}))` (PowerShell). |
 | `embedderMinReplicas` / `embedderMaxReplicas` | 0 / 5 | Embedder app scaling on the `gpu-nc8as-t4` Tesla-T4 profile. Default `0` is scale-to-zero (cheapest; GPU cold-start with baked model). Set `embedderMinReplicas=1` for production to keep the embedder warm. |
 | `rerankerImage` | `''` | Reranker image reference. Leave empty first time; set after pushing. |
-| `RERANK_ENABLED` | `false` | Master switch for the reranking stage on the search API. |
-| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model. The default is **baked into the reranker image**; overriding to a non-baked model triggers a multi-GB runtime download, so rebuild `Dockerfile.reranker` with the new model rather than only overriding the env var. |
-| `RERANK_TOP_N` | 50 | How many top hybrid candidates the reranker re-scores per query. |
-| `RERANKER_URL` | `''` | Reranker app FQDN. **Reranking is off until this is set** — wire it to the reranker Container App to flip reranking on. |
-| `RERANKER_TOKEN` | *(reuses embedder)* | Shared-secret bearer for reranker auth. Reuses the `embedder-token` Key Vault secret; no separate value to generate. |
-| `RERANK_BATCH_SIZE` | 8 | Cross-encoder batch size; bounds T4 activation memory. |
-| `RERANK_MAX_LENGTH` | 512 | Max sequence length per pair; bounds T4 activation memory. |
+| `rerankEnabled` | `'false'` | Master switch for the reranking stage on the search API (sets `RERANK_ENABLED`). |
+| `rerankModel` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model (sets `RERANK_MODEL`). The default is **baked into the reranker image**; overriding to a non-baked model triggers a multi-GB runtime download, so rebuild `Dockerfile.reranker` with the new model rather than only overriding it. |
+| `rerankTopN` | `'50'` | How many top hybrid candidates the reranker re-scores per query (sets `RERANK_TOP_N`). |
+| `rerankerUrl` | `''` | Reranker app FQDN (sets `RERANKER_URL`). **Reranking is off until this is set** — wire it to the reranker Container App to flip reranking on. |
 | `acrSku` | `Standard` | ACR pricing tier. **Must be `Standard` or `Premium`** — embedder image exceeds Basic's 10 GB quota. |
+
+The reranker reuses the embedder's bearer token: `RERANKER_TOKEN` is wired from
+the same `embedder-token` Key Vault secret, so there is no separate
+`rerankerToken` deploy parameter to set. `RERANK_BATCH_SIZE` (8) and
+`RERANK_MAX_LENGTH` (512) are runtime env on the reranker app (pydantic
+Settings), not Bicep parameters — tune them with
+`az containerapp update --set-env-vars` on the reranker Container App.
 
 ## Cost
 
 At default SKUs in West Europe Consumption pricing, the rough ballpark is
-~$430/month with both GPU sidecars always warm (`embedderMinReplicas=1` plus
+~$1,900/month with both GPU sidecars always warm (`embedderMinReplicas=1` plus
 the reranker at `minReplicas=1` for production traffic), or ~$55/month with
 the default `embedderMinReplicas=0` and reranking disabled (scale-to-zero
 embedder, no reranker; you pay only when requests arrive plus a GPU cold-start
-on the first request after idle):
+on the first request after idle). The two always-warm GPU sidecars dominate the
+warm figure and are the most uncertain line items — the serverless-GPU meter is
+not in the Azure pricing calculator, so treat the GPU rows below as estimates
+and confirm against Azure Cost Management:
 
 | Resource | Monthly |
 |---|---|
 | Postgres B1ms + 32 GB | ~$19 |
 | Container Apps: search-api (1 replica always on, 1 vCPU / 1 GiB) | ~$12 |
-| Container Apps: embedder (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$190 |
-| Container Apps: reranker (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$190 |
+| Container Apps: embedder (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$930 (≈ €860; estimate) |
+| Container Apps: reranker (1 replica always warm, `gpu-nc8as-t4` Tesla-T4) | ~$930 (≈ €860; estimate) |
 | Container Registry Standard | ~$20 (full month) — note: Basic at $5 is too small for the embedder image |
 | Key Vault Standard | <$1 |
 | Log Analytics (low volume) | ~$2 |
 
 Setting `minReplicas=0` on search-api drops ~$12/month at the cost of ~30s
 container cold-start. Setting `embedderMinReplicas=0` (the default) drops the
-embedder's ~$190/month at the cost of a GPU cold-start on the first request
+embedder's ~$930/month at the cost of a GPU cold-start on the first request
 after idle (container spin-up only — the model weights are baked into the
 image). Leaving `RERANKER_URL` unset (reranking disabled) avoids the reranker's
-~$190/month entirely. For development and low-volume deployments, scale-to-zero
+~$930/month entirely. For development and low-volume deployments, scale-to-zero
 embedder with reranking off is a reasonable default; for production traffic,
 set `embedderMinReplicas=1` and wire `RERANKER_URL` to keep both GPU sidecars
 warm and avoid the cold-start hop on every idle period.
