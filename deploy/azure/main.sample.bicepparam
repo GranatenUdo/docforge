@@ -2,16 +2,19 @@
 //
 // 1. Copy this file to a local, gitignored file (e.g., main.bicepparam).
 // 2. Replace the placeholder values below.
-// 3. Provide the three secure parameters (hfToken, confluenceApiToken,
-//    postgresAdminPassword) at deploy time via --parameters on the
-//    command line — do NOT commit them to this file.
+// 3. Provide the secure parameters at deploy time via --parameters on the
+//    command line — do NOT commit them to this file. confluenceApiToken and
+//    postgresAdminPassword are required; hfToken is OPTIONAL (defaults to empty
+//    — the default embedder Qwen3-Embedding-4B is ungated, so only set it when
+//    swapping to a gated embedding model).
 //
 // Deploy:
 //   az deployment group create \
 //     --resource-group <your-rg> \
 //     --template-file main.bicep \
 //     --parameters main.bicepparam \
-//     --parameters hfToken="<secret>" confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
+//     --parameters confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
+//     # add hfToken="<secret>" only for a gated embedding model
 
 using 'main.bicep'
 

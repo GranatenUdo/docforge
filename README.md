@@ -41,7 +41,7 @@ docforge is the narrow, focused option in this landscape: minimal footprint, MCP
 - You need a chat UI for non-developers → docforge has no UI; use **Onyx**, **Glean**, or **Cody**.
 - You're on Atlassian Cloud and happy with SaaS → **[Atlassian Rovo MCP](https://www.atlassian.com/blog/announcements/atlassian-rovo-mcp-ga)** is free and official.
 - You need SSO / SCIM / RBAC → out of scope; docforge authenticates but doesn't authorize per-resource.
-- Your corpus is very large (>100K pages/chunks) → dense-only retrieval without hybrid starts to degrade; on the [roadmap](ROADMAP.md).
+- Your corpus is very large (>100K pages/chunks) → docforge indexes into a single Postgres + pgvector instance (HNSW) with no built-in sharding, so very large corpora need a vertically larger Postgres or a distributed vector store.
 - You need near-real-time updates → ingest is batch; no webhook-driven continuous sync yet.
 - You need multilingual search evaluated → Qwen3-Embedding-4B is multilingual, but docforge has no eval coverage on non-English corpora yet.
 
@@ -75,10 +75,11 @@ docforge serve
 2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (1024-dim).
 3. **Serve** exposes an MCP server that AI assistants query automatically.
 
-When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution.
+When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse BM25, fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
 
 ### Architecture
 
+<!-- TODO: regenerate docs/assets/architecture.svg to show the cross-encoder reranker GPU Container App sidecar (BAAI/bge-reranker-v2-m3) between the hybrid retrieval pool and the MCP server. -->
 ![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
 
 ## Commands
@@ -95,11 +96,12 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ## Deploy to your infrastructure
 
-For team-wide use, deploy the search API to Azure (~€900/month at default SKUs with the Qwen3-Embedding-4B GPU embedder on a workload-profile environment):
+For team-wide use, deploy the search API to Azure. Cost depends on the workload profile: the template defaults to cheap Consumption/CPU with scale-to-zero (a few dollars/month), while a production deployment that keeps the Qwen3-Embedding-4B embedder and the reranker warm on Tesla-T4 GPUs runs ~$930/month per always-warm T4 (≈ €860; ~$1,860 for both) — approximate; see `deploy/azure/README.md`:
 
 - PostgreSQL Flexible Server (Burstable B1ms, 32 GB) with pgvector.
 - Container App running the FastAPI search API.
-- Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image) on a GPU workload profile (NC8as_T4).
+- Container App running the embedder service (Qwen3-Embedding-4B, model baked into the image); Consumption/CPU + scale-to-zero by default, set to a GPU workload profile (NC8as_T4) and kept warm for production.
+- Container App running the cross-encoder reranker (BAAI/bge-reranker-v2-m3, built from `Dockerfile.reranker`) — **off by default** in the template; production runs it warm on the GPU profile (`gpu-nc8as-t4`, `minReplicas: 1`) and sets both `RERANK_ENABLED=true` and `RERANKER_URL` to turn reranking on.
 - Container Registry (Standard), Key Vault, Log Analytics, managed environment.
 - Team members use a lightweight MCP client that calls the hosted API.
 
@@ -200,6 +202,8 @@ Contributions welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development 
 
 docforge ships with a retrieval-quality eval harness at [`src/docforge/scripts/eval_search.py`](src/docforge/scripts/eval_search.py). It measures recall@1, recall@k, and MRR against a ground-truth query set you maintain. The harness is designed for **drift detection** — run it after `sources.yml` changes, embedding-model updates, or ranking tweaks, and compare against your baseline. There is no absolute quality threshold; the metric magnitude depends on how closely your ground-truth queries match source titles. See [`src/docforge/scripts/README.md`](src/docforge/scripts/README.md) for details.
 
+Adding the cross-encoder reranker moved the canonical 60-query org-wide baseline from recall@1 43% to 65%, recall@20 87% to 92%, and MRR 0.564 to 0.735 (current baseline tracked in `rag/eval/CURRENT_BASELINE.md`).
+
 ## FAQ
 
 The three install-time issues new users hit most often are inline below. The
@@ -213,7 +217,7 @@ The default embedding model `Qwen/Qwen3-Embedding-4B` is Apache 2.0 and publicly
 
 ### First ingest / first container start is very slow
 
-The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`. In the GPU-backed hosted deployment the model loads into VRAM in 2-3 minutes; the API runs with `minReplicas: 2` so there is no scale-to-zero cold start in normal operation.
+The first run downloads the Qwen3-Embedding-4B model (~10 GB) from Hugging Face. Locally, the model is cached at `~/.cache/huggingface/`. In the Docker image, it is cached at `/app/.cache/huggingface/` — **mount this as a volume** so container restarts do not re-download: `docker run -v docforge-hf-cache:/app/.cache/huggingface ...`. In the GPU-backed hosted deployment it is the **embedder** sidecar (not the search-api) that loads the model into VRAM in 2-3 minutes; the search-api runs `minReplicas=1` and loads no model in-process (~30 s container cold-start only). Keep the embedder warm in production (set `embedderMinReplicas` >= 1; the template defaults it to 0 / scale-to-zero) so there is no cold start on the first query after idle.
 
 ### "Cannot connect to PostgreSQL"
 

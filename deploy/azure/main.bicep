@@ -12,12 +12,14 @@
 //   * Key Vault Secrets User role on the Key Vault (reads secrets at runtime)
 //   * AcrPull role on the Container Registry (pulls the image without admin creds)
 //
-// Deploy:
+// Deploy (confluenceApiToken + postgresAdminPassword are required; hfToken is
+// optional and only needed for a gated embedding model — the default
+// Qwen3-Embedding-4B is ungated):
 //   az deployment group create \
 //     --resource-group <rg> \
 //     --template-file main.bicep \
 //     --parameters main.sample.bicepparam \
-//     --parameters hfToken="<secret>" confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
+//     --parameters confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
 //
 // Outputs: apiFqdn, acrLoginServer, databaseHost.
 
@@ -81,9 +83,9 @@ param minReplicas int = 1
 @maxValue(30)
 param maxReplicas int = 3
 
-@description('HuggingFace token for gated-model access (EmbeddingGemma-300M).')
+@description('HuggingFace token. The default embedder Qwen3-Embedding-4B is Apache-2.0 (ungated), so this is optional and defaults to empty; only needed if an operator swaps to a gated embedding model.')
 @secure()
-param hfToken string
+param hfToken string = ''
 
 @description('Confluence API token for page crawling.')
 @secure()

@@ -16,11 +16,11 @@ If your deployment has any of those needs, they require a separate system with a
 
 ## Retention
 
-Default: **60 days**.
+Default: **180 days**.
 
 Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`.
 
-Rationale: 60 days is long enough to catch drift across a typical model-swap or chunker-tweak cycle, short enough to limit privacy exposure. Shorter retention is fine (down to 30 days; below that, drift signals become statistically thin); longer retention should be paired with stricter redaction (see below) and a documented operational reason.
+Rationale: 180 days is long enough to catch drift across several model-swap or chunker-tweak cycles, while bounding privacy exposure. Shorter retention is fine (down to ~30 days; below that, drift signals become statistically thin); longer retention should be paired with stricter redaction (see below) and a documented operational reason.
 
 ## Redaction
 
@@ -78,14 +78,14 @@ Operational runbook:
 
 | Item | Status |
 |---|---|
-| Retention configurable, hourly cleanup | ✓ Implemented (`docforge.api._query_log_cleanup_loop`) |
-| Default retention 60 days | ✗ Default is 180 days; Phase 5 changes the default |
-| Redaction at insert | ✗ Not yet; Phase 5 implements `query_log.log_query` redaction |
-| `docforge_app` + `docforge_log_reader` roles | ~ Operator-provided; not enforced by docforge |
-| Right-to-erasure SQL | ✓ Works today (manual SQL) |
-| Right-to-erasure CLI command | ✗ Not yet; manual SQL is the supported path |
+| Retention configurable, hourly cleanup | Implemented (`docforge.api._query_log_cleanup_loop`) |
+| Default retention 180 days | Implemented (`Settings.query_log_retention_days = 180`) |
+| Redaction at insert | Not yet; Phase 5 implements `query_log.log_query` redaction |
+| `docforge_app` + `docforge_log_reader` roles | Partial — operator-provided; not enforced by docforge |
+| Right-to-erasure SQL | Implemented; works today (manual SQL) |
+| Right-to-erasure CLI command | Not yet; manual SQL is the supported path |
 
-Items marked ✗ ship in v0.3 Phase 5. Until they land, the policy describes the deployer's commitment; the implementation hasn't fully met it. Operators deploying v0.3 between Phase 3 and Phase 5 should assume queries are stored verbatim with 180-day retention by default and adjust `query_log_retention_days` accordingly.
+The items marked "Not yet" above ship in v0.3 Phase 5. Until they land, the policy describes the deployer's commitment; the implementation hasn't fully met it. Operators deploying v0.3 between Phase 3 and Phase 5 should assume queries are stored verbatim with 180-day retention by default and adjust `query_log_retention_days` accordingly.
 
 ## Review cadence
 

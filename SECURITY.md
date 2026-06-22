@@ -19,5 +19,6 @@ next patch release. Users on older minor versions are encouraged to upgrade.
 ## Scope
 
 This policy covers docforge itself. For issues in dependencies
-(EmbeddingGemma, FastMCP, pgvector, FastAPI, etc.), please report upstream
-first; we will coordinate follow-up.
+(sentence-transformers — the Qwen3-Embedding-4B embedder and the
+BAAI/bge-reranker-v2-m3 CrossEncoder reranker — FastMCP, pgvector, FastAPI,
+etc.), please report upstream first; we will coordinate follow-up.
