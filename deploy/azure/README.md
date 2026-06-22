@@ -78,11 +78,12 @@ docker build \
   -t docforge-embedder:latest .
 ```
 
-**Using a gated embedding model instead?** `Dockerfile.embedder` reads the
-token from a BuildKit secret mount (`--mount=type=secret,id=hf_token`), so the
-token never lands in an image layer. The default Qwen3-Embedding-4B needs none
-of this; but if you swap in a gated model, export the token and pass the secret
-flag at build time, and pass `hfToken=...` at deploy:
+**Using a gated embedding model instead?** Bake the model into the embedder
+image at build time — that is the path that works at runtime. `Dockerfile.embedder`
+reads the token from a BuildKit secret mount (`--mount=type=secret,id=hf_token`),
+so the token never lands in an image layer. The default Qwen3-Embedding-4B needs
+none of this; for a gated model, export the token and pass the secret flag at
+build time:
 
 ```bash
 export HF_TOKEN="hf_..."   # ($env:HF_TOKEN / set HF_TOKEN on Windows)
@@ -93,8 +94,12 @@ docker build \
 ```
 
 The Bicep template still provisions the `hf-token` Key Vault secret and wires
-`HF_TOKEN` into the search-api; it is simply empty by default since the default
-embedder is ungated.
+`HF_TOKEN` into the **search-api** container (empty by default since the default
+embedder is ungated). Note that env lives on the search-api, which delegates
+embedding to the embedder sidecar over HTTP and loads no model itself — it is
+NOT passed to the embedder app, so it cannot authenticate a runtime gated-model
+download. A gated embedding model must be baked into `Dockerfile.embedder` (as
+above), not pulled at runtime.
 
 **ACR SKU note.** The baked-in model makes the embedder image ~13.6 GB. Azure
 Container Registry Basic has a 10 GB storage quota, which means **the
