@@ -12,12 +12,14 @@
 //   * Key Vault Secrets User role on the Key Vault (reads secrets at runtime)
 //   * AcrPull role on the Container Registry (pulls the image without admin creds)
 //
-// Deploy:
+// Deploy (confluenceApiToken + postgresAdminPassword are required; hfToken is
+// optional and only needed for a gated embedding model — the default
+// Qwen3-Embedding-4B is ungated):
 //   az deployment group create \
 //     --resource-group <rg> \
 //     --template-file main.bicep \
 //     --parameters main.sample.bicepparam \
-//     --parameters hfToken="<secret>" confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
+//     --parameters confluenceApiToken="<secret>" postgresAdminPassword="<secret>"
 //
 // Outputs: apiFqdn, acrLoginServer, databaseHost.
 

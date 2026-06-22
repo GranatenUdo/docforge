@@ -7,11 +7,15 @@ Bicep template to deploy docforge as a hosted service on Azure Container Apps, b
 Eight resources in a single resource group. Cost depends on the workload
 profile (see [Cost](#cost) below): the template **defaults** both GPU-capable
 sidecars to the cheap Consumption (CPU) profile, with the reranker scaled to
-zero and reranking off — a few dollars/month. **Production** deployments (e.g.
-the DocuWare CCL config) set the `gpu-nc8as-t4` Tesla-T4 profile and keep
-replicas warm, which is roughly ~$1,900/month with both sidecars always-warm on
-GPU — the two GPU sidecars dominate that figure and it is only a rough estimate
-(see Cost; the serverless-GPU meter is not in the Azure pricing calculator, so
+zero and reranking off — a few dollars/month. **Production** deployments set the
+`gpu-nc8as-t4` Tesla-T4 profile and keep replicas warm, which is roughly
+~$1,900/month all-in for one warm embedder + one warm reranker — the two
+always-warm GPU sidecars are ~$1,860 of that (1 embedder + 1 reranker at ~$930
+each) and the rest is Postgres/ACR/Key Vault/logs; it is only a rough estimate.
+A deployment that scales the embedder to multiple warm replicas (as the DocuWare
+CCL config does, at `embedderMinReplicas=2`) costs one warm T4 more per extra
+replica (see Cost; the serverless-GPU meter is not in the Azure pricing
+calculator, so
 verify against Azure Cost Management).
 
 | Resource | Purpose | Default SKU (template) |
@@ -344,9 +348,11 @@ Settings), not Bicep parameters — tune them with
 ## Cost
 
 At default SKUs in West Europe Consumption pricing, the rough ballpark is
-~$1,900/month with both GPU sidecars always warm (`embedderMinReplicas=1` plus
-the reranker at `minReplicas=1` for production traffic), or ~$55/month with
-the default `embedderMinReplicas=0` and reranking disabled (scale-to-zero
+~$1,900/month all-in with both GPU sidecars always warm (`embedderMinReplicas=1`
+plus the reranker at `minReplicas=1` for production traffic) — the two warm T4
+sidecars are ~$1,860 of that and the remaining ~$54 is Postgres/ACR/Key
+Vault/logs — or ~$55/month with the default `embedderMinReplicas=0` and
+reranking disabled (scale-to-zero
 embedder, no reranker; you pay only when requests arrive plus a GPU cold-start
 on the first request after idle). The two always-warm GPU sidecars dominate the
 warm figure and are the most uncertain line items — the serverless-GPU meter is

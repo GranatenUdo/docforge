@@ -38,14 +38,14 @@ The whole index fits in a Standard_B1ms Postgres Flexible Server for a corpus un
 
 Two surfaces, one in-process (CLI) and one hosted (multi-user team deployment):
 
-- **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process.
+- **`docforge serve`** — FastMCP server over stdio. Local single-user use (Claude Code, Cursor with MCP). Loads the embedding model in-process and runs **dense-only** cosine search — it does NOT run the hybrid + reranker pipeline below, so results will not match production. To get the production hybrid+rerank results locally, run `docforge serve --remote-api <url>`, which proxies to the hosted API instead of querying in-process.
 - **`docforge serve --api`** — FastAPI over HTTP. Hosted deployment with multiple users via Entra ID authentication. Since v0.3 Phase 4b, the API offloads embedding to a separate **embedder Container App** by setting `EMBEDDER_URL`. Search API replicas drop from ~2 GB RSS to ~400 MB and cold-start in ~30 s (just container spin-up; no model load). The embedder hosts the model behind a shared-secret bearer token (`EMBEDDER_TOKEN`); the GPU-backed Qwen3-Embedding-4B embedder loads the ~10 GB model into VRAM in 2-3 minutes — run with `minReplicas: 1` to keep it warm and avoid cold starts in production.
 
 Both surfaces expose a single primary tool: `search_documentation(query, user_name, team_name, area_name?, limit?)`. Results include source URL + title + section attribution.
 
 ### 5. Retrieval and reranking
 
-A query runs a **hybrid** retrieval pass: dense pgvector similarity (HNSW, cosine) plus sparse BM25 full-text, fused with Reciprocal Rank Fusion (RRF) and a small tag boost. The top `rerank_top_n` (default 50) candidates from that pool are then re-scored by a **cross-encoder reranker** ([BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)), served by its own GPU `/rerank` sidecar in the hosted deployment. Reranking is opt-in and needs BOTH switches: it runs only when `RERANK_ENABLED=true` AND `RERANKER_URL` is set. With either missing, the search API returns the fused hybrid ordering.
+In the hosted API path (`docforge serve --api`, and the local `docforge serve --remote-api` proxy to it) a query runs a **hybrid** retrieval pass: dense pgvector similarity (HNSW, cosine) plus sparse BM25 full-text, fused with Reciprocal Rank Fusion (RRF) and a small tag boost. (The bare in-process `docforge serve` stdio surface above skips this — it is dense-only.) The top `rerank_top_n` (default 50) candidates from that pool are then re-scored by a **cross-encoder reranker** ([BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)), served by its own GPU `/rerank` sidecar in the hosted deployment. Reranking is opt-in and needs BOTH switches: it runs only when `RERANK_ENABLED=true` AND `RERANKER_URL` is set. With either missing, the search API returns the fused hybrid ordering.
 
 ## What docforge is **not**
 
