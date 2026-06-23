@@ -4,8 +4,21 @@
 database_url: postgresql://docforge:localdev@localhost:5432/docforge
 
 embedding:
-  model: google/embeddinggemma-300m
-  dimensions: 768
+  # 1024 is the ONLY dimension that works out of the box: chunks.embedding is
+  # hardcoded vector(1024) in BOTH sql/schema.sql and migration
+  # 009_embedding_dim_1024.sql (init-db applies both, so editing only schema.sql
+  # leaves the column at 1024). Qwen3-Embedding-4B is a 4B model — first ingest
+  # downloads several GB and is slow on CPU (fast on a Tesla-T4 GPU). Running a
+  # different-dimension model is NOT config-only: change the hardcoded dimension
+  # in both files above, re-run init-db on a fresh DB, and re-ingest (vectors
+  # aren't convertible across dimensions).
+  model: Qwen/Qwen3-Embedding-4B
+  dimensions: 1024
   chunk_max_tokens: 500
+
+# FP16 halves VRAM on a GPU but errors / is very slow on CPU — keep false for
+# local/CPU runs; set true when serving on a GPU. (Top-level key: the embedding:
+# block above only carries model/dimensions/chunk_max_tokens.)
+embedding_fp16: false
 
 sources_file: sources.yml
