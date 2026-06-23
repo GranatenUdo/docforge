@@ -75,7 +75,7 @@ docforge serve
 2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (1024-dim).
 3. **Serve** exposes an MCP server that AI assistants query automatically.
 
-When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse BM25, fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
+When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse lexical (ts_rank_cd), fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
 
 ### Architecture
 

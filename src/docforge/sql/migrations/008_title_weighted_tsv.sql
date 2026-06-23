@@ -4,7 +4,7 @@
 -- three-tier weighted variant: title='A', section_title='B', text='D'.
 -- ts_rank_cd respects setweight using its default weights array
 -- {A: 1.0, B: 0.4, C: 0.2, D: 0.1}, so title tokens contribute ~10x a
--- body token in BM25-style ranking.
+-- body token in Postgres ts_rank_cd (cover-density) ranking.
 --
 -- Postgres GENERATED ALWAYS expressions cannot be modified in place;
 -- the column is dropped and re-created. Lock window is roughly 15-90s

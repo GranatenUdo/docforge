@@ -42,7 +42,7 @@ model warm. The model weights are baked into the image (`Dockerfile.embedder`),
 so there is no runtime download on cold start.
 
 Since engine 0.7.16 a third Container App, the **reranker**, can complete the
-retrieval pipeline. The hybrid pool (dense pgvector + sparse BM25 + RRF + tag
+retrieval pipeline. The hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag
 boost) produces candidates, then the reranker cross-encoder re-scores the top
 `rerank_top_n` (default 50) of them. The template ships it **off** (reranking
 turns on only when BOTH `rerankEnabled='true'` and `rerankerUrl` are set; the
@@ -136,7 +136,7 @@ the image, so there is no runtime download).
 The reranker is a separate GPU Container App that hosts the
 **BAAI/bge-reranker-v2-m3** cross-encoder (an xlm-roberta model loaded via the
 sentence-transformers `CrossEncoder` API) and exposes a `POST /rerank`
-endpoint. After the hybrid pool (dense pgvector + sparse BM25 + RRF + tag
+endpoint. After the hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag
 boost) produces candidates, the search API sends the top `rerank_top_n`
 (default 50) to the reranker, which re-scores them with the cross-encoder. On
 the 60-query org-wide ground truth this lifted recall@1 from 43% to 65%,
