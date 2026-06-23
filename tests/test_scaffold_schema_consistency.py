@@ -1,6 +1,7 @@
 """The scaffold template's embedding dimension MUST match the schema's
 vector(N) column — otherwise a fresh `docforge init` + `init-db` + `ingest`
 fails at the pgvector insert. Regression guard for the 768-vs-1024 bug."""
+
 import re
 from pathlib import Path
 
