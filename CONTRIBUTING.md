@@ -56,3 +56,8 @@ The `query_log` table is governed by your deployment's log-privacy policy. Any c
 ## Where to ask
 
 Open an issue at https://github.com/GranatenUdo/docforge/issues or email the maintainer (tobias.ens@proton.me).
+
+> **Security contact:** disclosures go to `tobias.ens@proton.me` (a personal
+> alias) by design — it keeps a corporate address off this public repo and
+> reduces automated harvesting. This is intentional; if maintainership moves to
+> a team, switch to a shared/corporate security alias at that time.
