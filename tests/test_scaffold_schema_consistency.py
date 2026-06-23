@@ -12,7 +12,7 @@ PKG = Path(__file__).resolve().parents[1] / "src" / "docforge"
 
 def _schema_vector_dim() -> int:
     schema = (PKG / "sql" / "schema.sql").read_text(encoding="utf-8")
-    m = re.search(r"embedding\s+vector\((\d+)\)", schema)
+    m = re.search(r"^\s*embedding\s+vector\((\d+)\)", schema, re.MULTILINE)
     assert m, "could not find `embedding vector(N)` in schema.sql"
     return int(m.group(1))
 
