@@ -6,7 +6,7 @@ committed.
 
 ## Recently shipped (0.5.x–0.7.x)
 
-- **Hybrid retrieval** (BM25 + dense) — dense pgvector + sparse BM25 fused with
+- **Hybrid retrieval** (ts_rank_cd lexical + dense) — dense pgvector + sparse lexical (ts_rank_cd) fused with
   RRF plus tag boost (v0.5.0).
 - **Cross-encoder reranker** — re-scores the top `RERANK_TOP_N` (default 50)
   hybrid candidates with `BAAI/bge-reranker-v2-m3` on a serverless T4 GPU

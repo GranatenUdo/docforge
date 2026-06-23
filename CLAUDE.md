@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working in this repository.
 
 docforge is a CLI tool that forges searchable context from Confluence and git repos for AI coding assistants. It crawls documentation, chunks and embeds the content, stores it in PostgreSQL with pgvector, and serves it via MCP server.
 
-In production the engine runs as three services: the **search-api** plus two GPU Container App sidecars — an **embedder** sidecar (Qwen3-Embedding-4B) and a **reranker** sidecar (BAAI/bge-reranker-v2-m3). Retrieval is hybrid-then-cross-encoder-rerank: the hybrid pool (dense pgvector + sparse BM25 + RRF + tag boost) produces candidates, then the cross-encoder reranker re-scores the top `rerank_top_n` (default 50) of them.
+In production the engine runs as three services: the **search-api** plus two GPU Container App sidecars — an **embedder** sidecar (Qwen3-Embedding-4B) and a **reranker** sidecar (BAAI/bge-reranker-v2-m3). Retrieval is hybrid-then-cross-encoder-rerank: the hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag boost) produces candidates, then the cross-encoder reranker re-scores the top `rerank_top_n` (default 50) of them.
 
 ## Tech Stack
 

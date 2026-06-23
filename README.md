@@ -75,12 +75,11 @@ docforge serve
 2. **Ingest** crawls pages and files, chunks text (~500 tokens), generates vector embeddings (1024-dim).
 3. **Serve** exposes an MCP server that AI assistants query automatically.
 
-When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse BM25, fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
+When an AI assistant needs cross-team context, it calls docforge's `search_documentation` MCP tool behind the scenes and gets relevant documentation chunks with source attribution. Retrieval is hybrid (dense pgvector + sparse lexical (ts_rank_cd), fused with RRF + tag boost); a cross-encoder reranker (BAAI/bge-reranker-v2-m3) then re-scores the top `rerank_top_n` (default 50) candidates from that pool before the results are returned.
 
 ### Architecture
 
-<!-- TODO: regenerate docs/assets/architecture.svg to show the cross-encoder reranker GPU Container App sidecar (BAAI/bge-reranker-v2-m3) between the hybrid retrieval pool and the MCP server. -->
-![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
+![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, an optional cross-encoder reranker re-scores the top hybrid candidates, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
 
 ## Commands
 
