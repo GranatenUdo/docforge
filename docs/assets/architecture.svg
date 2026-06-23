@@ -2,9 +2,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 520" role="img" aria-label="docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector (1024-dim); an optional cross-encoder reranker (BAAI/bge-reranker-v2-m3) re-scores the top hybrid candidates, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot">
   <style>
     .bg { fill: #fafaf7; }
-    .box { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; }
+    .box, .box-optional { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; }
     .box-strong { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 3; }
-    .box-optional { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; stroke-dasharray: 6 4; }
+    .box-optional { stroke-dasharray: 6 4; }
     .label { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 18px; fill: #1a1a1a; }
     .label-small { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 13px; fill: #737373; }
     .arrow { stroke: #d97706; stroke-width: 3; fill: none; }
