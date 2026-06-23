@@ -3,7 +3,7 @@ title: Architecture
 description: How docforge crawls, embeds, stores, and serves your team's context.
 ---
 
-![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](/docforge/assets/architecture.svg)
+![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, an optional cross-encoder reranker re-scores the top hybrid candidates, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](/docforge/assets/architecture.svg)
 
 ## The data flow
 

@@ -1,48 +1,54 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-label="docforge architecture: data flow from Confluence and local git repos through ingest, Postgres plus pgvector, and MCP server to AI coding assistants">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 520" role="img" aria-label="docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector (1024-dim); an optional cross-encoder reranker (BAAI/bge-reranker-v2-m3) re-scores the top hybrid candidates, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot">
   <style>
     .bg { fill: #fafaf7; }
     .box { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; }
     .box-strong { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 3; }
+    .box-optional { fill: #fafaf7; stroke: #1a1a1a; stroke-width: 2; stroke-dasharray: 6 4; }
     .label { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 18px; fill: #1a1a1a; }
     .label-small { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 13px; fill: #737373; }
     .arrow { stroke: #d97706; stroke-width: 3; fill: none; }
     .arrow-label { font-family: ui-monospace, 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace; font-size: 13px; fill: #d97706; }
   </style>
 
-  <rect class="bg" width="1200" height="520"/>
+  <rect class="bg" width="1440" height="520"/>
 
   <!-- Sources (left) -->
   <rect class="box" x="40" y="120" width="200" height="70" rx="6"/>
-  <text class="label" x="140" y="155" text-anchor="middle">Confluence space</text>
-  <text class="label-small" x="140" y="175" text-anchor="middle">REST v2 + API token</text>
+  <text class="label" x="140" y="152" text-anchor="middle">Confluence space</text>
+  <text class="label-small" x="140" y="172" text-anchor="middle">REST v2 + API token</text>
 
   <rect class="box" x="40" y="320" width="200" height="70" rx="6"/>
-  <text class="label" x="140" y="355" text-anchor="middle">Local git repos</text>
-  <text class="label-small" x="140" y="375" text-anchor="middle">README, CLAUDE.md, docs/</text>
+  <text class="label" x="140" y="352" text-anchor="middle">Local git repos</text>
+  <text class="label-small" x="140" y="372" text-anchor="middle">README, CLAUDE.md, docs/</text>
 
   <!-- Pipeline (middle) -->
-  <rect class="box-strong" x="300" y="220" width="180" height="80" rx="6"/>
-  <text class="label" x="390" y="258" text-anchor="middle">docforge ingest</text>
-  <text class="label-small" x="390" y="278" text-anchor="middle">crawl · chunk · embed</text>
+  <rect class="box-strong" x="280" y="220" width="180" height="80" rx="6"/>
+  <text class="label" x="370" y="253" text-anchor="middle">docforge ingest</text>
+  <text class="label-small" x="370" y="276" text-anchor="middle">crawl · chunk · embed</text>
 
-  <rect class="box-strong" x="540" y="220" width="200" height="80" rx="6"/>
-  <text class="label" x="640" y="258" text-anchor="middle">Postgres + pgvector</text>
-  <text class="label-small" x="640" y="278" text-anchor="middle">HNSW index, 768-dim</text>
+  <rect class="box-strong" x="505" y="220" width="210" height="80" rx="6"/>
+  <text class="label" x="610" y="253" text-anchor="middle">Postgres + pgvector</text>
+  <text class="label-small" x="610" y="276" text-anchor="middle">HNSW + FTS · 1024-dim</text>
 
-  <rect class="box-strong" x="800" y="220" width="180" height="80" rx="6"/>
-  <text class="label" x="890" y="258" text-anchor="middle">docforge serve</text>
-  <text class="label-small" x="890" y="278" text-anchor="middle">FastMCP</text>
+  <rect class="box-optional" x="760" y="220" width="220" height="80" rx="6"/>
+  <text class="label" x="870" y="248" text-anchor="middle">cross-encoder rerank</text>
+  <text class="label-small" x="870" y="268" text-anchor="middle">bge-reranker-v2-m3</text>
+  <text class="label-small" x="870" y="286" text-anchor="middle">optional · off by default</text>
+
+  <rect class="box-strong" x="1025" y="220" width="170" height="80" rx="6"/>
+  <text class="label" x="1110" y="253" text-anchor="middle">docforge serve</text>
+  <text class="label-small" x="1110" y="276" text-anchor="middle">FastMCP</text>
 
   <!-- Assistants (right) -->
-  <rect class="box" x="1040" y="140" width="140" height="50" rx="6"/>
-  <text class="label" x="1110" y="170" text-anchor="middle">Claude Code</text>
+  <rect class="box" x="1245" y="140" width="150" height="50" rx="6"/>
+  <text class="label" x="1320" y="170" text-anchor="middle">Claude Code</text>
 
-  <rect class="box" x="1040" y="240" width="140" height="50" rx="6"/>
-  <text class="label" x="1110" y="270" text-anchor="middle">Cursor</text>
+  <rect class="box" x="1245" y="240" width="150" height="50" rx="6"/>
+  <text class="label" x="1320" y="270" text-anchor="middle">Cursor</text>
 
-  <rect class="box" x="1040" y="340" width="140" height="50" rx="6"/>
-  <text class="label" x="1110" y="370" text-anchor="middle">Copilot</text>
+  <rect class="box" x="1245" y="340" width="150" height="50" rx="6"/>
+  <text class="label" x="1320" y="370" text-anchor="middle">Copilot</text>
 
   <!-- Arrow marker -->
   <defs>
@@ -51,23 +57,24 @@
     </marker>
   </defs>
 
-  <!-- Sources → ingest -->
-  <path class="arrow" d="M 240 155 Q 270 155 280 200 L 300 230" marker-end="url(#arrow-head)"/>
-  <path class="arrow" d="M 240 355 Q 270 355 280 310 L 300 290" marker-end="url(#arrow-head)"/>
+  <!-- Sources -> ingest -->
+  <path class="arrow" d="M 240 155 Q 272 200 280 235" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 240 355 Q 272 320 280 285" marker-end="url(#arrow-head)"/>
 
   <!-- Pipeline flow -->
-  <path class="arrow" d="M 480 260 L 540 260" marker-end="url(#arrow-head)"/>
-  <path class="arrow" d="M 740 260 L 800 260" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 460 260 L 505 260" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 715 260 L 760 260" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 980 260 L 1025 260" marker-end="url(#arrow-head)"/>
 
-  <!-- Serve → assistants (MCP) -->
-  <path class="arrow" d="M 980 250 Q 1010 210 1040 170" marker-end="url(#arrow-head)"/>
-  <path class="arrow" d="M 980 265 L 1040 265" marker-end="url(#arrow-head)"/>
-  <path class="arrow" d="M 980 280 Q 1010 320 1040 360" marker-end="url(#arrow-head)"/>
+  <!-- Serve -> assistants (MCP) -->
+  <path class="arrow" d="M 1195 250 Q 1220 205 1245 165" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 1195 265 L 1245 265" marker-end="url(#arrow-head)"/>
+  <path class="arrow" d="M 1195 280 Q 1220 322 1245 365" marker-end="url(#arrow-head)"/>
 
-  <text class="arrow-label" x="1010" y="200">MCP</text>
+  <text class="arrow-label" x="1205" y="205">MCP</text>
 
   <!-- Section labels -->
   <text class="label-small" x="140" y="70" text-anchor="middle" fill="#1a1a1a">Sources</text>
-  <text class="label-small" x="640" y="70" text-anchor="middle" fill="#1a1a1a">Pipeline</text>
-  <text class="label-small" x="1110" y="90" text-anchor="middle" fill="#1a1a1a">AI coding assistants</text>
+  <text class="label-small" x="737" y="70" text-anchor="middle" fill="#1a1a1a">Pipeline</text>
+  <text class="label-small" x="1320" y="95" text-anchor="middle" fill="#1a1a1a">AI coding assistants</text>
 </svg>

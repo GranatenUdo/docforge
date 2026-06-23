@@ -79,8 +79,7 @@ When an AI assistant needs cross-team context, it calls docforge's `search_docum
 
 ### Architecture
 
-<!-- TODO: regenerate docs/assets/architecture.svg to show the cross-encoder reranker GPU Container App sidecar (BAAI/bge-reranker-v2-m3) between the hybrid retrieval pool and the MCP server. -->
-![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
+![docforge architecture: Confluence and local git repos flow through docforge ingest into Postgres with pgvector, an optional cross-encoder reranker re-scores the top hybrid candidates, then docforge serve exposes an MCP server consumed by Claude Code, Cursor, and Copilot](docs/assets/architecture.svg)
 
 ## Commands
 
