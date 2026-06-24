@@ -21,7 +21,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
@@ -33,7 +33,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
@@ -71,7 +71,7 @@ jobs:
               echo "push=false" >> "$GITHUB_OUTPUT"
             fi
           fi
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: steps.check.outputs.skip != 'true'
       - uses: docker/setup-buildx-action@v4
         if: steps.check.outputs.skip != 'true'
@@ -115,7 +115,7 @@ jobs:
             echo "ACR secrets not set; reranker image will be built but not pushed (Dockerfile sanity check only)."
             echo "push=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Login to ACR
         if: steps.check.outputs.push == 'true'
@@ -134,7 +134,7 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
