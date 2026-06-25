@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
@@ -102,6 +103,27 @@ class AzureAuth:
             raise
         logger.info("auth token acquired in %dms", int((time.perf_counter() - t0) * 1000))
         return {"Authorization": f"Bearer {token.token}"}
+
+
+class _StartupFailedAuth:
+    """Substitute auth provider used when the real provider can't be constructed
+    (missing `[azure]` extra, unset DOCFORGE_AUDIENCE/DOCFORGE_API_TOKEN, etc.).
+
+    Lets `serve --remote-api` finish the MCP `initialize` handshake so `/mcp`
+    shows the server as connected instead of dying with an opaque -32000 process
+    crash. The real, actionable error is surfaced as a tool RESULT on the first
+    search/list call: RemoteBackend._request awaits headers(), catches the
+    exception, and returns it as `"Auth provider error: …"`.
+    """
+
+    def __init__(self, auth_name: object, error: Exception) -> None:
+        self._message = (
+            f"docforge could not initialize '{auth_name}' authentication: {error} "
+            "Fix the above, then restart Claude Code (or run /mcp -> Reconnect)."
+        )
+
+    async def headers(self) -> dict[str, str]:
+        raise RuntimeError(self._message)
 
 
 def make_auth_provider(name: AuthName | str) -> AuthProvider:
@@ -363,7 +385,12 @@ def build_remote_mcp(
     `instructions` and `tool_description` default to the engine's built-in
     generic text when None; deployments inject their own via Settings.
     Returned without running so the wiring is unit-testable."""
-    auth = make_auth_provider(auth_name)
+    try:
+        auth = make_auth_provider(auth_name)
+    except Exception as e:  # noqa: BLE001 — any construction failure must degrade
+        # to a connected-but-degraded server, not a startup crash (-32000).
+        logger.warning("auth provider %r could not be constructed: %s", auth_name, e)
+        auth = _StartupFailedAuth(auth_name, e)
     backend = RemoteBackend(url=url, auth=auth)
     mcp = FastMCP("docforge", instructions=instructions or INSTRUCTIONS)
 
@@ -393,10 +420,20 @@ def run_remote_mcp(
     tool_description: str | None = None,
 ) -> None:
     """Run an MCP server proxying tool calls to a remote docforge search-api."""
-    mcp = build_remote_mcp(
-        url=url,
-        auth_name=auth_name,
-        instructions=instructions,
-        tool_description=tool_description,
-    )
+    try:
+        mcp = build_remote_mcp(
+            url=url,
+            auth_name=auth_name,
+            instructions=instructions,
+            tool_description=tool_description,
+        )
+    except Exception as e:  # noqa: BLE001 — surface a clear diagnostic, then re-raise
+        print(
+            f"docforge serve failed to start: {type(e).__name__}: {e}\n"
+            "This usually means a bad docforge.yml/.env or a packaging problem. "
+            "Verify `docforge --version`, then reinstall: "
+            'pip install --upgrade "docforge-cli[azure]".',
+            file=sys.stderr,
+        )
+        raise
     mcp.run()

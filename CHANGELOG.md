@@ -5,7 +5,21 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.16] - 2026-06-19
+## [0.7.17] - 2026-06-25
+
+### Changed
+- **`serve --remote-api` now starts even when the auth provider cannot be
+  constructed** (e.g. `docforge-cli` installed without the `[azure]` extra, or
+  `DOCFORGE_AUDIENCE` unset). Previously the construction error raised during
+  startup and crashed the MCP server before the `initialize` handshake, which
+  AI clients surface as an opaque `-32000` ("failed to reconnect"). The server
+  now completes the handshake (so `/mcp` shows it connected) and the actionable
+  error — e.g. "Azure auth requires `pip install docforge-cli[azure]`" — is
+  returned as a tool result on the first `search_documentation`/`list_sources`
+  call. Correctly-configured servers are unaffected.
+- A top-level guard in `run_remote_mcp` now prints a clear diagnostic to stderr
+  (visible via `claude --debug mcp`) if the server fails to start for any other
+  reason, instead of an unframed traceback.
 
 ### Added
 - **Cross-encoder reranker** — a second-stage re-scorer over the top
