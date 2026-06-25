@@ -492,3 +492,70 @@ async def test_azure_auth_token_mint_times_out_after_15s(monkeypatch):
     auth = AzureAuth()
     with pytest.raises(asyncio.TimeoutError):
         await auth.headers()
+
+
+# --- graceful startup: server must connect even when auth can't be constructed ---
+
+
+@pytest.mark.asyncio
+async def test_startup_failed_auth_headers_raises_actionable():
+    """The substitute provider defers the construction error to first use, with
+    an actionable message (names the fix + tells the user to restart)."""
+    from docforge.remote_client import _StartupFailedAuth
+
+    auth = _StartupFailedAuth(
+        "azure", ImportError("Azure auth requires `pip install docforge-cli[azure]`.")
+    )
+    with pytest.raises(RuntimeError) as ei:
+        await auth.headers()
+    msg = str(ei.value)
+    assert "[azure]" in msg
+    assert "restart" in msg.lower()
+
+
+def test_build_remote_mcp_does_not_raise_when_azure_extra_missing(monkeypatch):
+    """Missing [azure] extra must NOT crash server construction (was the -32000)."""
+    monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
+    monkeypatch.setitem(sys.modules, "azure.identity.aio", None)  # force ImportError
+    from docforge.remote_client import AuthName, build_remote_mcp
+
+    mcp = build_remote_mcp(url="https://example", auth_name=AuthName.azure)
+    assert mcp is not None  # would have raised ImportError before the fix
+
+
+@pytest.mark.asyncio
+async def test_search_surfaces_setup_error_as_tool_result_when_auth_unconstructable(monkeypatch):
+    """End-to-end surface: a misconfigured auth provider yields an actionable
+    tool RESULT (not a crash). headers() raises before any HTTP call, so no
+    transport is needed."""
+    monkeypatch.setenv("DOCFORGE_AUDIENCE", "api://test-audience")
+    monkeypatch.setitem(sys.modules, "azure.identity.aio", None)
+    from docforge.remote_client import RemoteBackend, _StartupFailedAuth, make_auth_provider
+
+    try:
+        make_auth_provider("azure")
+        raised: Exception | None = None
+    except Exception as e:  # noqa: BLE001
+        raised = e
+    assert raised is not None
+
+    backend = RemoteBackend(url="https://api.example.com", auth=_StartupFailedAuth("azure", raised))
+    result = await backend.search(query="x", limit=5)
+    assert "Auth provider error" in result
+    assert "[azure]" in result
+
+
+def test_run_remote_mcp_prints_actionable_stderr_on_startup_error(monkeypatch, capsys):
+    """If building the server raises, print a diagnostic to stderr and re-raise
+    (so the process still exits non-zero for Claude Code's --debug logs)."""
+    from docforge import remote_client
+
+    def boom(**kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(remote_client, "build_remote_mcp", boom)
+    with pytest.raises(RuntimeError, match="kaboom"):
+        remote_client.run_remote_mcp(url="https://example", auth_name="none")
+    err = capsys.readouterr().err
+    assert "docforge" in err.lower()
+    assert "failed to start" in err.lower()
