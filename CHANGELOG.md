@@ -21,10 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (visible via `claude --debug mcp`) if the server fails to start for any other
   reason, instead of an unframed traceback.
 
+## [0.7.16] - 2026-06-19
+
 ### Added
 - **Cross-encoder reranker** — a second-stage re-scorer over the top
   `rerank_top_n` (default 50) candidates from the hybrid pool (dense pgvector +
-  sparse BM25 + RRF + tag boost), using `BAAI/bge-reranker-v2-m3` (an
+  sparse lexical (ts_rank_cd) + RRF + tag boost), using `BAAI/bge-reranker-v2-m3` (an
   xlm-roberta cross-encoder via sentence-transformers `CrossEncoder`).
 - **Reranker GPU sidecar** — runs as its own GPU Container App (built from new
   `Dockerfile.reranker`) on a serverless Tesla-T4 profile (`gpu-nc8as-t4`,
@@ -52,8 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/health` passes) but `/rerank` 500s. Do not re-enable fp16 without a
   sentence-transformers compatibility fix.
 - **Eval impact** (60-query org-wide ground truth): recall@1 43 → 65%,
-  recall@20 87 → 92%, MRR 0.564 → 0.735. New canonical baseline lives in
-  `rag/eval/CURRENT_BASELINE.md`. Verify the gain with rerank enabled in BOTH
+  recall@20 87 → 92%, MRR 0.564 → 0.735. Track your own eval baseline. Verify
+  the gain with rerank enabled in BOTH
   eval modes: `eval_search --api-url` against the deployed search-api, and
   `eval_search --direct` with `RERANK_ENABLED=true` + `RERANKER_URL` +
   `RERANKER_TOKEN` set — `--direct` then constructs and invokes a `RemoteReranker`,
