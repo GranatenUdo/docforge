@@ -1,6 +1,6 @@
 # docforge `query_log` — privacy & retention policy
 
-This document defines what `query_log` stores, how long, who can read it, and how to honour a delete request (queries are stored verbatim — there is no redaction). It is the policy a docforge deployer commits to operate by; the implementation in `src/docforge/` and `deploy/azure/main.bicep` should match it.
+This document defines what `query_log` (and `query_result`, when result capture is enabled) stores, how long, who can read it, and how to honour a delete request (queries are stored verbatim — there is no redaction). It is the policy a docforge deployer commits to operate by; the implementation in `src/docforge/` and `deploy/azure/main.bicep` should match it.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ If your deployment has any of those needs, they require a separate system with a
 
 Default: **180 days**.
 
-Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`.
+Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`. When result capture is on (`LOG_RESPONSES`), `query_result` rows reference `query_log(id)` with `ON DELETE CASCADE`, so they inherit this window and are purged with their parent.
 
 Rationale: 180 days is long enough to catch drift across several model-swap or chunker-tweak cycles, while bounding privacy exposure. Shorter retention is fine (down to ~30 days; below that, drift signals become statistically thin); longer retention should be paired with a documented operational reason and tighter access controls.
 
@@ -37,6 +37,8 @@ Two database roles are expected, provisioned by the deployer (e.g. via `deploy/a
 
 Direct queries against `query_log` outside these two roles are not authorised. Operators with break-glass access should use the role grants when answering an erasure request rather than connecting as a superuser.
 
+The same two roles and restrictions apply to `query_result` (the optional result-snapshot table written when `LOG_RESPONSES` is on). It stores returned document text, so treat it as at least as sensitive as `query_log`.
+
 ## Right to erasure
 
 When a user invokes their right to erasure (GDPR Article 17 or equivalent), an authorised operator runs:
@@ -44,6 +46,8 @@ When a user invokes their right to erasure (GDPR Article 17 or equivalent), an a
 ```sql
 DELETE FROM query_log WHERE user_oid = $1;
 ```
+
+Because `query_result` references `query_log(id)` with `ON DELETE CASCADE`, this also erases the user's captured result snapshots — no separate `query_result` delete is needed (the rowcount you confirm is the `query_log` count).
 
 Where `$1` is the user's Entra `oid` (object ID, immutable). For rows from before migration `005_add_query_log_user_oid.sql` (where `user_oid` is `NULL`), fall back to `user_name`:
 
@@ -69,6 +73,7 @@ Operational runbook:
 |---|---|
 | Retention configurable, hourly cleanup | Implemented (`docforge.api._query_log_cleanup_loop`) |
 | Default retention 180 days | Implemented (`Settings.query_log_retention_days = 180`) |
+| Result capture (`LOG_RESPONSES` -> `query_result`) | Implemented; off by default (`log_responses=False`); inherits retention + erasure via FK cascade |
 | Redaction at insert | Not implemented; no planned milestone (queries stored verbatim by design — see Purpose) |
 | `docforge_app` + `docforge_log_reader` roles | Partial — operator-provided; not enforced by docforge |
 | Right-to-erasure SQL | Implemented; works today (manual SQL) |
@@ -84,5 +89,6 @@ Reviewed annually or on changes to:
 - the role grants in `deploy/azure/main.bicep` (or equivalent)
 - the right-to-erasure runbook above
 - changes to `auth.mode` (affects how `user_oid` is populated and which erasure query path is primary)
+- enabling `LOG_RESPONSES` or changing what `query_result` captures
 
 **Last reviewed:** 2026-06-30 (removed the planned-but-unimplemented redaction section; reconciled Purpose to result-quality review + ranking tuning; de-pinned from v0.3 Phase 5).

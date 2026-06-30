@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CrossEncoder.predict` on sentence-transformers 5.x: the model loads (so
   `/health` passes) but `/rerank` 500s. Do not re-enable fp16 without a
   sentence-transformers compatibility fix.
-- **Eval impact** (60-query org-wide ground truth): recall@1 43 → 65%,
+- **Eval impact** (one operator's 60-query ground-truth set): recall@1 43 → 65%,
   recall@20 87 → 92%, MRR 0.564 → 0.735. Track your own eval baseline. Verify
   the gain with rerank enabled in BOTH
   eval modes: `eval_search --api-url` against the deployed search-api, and

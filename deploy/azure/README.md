@@ -139,7 +139,7 @@ sentence-transformers `CrossEncoder` API) and exposes a `POST /rerank`
 endpoint. After the hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag
 boost) produces candidates, the search API sends the top `rerank_top_n`
 (default 50) to the reranker, which re-scores them with the cross-encoder. On
-the 60-query org-wide ground truth this lifted recall@1 from 43% to 65%,
+one operator's 60-query ground-truth set, this lifted recall@1 from 43% to 65%,
 recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (track this in your own eval baseline).
 
 Reranking is **off until wired up**, and turning it on takes BOTH settings:
