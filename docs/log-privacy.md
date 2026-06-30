@@ -1,10 +1,10 @@
 # docforge `query_log` — privacy & retention policy
 
-This document defines what `query_log` stores, how long, who can read it, what gets redacted, and how to honour a delete request. It is the policy a docforge deployer commits to operate by; the implementation in `src/docforge/` and `deploy/azure/main.bicep` should match it.
+This document defines what `query_log` (and `query_result`, when result capture is enabled) stores, how long, who can read it, and how to honour a delete request (queries are stored verbatim — there is no redaction). It is the policy a docforge deployer commits to operate by; the implementation in `src/docforge/` and `deploy/azure/main.bicep` should match it.
 
 ## Purpose
 
-`query_log` exists to support **retrieval drift signals** — detecting when search quality regresses against real usage. Aggregate metrics on retention, recall@k, and request latency are derived from the `query` text plus the `result_count` and `request_ms` columns.
+`query_log` (and, when `LOG_RESPONSES` is enabled, the captured results in `query_result`) exists so maintainers can (1) review real queries and the answers they returned, to validate and improve result quality, and (2) build a corpus of real searches for tuning retrieval ranking. Drift detection — spotting when search quality regresses against real usage — is one downstream use; aggregate metrics on retention, recall@k, and request latency derive from the `query` text plus the `result_count` and `request_ms` columns.
 
 The table is *not* used for:
 
@@ -18,26 +18,15 @@ If your deployment has any of those needs, they require a separate system with a
 
 Default: **180 days**.
 
-Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`.
+Configurable via `Settings.query_log_retention_days` (env: `QUERY_LOG_RETENTION_DAYS`). The application-level cleanup loop in `docforge.api._query_log_cleanup_loop` runs hourly and deletes rows where `created_at < now() - interval '<N> days'`. When result capture is on (`LOG_RESPONSES`), `query_result` rows reference `query_log(id)` with `ON DELETE CASCADE`, so they inherit this window and are purged with their parent.
 
-Rationale: 180 days is long enough to catch drift across several model-swap or chunker-tweak cycles, while bounding privacy exposure. Shorter retention is fine (down to ~30 days; below that, drift signals become statistically thin); longer retention should be paired with stricter redaction (see below) and a documented operational reason.
+Rationale: 180 days is long enough to catch drift across several model-swap or chunker-tweak cycles, while bounding privacy exposure. Shorter retention is fine (down to ~30 days; below that, drift signals become statistically thin); longer retention should be paired with a documented operational reason and tighter access controls.
 
-## Redaction
+## No redaction — queries are stored verbatim
 
-The application redacts these patterns from `query` text before insert:
+docforge does NOT redact query text; queries are stored exactly as typed. This is intentional — the review and ranking-tuning purposes above need the real text. Do not assume the query log is sanitized; treat it as containing whatever users enter (including secrets they may accidentally paste).
 
-| Pattern | Regex (illustrative) | Replacement |
-|---|---|---|
-| HuggingFace tokens | `\bhf_[A-Za-z0-9]{30,}\b` | `[REDACTED:HF_TOKEN]` |
-| JWTs | `\beyJ[A-Za-z0-9_=-]{40,}\.[A-Za-z0-9_=-]{40,}\.[A-Za-z0-9_=-]{20,}\b` | `[REDACTED:JWT]` |
-| Email addresses | `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b` | `[REDACTED:EMAIL]` |
-| Long opaque tokens (heuristic) | `\b[A-Za-z0-9_-]{40,}\b` (when not matching any other category) | `[REDACTED:KEY?]` |
-
-These are the intended patterns; the exact regexes in Phase 5 may differ after testing against real query traffic. Before Phase 5, no redaction runs — see "Implementation status" below.
-
-The redactor is fail-open at the search-handler level: if a regex throws, the redaction step is skipped, the query goes into the table verbatim, and a `WARN` log line is emitted naming the failed pattern. Logging a query is best-effort and must never gate the user's search.
-
-These patterns catch the common cases. Deployments that handle highly sensitive content (PII, medical, legal) should layer additional redaction on top or skip query logging entirely (set `query_log_retention_days = 0` to delete on the next cleanup cycle).
+A deployment handling highly sensitive content should not rely on redaction: lower `query_log_retention_days` (set to `0` to delete on the next cleanup cycle) or disable query logging entirely.
 
 ## Access
 
@@ -48,6 +37,8 @@ Two database roles are expected, provisioned by the deployer (e.g. via `deploy/a
 
 Direct queries against `query_log` outside these two roles are not authorised. Operators with break-glass access should use the role grants when answering an erasure request rather than connecting as a superuser.
 
+The same two roles and restrictions apply to `query_result` (the optional result-snapshot table written when `LOG_RESPONSES` is on). It stores returned document text, so treat it as at least as sensitive as `query_log`.
+
 ## Right to erasure
 
 When a user invokes their right to erasure (GDPR Article 17 or equivalent), an authorised operator runs:
@@ -55,6 +46,8 @@ When a user invokes their right to erasure (GDPR Article 17 or equivalent), an a
 ```sql
 DELETE FROM query_log WHERE user_oid = $1;
 ```
+
+Because `query_result` references `query_log(id)` with `ON DELETE CASCADE`, this also erases the user's captured result snapshots — no separate `query_result` delete is needed (the rowcount you confirm is the `query_log` count).
 
 Where `$1` is the user's Entra `oid` (object ID, immutable). For rows from before migration `005_add_query_log_user_oid.sql` (where `user_oid` is `NULL`), fall back to `user_name`:
 
@@ -74,27 +67,28 @@ Operational runbook:
 
 **Note:** if `auth.mode = none`, `user_oid` is always `NULL`. In that configuration, skip steps 2–4 and use the `user_name` query (step 5) for all rows; the `user_oid` query would return zero rows and silently miss every record for the requested user.
 
-## Implementation status (as of v0.3)
+## Implementation status (as of v0.7.17)
 
 | Item | Status |
 |---|---|
 | Retention configurable, hourly cleanup | Implemented (`docforge.api._query_log_cleanup_loop`) |
 | Default retention 180 days | Implemented (`Settings.query_log_retention_days = 180`) |
-| Redaction at insert | Not yet; Phase 5 implements `query_log.log_query` redaction |
+| Result capture (`LOG_RESPONSES` -> `query_result`) | Implemented; off by default (`log_responses=False`); inherits retention + erasure via FK cascade |
+| Redaction at insert | Not implemented; no planned milestone (queries stored verbatim by design — see Purpose) |
 | `docforge_app` + `docforge_log_reader` roles | Partial — operator-provided; not enforced by docforge |
 | Right-to-erasure SQL | Implemented; works today (manual SQL) |
 | Right-to-erasure CLI command | Not yet; manual SQL is the supported path |
 
-The items marked "Not yet" above ship in v0.3 Phase 5. Until they land, the policy describes the deployer's commitment; the implementation hasn't fully met it. Operators deploying v0.3 between Phase 3 and Phase 5 should assume queries are stored verbatim with 180-day retention by default and adjust `query_log_retention_days` accordingly.
+Redaction is not implemented and has no planned milestone — queries are stored verbatim, with 180-day retention by default (adjust `query_log_retention_days`; setting it to `0` purges rows on the next hourly cleanup). The role grants and the erasure CLI remain operator-provided / manual as noted above.
 
 ## Review cadence
 
 Reviewed annually or on changes to:
 
 - `Settings.query_log_retention_days` default
-- the redaction pattern set
 - the role grants in `deploy/azure/main.bicep` (or equivalent)
 - the right-to-erasure runbook above
 - changes to `auth.mode` (affects how `user_oid` is populated and which erasure query path is primary)
+- enabling `LOG_RESPONSES` or changing what `query_result` captures
 
-**Last reviewed:** 2026-04-26 (initial authoring alongside v0.3 Phase 3).
+**Last reviewed:** 2026-06-30 (removed the planned-but-unimplemented redaction section; reconciled Purpose to result-quality review + ranking tuning; de-pinned from v0.3 Phase 5).

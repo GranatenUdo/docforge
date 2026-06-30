@@ -153,7 +153,7 @@ param embedderMemoryGi int = 4
 @maxValue(256)
 param embedderEmbeddingBatchSize int = 32
 
-@description('When true, the managed environment is provisioned as a Workload-Profiles env (with a workloadProfiles array). When false (default), it stays Consumption-only — preserves backward compatibility for OSS / non-CCL deployments.')
+@description('When true, the managed environment is provisioned as a Workload-Profiles env (with a workloadProfiles array). When false (default), it stays Consumption-only — preserves backward compatibility for OSS / non-GPU deployments.')
 param enableWorkloadProfiles bool = false
 
 @description('When true, adds the gpu-nc8as-t4 workload profile to the env. Only honored when enableWorkloadProfiles=true.')

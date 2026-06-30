@@ -201,7 +201,7 @@ Contributions welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development 
 
 docforge ships with a retrieval-quality eval harness at [`src/docforge/scripts/eval_search.py`](src/docforge/scripts/eval_search.py). It measures recall@1, recall@k, and MRR against a ground-truth query set you maintain. The harness is designed for **drift detection** — run it after `sources.yml` changes, embedding-model updates, or ranking tweaks, and compare against your baseline. There is no absolute quality threshold; the metric magnitude depends on how closely your ground-truth queries match source titles. See [`src/docforge/scripts/README.md`](src/docforge/scripts/README.md) for details.
 
-Adding the cross-encoder reranker moved the canonical 60-query org-wide baseline from recall@1 43% to 65%, recall@20 87% to 92%, and MRR 0.564 to 0.735 (current baseline tracked in `rag/eval/CURRENT_BASELINE.md`).
+On one operator's 60-query ground-truth set, adding the cross-encoder reranker moved recall@1 from 43% to 65%, recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (track your own baseline as described above).
 
 ## FAQ
 

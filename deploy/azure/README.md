@@ -12,8 +12,8 @@ zero and reranking off — a few dollars/month. **Production** deployments set t
 ~$1,900/month all-in for one warm embedder + one warm reranker — the two
 always-warm GPU sidecars are ~$1,860 of that (1 embedder + 1 reranker at ~$930
 each) and the rest is Postgres/ACR/Key Vault/logs; it is only a rough estimate.
-A deployment that scales the embedder to multiple warm replicas (as the DocuWare
-CCL config does, at `embedderMinReplicas=2`) costs one warm T4 more per extra
+A deployment that scales the embedder to multiple warm replicas (at
+`embedderMinReplicas>=2`) costs one warm T4 more per extra
 replica (see Cost; the serverless-GPU meter is not in the Azure pricing
 calculator, so
 verify against Azure Cost Management).
@@ -123,8 +123,8 @@ template stores it in Key Vault and references it from both Container Apps.
 Rotate by re-deploying with a new value.
 
 **Cost.** On the production `gpu-nc8as-t4` Tesla-T4 profile, an always-warm
-embedder (`embedderMinReplicas=1`) is on the order of ~$930/month (≈ €860, the
-DocuWare CCL production figure) — approximate, since the serverless-GPU meter is
+embedder (`embedderMinReplicas=1`) is on the order of ~$930/month (≈ €860) —
+approximate, since the serverless-GPU meter is
 not exposed in the Azure pricing calculator; verify against Azure Cost
 Management for your region. The template default (`embedderMinReplicas=0`,
 Consumption profile) scales to zero and costs a few dollars/month, at the cost
@@ -139,9 +139,8 @@ sentence-transformers `CrossEncoder` API) and exposes a `POST /rerank`
 endpoint. After the hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag
 boost) produces candidates, the search API sends the top `rerank_top_n`
 (default 50) to the reranker, which re-scores them with the cross-encoder. On
-the 60-query org-wide ground truth this lifted recall@1 from 43% to 65%,
-recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (canonical baseline:
-`rag/eval/CURRENT_BASELINE.md`).
+one operator's 60-query ground-truth set, this lifted recall@1 from 43% to 65%,
+recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (track this in your own eval baseline).
 
 Reranking is **off until wired up**, and turning it on takes BOTH settings:
 `RERANK_ENABLED=true` (the master switch; bicep `rerankEnabled`) AND `RERANKER_URL`

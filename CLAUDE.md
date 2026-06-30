@@ -71,7 +71,7 @@ nearest internal API. The cheapest mistakes have been:
    registered in `mcp_server.py:@mcp.tool()`) on a representative query and
    confirm the expected page appears. From a Claude Code session this surfaces
    as `mcp__<server-name>__search_documentation`, where `<server-name>` is
-   the user's `.claude.json` MCP-server key (e.g. `dw-docforge`). `--direct`
+   the user's `.claude.json` MCP-server key (e.g. `docforge`). `--direct`
    eval and `curl /search` do NOT exercise the MCP path end-to-end.
 3. **Deployment changes** — after `az containerapp update`, check both `/health`
    AND the user surface (MCP + `/search` via `curl`). Revision metadata
@@ -79,8 +79,8 @@ nearest internal API. The cheapest mistakes have been:
    deploy.
 4. **Bicep param changes** — any `az containerapp update --set-env-vars` is
    ephemeral. The canonical config lives in the downstream consumer's
-   bicepparam file (for the CCL deployment that's
-   `rag/infrastructure/docforge.bicepparam` in the dw-docforge repo). Update
+   bicepparam file (the downstream deployment's `*.bicepparam` in the repo that
+   consumes this engine). Update
    it there too, or the next Bicep deploy reverts your fix.
 5. **CI changes** — push to a branch and watch CI green before claiming it
    works locally. Local pip extras and Python versions can mask CI-only
