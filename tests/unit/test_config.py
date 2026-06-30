@@ -466,3 +466,31 @@ def test_log_responses_env_true(monkeypatch):
     from docforge.config import Settings
 
     assert Settings().log_responses is True
+
+
+class TestRerankFailOpenSettings:
+    def test_defaults_are_fail_closed_and_60s(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        for var in ("RERANK_FAIL_OPEN", "RERANK_TIMEOUT_SECONDS"):
+            monkeypatch.delenv(var, raising=False)
+
+        from docforge.config import Settings
+
+        s = Settings()
+        # Engine default stays fail-CLOSED for OSS — dw-docforge flips it on
+        # via bicepparam. A wrong default would silently degrade recall for
+        # every other deployment of the engine.
+        assert s.rerank_fail_open is False
+        assert s.rerank_timeout_seconds == pytest.approx(60.0)
+
+    def test_env_overrides(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("RERANK_FAIL_OPEN", "true")
+        monkeypatch.setenv("RERANK_TIMEOUT_SECONDS", "12")
+
+        from docforge.config import Settings
+
+        s = Settings()
+        # Mirrors the prod bicepparam: RERANK_FAIL_OPEN='true', '12'.
+        assert s.rerank_fail_open is True
+        assert s.rerank_timeout_seconds == pytest.approx(12.0)

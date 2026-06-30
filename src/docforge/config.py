@@ -205,6 +205,19 @@ class Settings(BaseSettings):
     # without an image rebuild.
     rerank_batch_size: int = Field(8, ge=1)
     rerank_max_length: int = Field(512, ge=1)
+    # Reranker fail-open (search path, NOT the sidecar). When True, a reranker
+    # transport/timeout/5xx/malformed-permutation failure inside perform_search
+    # is swallowed: the pre-rerank RRF-ordered pool is returned instead of
+    # raising. Engine default is False (fail-CLOSED -- surface the 502/500 so a
+    # silent recall drop is caught) to keep OSS behavior unchanged; dw-docforge
+    # sets RERANK_FAIL_OPEN='true' in its bicepparam so off-hours reranker
+    # scale-to-zero degrades to RRF instead of 502-ing. A Log Analytics alert on
+    # the `search_rerank_fallback` WARNING replaces the old 502 signal.
+    rerank_fail_open: bool = False
+    # Per-request reranker timeout (seconds), forwarded into RemoteReranker so a
+    # cold reranker sidecar can't hang the search path for the RemoteReranker
+    # default 60s + retry (~120s). dw-docforge sets RERANK_TIMEOUT_SECONDS='12'.
+    rerank_timeout_seconds: float = 60.0
 
     @model_validator(mode="after")
     def _validate_reranker(self):
