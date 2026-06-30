@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # Sparse-pool dampening (sub-project D, v0.7.12). When the sparse CTE
     # returns more than sparse_flood_ratio * dense_count rows, the sparse leg
     # is treated as "flooded" with weakly-relevant chunks (typical for
-    # short-common-token queries like "Domain Catalog DocuWare domains") and
+    # short-common-token queries like "common terms shared across many docs") and
     # its RRF contribution is scaled by sparse_flood_dampening. Per-query
     # signal — legitimately rare long-tail queries (sparse pool small) keep
     # their full sparse weight. Both knobs tunable in docforge.yml without
@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     default_area_name: str = ""
 
     # MCP surface text for `serve --remote-api` (see remote_client.run_remote_mcp).
-    # Empty = use the engine's built-in generic defaults. The DocuWare deployment
+    # Empty = use the engine's built-in generic defaults. A downstream deployment
     # injects org-specific coverage + the team-name/abbreviation vocabulary via
     # MCP_INSTRUCTIONS / MCP_TOOL_DESCRIPTION env vars so the calling assistant
     # knows when to call docforge and what it covers.
