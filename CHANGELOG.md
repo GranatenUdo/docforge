@@ -145,8 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10:1). Migration 008's chunks.title is now load-bearing for short queries
   where the target page's title contains the query terms but its body
   doesn't repeat them as densely as competitor chunks. Resolves 2 of 3
-  short-token misses left by sub-project D's eval (Markus Koelmans / Domain
-  Catalog). Morne remains a data-side issue (chunk content gap).
+  short-token misses left by sub-project D's eval; the third remains a
+  data-side issue (chunk content gap).
 
 ### Added
 - `Settings.title_weight_a: float = 4.0` — title-dominance factor. Higher =
