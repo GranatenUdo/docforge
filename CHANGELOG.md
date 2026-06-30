@@ -167,8 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hybrid retrieval: sparse-leg RRF contribution is now dampened per-query
   when the sparse-CTE returns more than `sparse_flood_ratio * dense_count`
   rows. Targets the 3 short-common-token misses left by sub-project B
-  (`Morne team developer role`, `Markus Koelmans team responsibility lead`,
-  `Domain Catalog DocuWare domains`) without regressing the 5 long-rare-token
+  (three short-common-token example queries) without regressing the 5 long-rare-token
   wins from v0.7.8. The dampening fires only when the sparse leg is
   floodingly over-broad — long-tail queries that depend on OR-tsq recall stay
   untouched.
@@ -210,7 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.10] - 2026-05-26
 
 ### Fixed
-- **Critical MCP hang on first tool call** (`docforge serve --remote-api`). `RemoteBackend.search()` lazy-imported `format_search_results_markdown` from `docforge.mcp_server`, which transitively pulls in numpy, fastmcp, asyncpg, and the embedder model. Running this synchronous import chain inside the active asyncio event loop on first tool dispatch deadlocked the MCP subprocess for 90+ seconds with no inner timeout firing — the HTTP call returned 200 in ~700ms but the post-HTTP formatter import never completed. Symptom: `dw-docforge__search_documentation` tool calls appear to hang indefinitely.
+- **Critical MCP hang on first tool call** (`docforge serve --remote-api`). `RemoteBackend.search()` lazy-imported `format_search_results_markdown` from `docforge.mcp_server`, which transitively pulls in numpy, fastmcp, asyncpg, and the embedder model. Running this synchronous import chain inside the active asyncio event loop on first tool dispatch deadlocked the MCP subprocess for 90+ seconds with no inner timeout firing — the HTTP call returned 200 in ~700ms but the post-HTTP formatter import never completed. Symptom: the `search_documentation` tool call appears to hang indefinitely.
 - Fix: extracted `format_search_results_markdown` to a new stdlib-only `docforge.formatters` module. Both `remote_client.py` and `mcp_server.py` now import from there at module level. Reproduced fix end-to-end: MCP tool returns in ~1.6s, no hang. The v0.7.9 60s safety-net timeout still applies as a backstop but no longer fires under normal load.
 - Regression guard (`test_formatters_module_has_no_heavy_imports`) ensures `docforge.formatters` stays import-light.
 
@@ -299,8 +298,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes for operators
 
-- CCL production deployment: redeploy `docforge-embedder` from the new image. No schema migration; no search-api rebuild required (search-api on v0.7.0 continues to function — it benefits from the bundled 60s timeout the next time it's rebuilt for other reasons).
-- See dw-docforge `docs/superpowers/specs/2026-05-13-ingest-completion-design.md` for the full cutover procedure.
+- Production deployment: redeploy `docforge-embedder` from the new image. No schema migration; no search-api rebuild required (search-api on v0.7.0 continues to function — it benefits from the bundled 60s timeout the next time it's rebuilt for other reasons).
+- See your deployment's cutover runbook for the full procedure.
 
 ## [0.7.0] - 2026-05-12
 
@@ -317,7 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration notes
 
-This release requires a coordinated cutover: bring up a new embedder Container App backed by the GPU workload profile, point search-api at it, apply migration 009, truncate chunks, re-ingest all sources. Expected downtime: 30-45 min during low-usage hours. See the migration plan in `dw-docforge/docs/superpowers/plans/2026-05-12-qwen-embedder-migration-plan.md` for the exact step ordering and rollback procedure.
+This release requires a coordinated cutover: bring up a new embedder Container App backed by the GPU workload profile, point search-api at it, apply migration 009, truncate chunks, re-ingest all sources. Expected downtime: 30-45 min during low-usage hours. See your deployment's migration plan for the exact step ordering and rollback procedure.
 
 Operators on legacy Gemma deployments can continue on v0.6.x indefinitely — the engine doesn't require this upgrade.
 
@@ -346,7 +345,7 @@ Operators on legacy Gemma deployments can continue on v0.6.x indefinitely — th
 
 ### Changed
 
-- **Sparse retrieval path now matches titles and section headings**, weighted via `ts_rank_cd` defaults (title ~10x body, section ~4x body). Improves recall on queries where the right doc's title contains query terms but its chunk bodies don't — the failure mode identified in `dw-docforge/docs/superpowers/findings/2026-05-09-hybrid-regression-diagnosis.md`. No engine code default changes; behavior shift is purely in the GENERATED tsvector expression.
+- **Sparse retrieval path now matches titles and section headings**, weighted via `ts_rank_cd` defaults (title ~10x body, section ~4x body). Improves recall on queries where the right doc's title contains query terms but its chunk bodies don't — a previously-diagnosed ranking regression on title-matching queries. No engine code default changes; behavior shift is purely in the GENERATED tsvector expression.
 
 ### Migration notes
 
@@ -371,7 +370,7 @@ Operators on legacy Gemma deployments can continue on v0.6.x indefinitely — th
 
 ### Changed
 
-- `/search` SQL RRF formula now multiplies each retriever's reciprocal-rank by its corresponding weight. No behavior change at default weights; opens the door to weight-tuned hybrid retrieval. See `dw-docforge/docs/superpowers/plans/2026-05-09-hybrid-retrieval-followup-plan.md` for the sweep methodology.
+- `/search` SQL RRF formula now multiplies each retriever's reciprocal-rank by its corresponding weight. No behavior change at default weights; opens the door to weight-tuned hybrid retrieval. See your own weight-sweep methodology for tuning.
 
 ## [0.5.0] - 2026-05-09
 
@@ -424,7 +423,7 @@ Operators on legacy Gemma deployments can continue on v0.6.x indefinitely — th
 
 ### Changed
 
-- MCP server identifier renamed from `knowledge-hub` to `docforge` (the original name was a leftover from the project's original DocuWare-internal incarnation). **Behavior change for MCP clients:** the server name shown in MCP client UIs changes; clients that filter on server name need to update. No protocol or tool surface changes.
+- MCP server identifier renamed from `knowledge-hub` to `docforge` (the original name was a leftover from the project's original internal-tool incarnation). **Behavior change for MCP clients:** the server name shown in MCP client UIs changes; clients that filter on server name need to update. No protocol or tool surface changes.
 - All runtime and dev dependencies in `pyproject.toml` now carry strict-major upper bounds (e.g. `fastapi>=0.115,<1.0`, `pydantic>=2.9,<3.0`, `pytest>=9.0,<10.0`). Floor-only pins previously allowed fresh installs to pull an untested next-major version of any dep. `numpy>=1.26,<3.0` is the documented exception, covering both 1.x and 2.x. Dependabot continues to pick up minors and patches.
 - All four `Embedder(...)` construction sites in the API, MCP server, ingest pipeline, and CLI now pass `expected_dimensions=settings.embedding_dimensions`, enabling the new dimension guard in production. **Behavior change:** if your configured `embedding_dimensions` disagrees with the loaded embedding model's actual dimension, the process now fails fast at startup with a clear remediation message ("change `embedding_model` in `docforge.yml`, or update `embedding_dimensions` and migrate the schema"), instead of failing later at INSERT time with a cryptic pgvector error. Adopters with a stale `embedding_dimensions` should update it before upgrading.
 - API and MCP search request boundaries are now hard-capped: `query` is rejected over 8000 characters, `limit` is rejected outside `[1, 50]`. **Behavior change:** clients that previously got 200 with `limit=10000` (and a slow response) now get HTTP 422 with a Pydantic-shaped error detail naming the offending field. Internal `Embedder.embed` raises `ValueError` when called with more than 256 texts in one batch.
