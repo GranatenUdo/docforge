@@ -291,10 +291,13 @@ class TestLocalReranker:
 
 
 class TestFactory:
-    def _settings(self, url: str = "", token: str = "") -> SimpleNamespace:
+    def _settings(
+        self, url: str = "", token: str = "", timeout_seconds: float = 60.0
+    ) -> SimpleNamespace:
         return SimpleNamespace(
             reranker_url=url,
             reranker_token=SimpleNamespace(get_secret_value=lambda: token),
+            rerank_timeout_seconds=timeout_seconds,
         )
 
     def test_returns_remote_reranker_when_url_set(self):
@@ -314,3 +317,13 @@ class TestFactory:
         # without auth, even though the factory is only reached with a URL set.
         with pytest.raises(RuntimeError, match="refusing to construct"):
             reranker_from_settings(self._settings(url="https://rerank.internal", token=""))
+
+    def test_forwards_timeout_seconds_from_settings(self):
+        # The search path must be able to bound a cold-reranker hang; the
+        # factory passes Settings.rerank_timeout_seconds into RemoteReranker
+        # so dw-docforge's RERANK_TIMEOUT_SECONDS='12' actually takes effect.
+        result = reranker_from_settings(
+            self._settings(url="https://rerank.internal", token="t", timeout_seconds=12.0)
+        )
+        assert isinstance(result, RemoteReranker)
+        assert result._timeout_seconds == pytest.approx(12.0)

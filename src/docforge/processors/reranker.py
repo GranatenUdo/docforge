@@ -189,5 +189,6 @@ def reranker_from_settings(settings: Settings) -> RerankerProtocol | None:
         return RemoteReranker(
             settings.reranker_url,
             token,
+            timeout_seconds=settings.rerank_timeout_seconds,
         )
     return None
