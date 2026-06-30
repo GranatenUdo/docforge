@@ -165,7 +165,7 @@ class Settings(BaseSettings):
 
     # When true, /search writes per-result snapshots to query_result (capture
     # for the review/feedback loop). Default off so other consumers are
-    # unaffected; the CCL pilot enables it via bicepparam (LOG_RESPONSES=true).
+    # unaffected; a downstream deployment can enable it via bicepparam (LOG_RESPONSES=true).
     log_responses: bool = False
 
     # asyncpg pool sizing — defaults match the operating profile (multi-replica,
