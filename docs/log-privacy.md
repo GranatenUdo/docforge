@@ -74,7 +74,7 @@ Operational runbook:
 | Right-to-erasure SQL | Implemented; works today (manual SQL) |
 | Right-to-erasure CLI command | Not yet; manual SQL is the supported path |
 
-Redaction is not implemented and has no planned milestone — queries are stored verbatim, with 180-day retention by default (adjust `query_log_retention_days`, or set it to `0` to disable logging). The role grants and the erasure CLI remain operator-provided / manual as noted above.
+Redaction is not implemented and has no planned milestone — queries are stored verbatim, with 180-day retention by default (adjust `query_log_retention_days`; setting it to `0` purges rows on the next hourly cleanup). The role grants and the erasure CLI remain operator-provided / manual as noted above.
 
 ## Review cadence
 
