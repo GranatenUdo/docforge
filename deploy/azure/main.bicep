@@ -202,6 +202,24 @@ param rerankerMemoryGi int = 4
 #disable-next-line no-unused-params
 param rerankerToken string = ''
 
+@description('When true, attach a KEDA cron warm-window rule to the search-api scale block (weekday 04:45-19:00 Europe/Berlin, desiredReplicas 1). The cron floor only reaches 0 off-window if minReplicas is also 0 — set searchApi minReplicas=0 in the bicepparam, else the floor is inert.')
+param searchApiWarmWindowEnabled bool = false
+
+@description('When true, attach KEDA cron warm-window rules to the embedder scale block (weekday 04:45-19:00 + weekend 04:45-07:30 Europe/Berlin, desiredReplicas 1). Requires embedderMinReplicas=0 to scale to zero off-window.')
+param embedderWarmWindowEnabled bool = false
+
+@description('When true, attach a KEDA cron warm-window rule to the reranker scale block (weekday 07:00-19:00 Europe/Berlin, desiredReplicas 1). Requires rerankerMinReplicas=0 to scale to zero off-window. GATE: only enable after fail-open is verified live on the search-api.')
+param rerankerWarmWindowEnabled bool = false
+
+@description('Reranker graceful fail-open (RERANK_FAIL_OPEN). "false" (engine default) = fail closed (reranker error -> 502). "true" = on reranker error, log a WARNING (token search_rerank_fallback) and return RRF-ordered results (200). Container Apps env values are strings; pydantic-settings parses to bool at runtime.')
+param rerankFailOpen string = 'false'
+
+@description('Per-request reranker call timeout in seconds (RERANK_TIMEOUT_SECONDS). Engine default 60.0; dw-docforge sets 12 so a cold/absent reranker fails fast into the fail-open RRF path instead of hanging ~120s on the RemoteReranker retry.')
+param rerankTimeoutSeconds string = '60'
+
+@description('Resource ID of the Action Group notified when the reranker fail-open alert fires. Empty string = create the alert without an action (visible in the portal, no notification). Wire to the CCL action group for email/Teams notification.')
+param actionGroupId string = ''
+
 // ─── Derived names ──────────────────────────────────────────────────────
 
 var keyVaultName = '${namePrefix}-kv'
@@ -543,6 +561,14 @@ var realContainerEnv = [
     name: 'RERANKER_TOKEN'
     secretRef: 'embedder-token'
   }
+  {
+    name: 'RERANK_FAIL_OPEN'
+    value: rerankFailOpen
+  }
+  {
+    name: 'RERANK_TIMEOUT_SECONDS'
+    value: rerankTimeoutSeconds
+  }
 ]
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -586,7 +612,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
-        rules: [
+        rules: concat([
           {
             name: 'http-rule'
             http: {
@@ -595,7 +621,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               }
             }
           }
-        ]
+        ], searchApiWarmWindowEnabled ? [
+          {
+            name: 'cron-weekday'
+            custom: {
+              type: 'cron'
+              metadata: {
+                timezone: 'Europe/Berlin'
+                start: '45 4 * * 1-5'
+                end: '0 19 * * 1-5'
+                desiredReplicas: '1'
+              }
+            }
+          }
+        ] : [])
       }
     }
   }
@@ -694,7 +733,7 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: embedderMinReplicas
         maxReplicas: embedderMaxReplicas
-        rules: [
+        rules: concat([
           {
             name: 'http-rule'
             http: {
@@ -703,7 +742,32 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
               }
             }
           }
-        ]
+        ], embedderWarmWindowEnabled ? [
+          {
+            name: 'cron-weekday'
+            custom: {
+              type: 'cron'
+              metadata: {
+                timezone: 'Europe/Berlin'
+                start: '45 4 * * 1-5'
+                end: '0 19 * * 1-5'
+                desiredReplicas: '1'
+              }
+            }
+          }
+          {
+            name: 'cron-weekend'
+            custom: {
+              type: 'cron'
+              metadata: {
+                timezone: 'Europe/Berlin'
+                start: '45 4 * * 6,0'
+                end: '30 7 * * 6,0'
+                desiredReplicas: '1'
+              }
+            }
+          }
+        ] : [])
       }
     }
   }
@@ -804,7 +868,7 @@ resource rerankerApp 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: rerankerMinReplicas
         maxReplicas: rerankerMaxReplicas
-        rules: [
+        rules: concat([
           {
             name: 'http-rule'
             http: {
@@ -813,7 +877,20 @@ resource rerankerApp 'Microsoft.App/containerApps@2024-03-01' = {
               }
             }
           }
-        ]
+        ], rerankerWarmWindowEnabled ? [
+          {
+            name: 'cron-weekday'
+            custom: {
+              type: 'cron'
+              metadata: {
+                timezone: 'Europe/Berlin'
+                start: '0 7 * * 1-5'
+                end: '0 19 * * 1-5'
+                desiredReplicas: '1'
+              }
+            }
+          }
+        ] : [])
       }
     }
   }
@@ -881,6 +958,48 @@ resource rerankerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalId: rerankerApp.identity.principalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
     principalType: 'ServicePrincipal'
+  }
+}
+
+// ─── Alerts ─────────────────────────────────────────────────────────────
+
+// Fail-open monitoring: with RERANK_FAIL_OPEN=true a degraded/absent reranker
+// no longer 502s, so the signal is the search_rerank_fallback WARNING in the
+// search-api console logs. Alert when it fires >= 5 times in an hour.
+resource rerankFallbackAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15' = {
+  name: '${namePrefix}-rerank-fallback'
+  location: location
+  tags: tags
+  properties: {
+    displayName: 'docforge reranker fail-open (search_rerank_fallback)'
+    description: 'Reranker fell open to RRF >= 5 times in the last hour — the reranker sidecar may be down or mis-scaled.'
+    severity: 2
+    enabled: true
+    scopes: [
+      logAnalytics.id
+    ]
+    evaluationFrequency: 'PT1H'
+    windowSize: 'PT1H'
+    criteria: {
+      allOf: [
+        {
+          query: 'ContainerAppConsoleLogs_CL | where ContainerAppName_s == "${containerAppName}" | where Log_s contains "search_rerank_fallback"'
+          timeAggregation: 'Count'
+          operator: 'GreaterThanOrEqual'
+          threshold: 5
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    autoMitigate: true
+    actions: {
+      actionGroups: empty(actionGroupId) ? [] : [
+        actionGroupId
+      ]
+    }
   }
 }
 
