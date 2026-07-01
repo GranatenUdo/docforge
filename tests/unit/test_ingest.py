@@ -474,3 +474,62 @@ async def test_ingest_confluence_tree_skips_unchanged_page(tmp_path, monkeypatch
     assert len(conn.inserted_sources) == 1
     # sources INSERT positional args: (url, title, page_id, space_key, now, hash, tags)
     assert conn.inserted_sources[0][2] == "102"
+
+
+@pytest.mark.asyncio
+async def test_ingest_uses_chunk_tokenizer_factory_not_embedder(
+    tmp_path, monkeypatch, fake_embedder
+):
+    """ingest must size chunks with get_chunk_tokenizer_fn(settings), NOT
+    embedder.get_tokenizer_fn(). This makes chunk boundaries identical whether
+    ingest embeds in-process or via RemoteEmbedder (whose get_tokenizer_fn is a
+    word-count approximation that produces oversized chunks)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Title\n\nContent one.\n\n## Sub\n\nContent two.")
+
+    sources_file = tmp_path / "sources.yml"
+    sources_file.write_text(
+        "sources:\n"
+        "  - type: git_repo\n"
+        f'    repo_path: "{repo.as_posix()}"\n'
+        '    include_patterns: ["README.md"]\n'
+        '    title: "RepoX"\n'
+    )
+
+    # Sentinel tokenizer from the factory — deliberately distinct from the
+    # FakeEmbedder.get_tokenizer_fn word-count so we can prove which one wins.
+    sentinel_calls = []
+
+    def sentinel_tokenizer(text: str) -> int:
+        sentinel_calls.append(text)
+        return len(text.split())
+
+    monkeypatch.setattr(
+        ingest_mod, "get_chunk_tokenizer_fn", lambda settings: sentinel_tokenizer
+    )
+
+    received = {}
+    real_chunk_sections = ingest_mod.chunk_sections
+
+    def spy_chunk_sections(sections, max_tokens=500, tokenizer_fn=None):
+        received["tokenizer_fn"] = tokenizer_fn
+        return real_chunk_sections(sections, max_tokens=max_tokens, tokenizer_fn=tokenizer_fn)
+
+    monkeypatch.setattr(ingest_mod, "chunk_sections", spy_chunk_sections)
+
+    conn = _Conn(existing_hash=None)
+
+    async def fake_get_pool(url, **kwargs):
+        return _FakePool(conn)
+
+    monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
+
+    from docforge.config import Settings
+
+    settings = Settings(sources_file=str(sources_file))
+    await ingest_all(settings)
+
+    # The factory's tokenizer reached the chunker — not the embedder's.
+    assert received["tokenizer_fn"] is sentinel_tokenizer
+    assert sentinel_calls  # it was actually used to size at least one chunk

@@ -21,6 +21,7 @@ from docforge.db import get_pool
 from docforge.processors.chunker import chunk_sections
 from docforge.processors.embedder import Embedder
 from docforge.processors.parser import Section, parse_confluence_html
+from docforge.processors.tokenizer import get_chunk_tokenizer_fn
 from docforge.sources import (
     ConfluenceSourceConfig,
     ConfluenceTreeSourceConfig,
@@ -59,7 +60,11 @@ async def ingest_all(
         min_size=settings.pool_min_size,
         max_size=settings.pool_max_size,
     )
-    tokenizer_fn = embedder.get_tokenizer_fn()
+    # Use the real model tokenizer for chunk sizing regardless of embedder
+    # backend. embedder.get_tokenizer_fn() is a word-count approximation on
+    # RemoteEmbedder (embedder.py:329-330), which emits oversized chunks when
+    # ingest delegates embedding to the sidecar (the ADO pipeline path).
+    tokenizer_fn = get_chunk_tokenizer_fn(settings)
 
     succeeded = 0
     failed = 0
