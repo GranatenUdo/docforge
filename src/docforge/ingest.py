@@ -8,6 +8,7 @@ are logged but do not abort the run.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -21,6 +22,7 @@ from docforge.db import get_pool
 from docforge.processors.chunker import chunk_sections
 from docforge.processors.embedder import Embedder
 from docforge.processors.parser import Section, parse_confluence_html
+from docforge.processors.tokenizer import get_chunk_tokenizer_fn
 from docforge.sources import (
     ConfluenceSourceConfig,
     ConfluenceTreeSourceConfig,
@@ -35,6 +37,30 @@ def _git_source_identifier(repo_path: str, file_path: str) -> str:
     """Canonical identifier for a git-repo source row. Must stay in sync with
     what _ingest_git_source INSERTs and what _purge_orphans matches against."""
     return f"git:{repo_path}:{file_path}"
+
+
+def _on_disk_crawl_path(repo_path: str) -> str:
+    """Map a stored (relabeled) git repo_path to the real on-disk crawl root.
+
+    `repo_path` is BOTH the persisted source identifier prefix AND the path
+    ingest crawls. To run ingest off the maintainer's machine without changing
+    identifiers (which would duplicate the index, and --purge-orphans is
+    forbidden), generate_sources.py relabels the on-disk cache prefix to the
+    canonical DOCFORGE_REPO_PATH_PREFIX before emitting. This reverses that
+    for filesystem access only: if repo_path starts with the prefix, swap it
+    for the real DOCFORGE_CACHE_ROOT; otherwise return it unchanged. Defaults
+    make both equal E:/.docforge-cache, so this is a no-op on the maintainer's
+    machine.
+    """
+    prefix = os.environ.get("DOCFORGE_REPO_PATH_PREFIX", "E:/.docforge-cache")
+    cache_root = os.environ.get("DOCFORGE_CACHE_ROOT", "E:/.docforge-cache")
+    if prefix == cache_root:
+        return repo_path
+    if repo_path == prefix:
+        return cache_root
+    if repo_path.startswith(prefix + "/"):
+        return cache_root + repo_path[len(prefix) :]
+    return repo_path
 
 
 async def ingest_all(
@@ -59,7 +85,11 @@ async def ingest_all(
         min_size=settings.pool_min_size,
         max_size=settings.pool_max_size,
     )
-    tokenizer_fn = embedder.get_tokenizer_fn()
+    # Use the real model tokenizer for chunk sizing regardless of embedder
+    # backend. embedder.get_tokenizer_fn() is a word-count approximation on
+    # RemoteEmbedder (embedder.py:329-330), which emits oversized chunks when
+    # ingest delegates embedding to the sidecar (the ADO pipeline path).
+    tokenizer_fn = get_chunk_tokenizer_fn(settings)
 
     succeeded = 0
     failed = 0
@@ -260,11 +290,15 @@ async def _ingest_git_source(
 
     logger.info("Crawling git repo: %s (%s)", source.title, source.repo_path)
 
-    if not Path(source.repo_path).is_dir():
-        raise FileNotFoundError(f"Configured git repo path does not exist: {source.repo_path}")
+    # repo_path is the stored (relabeled) IDENTITY prefix; map it to the real
+    # on-disk root for the crawl. Identity + file:// url keep source.repo_path.
+    on_disk_path = _on_disk_crawl_path(source.repo_path)
+
+    if not Path(on_disk_path).is_dir():
+        raise FileNotFoundError(f"Configured git repo path does not exist: {on_disk_path}")
 
     files = crawl_repo(
-        source.repo_path,
+        on_disk_path,
         source.include_patterns,
         legacy_path_substring=settings.legacy_path_substring,
     )

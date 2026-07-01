@@ -177,7 +177,12 @@ async def run_queries_direct(
     from docforge.processors.embedder import Embedder
     from docforge.processors.reranker import reranker_from_settings
 
-    settings = Settings()
+    # --direct is for production-DB investigation; it must fail LOUD on a
+    # reranker fault rather than silently degrade to RRF and report an
+    # inflated recall number. Pin fail-open OFF even if RERANK_FAIL_OPEN=true
+    # leaks in from the ambient (prod-style) env. kwargs win over env in
+    # Settings (config.py merges {**yml, **kwargs} with env below kwargs).
+    settings = Settings(rerank_fail_open=False)
     # --direct mode is meant for production-DB investigation work; it requires
     # the remote embedder sidecar so the eval uses the SAME embeddings the
     # live API uses. Falling through to the in-process Embedder would download

@@ -5,6 +5,18 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.18
+
+- api: reranker fail-open in perform_search (both raise sites) gated by
+  rerank_fail_open (default False); WARNING token `search_rerank_fallback`.
+- config: add rerank_fail_open + rerank_timeout_seconds settings.
+- reranker: forward rerank_timeout_seconds into RemoteReranker.
+- tokenizer: new processors/tokenizer.py get_chunk_tokenizer_fn; ingest sizes
+  chunks with it so remote-embedder ingest matches in-process boundaries.
+- ingest: decouple git source identity from the on-disk crawl path via
+  DOCFORGE_REPO_PATH_PREFIX -> DOCFORGE_CACHE_ROOT (no-op by default).
+- eval: pin eval_search --direct to rerank_fail_open=False.
+
 ## [0.7.17] - 2026-06-25
 
 ### Changed

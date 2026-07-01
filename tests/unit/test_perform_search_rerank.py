@@ -21,6 +21,7 @@ These tests pin:
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from docforge.api import SearchRequest, perform_search
@@ -274,3 +275,121 @@ async def test_rerank_passage_builder_skips_none_section_title():
     assert seen_passages[0] == "Doc 0\nbody text 0"
     assert "None" not in seen_passages[0]
     assert "\nNone\n" not in seen_passages[0]
+
+
+class _RaisingReranker:
+    """RerankerProtocol stand-in whose arerank raises a chosen exception —
+    models the transport/timeout/5xx path (api.py:408-411)."""
+
+    def __init__(self, exc):
+        self._exc = exc
+        self.calls = 0
+
+    async def arerank(self, query: str, passages: list[str]) -> list[tuple[int, float]]:
+        self.calls += 1
+        raise self._exc
+
+
+class _BadPermutationReranker:
+    """arerank returns fewer indices than the head -> trips the permutation
+    guard (api.py:417-422), the SECOND raise site."""
+
+    async def arerank(self, query: str, passages: list[str]) -> list[tuple[int, float]]:
+        # Only one (index, score) for a 3-row head -> invalid permutation.
+        return [(0, 0.9)]
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_fails_open_returns_rrf_when_flag_on():
+    rows = _make_rows(6)
+    pool = CapturingFetchPool(rows)
+    settings = _rerank_settings(rerank_enabled=True, rerank_top_n=3)
+    settings.rerank_fail_open = True
+    reranker = _RaisingReranker(httpx.ConnectError("reranker down"))
+    req = SearchRequest(query="hello", team_name="ccl", limit=5)
+
+    result = await perform_search(
+        req=req, settings=settings, pool=pool, embedder=FakeEmbedder(), reranker=reranker
+    )
+
+    # Fail-open: pre-rerank RRF/boosted order, capped at req.limit, no rerank.
+    titles = [r["source_title"] for r in result]
+    assert titles == ["Doc 0", "Doc 1", "Doc 2", "Doc 3", "Doc 4"]
+    assert len(result) == req.limit
+    assert all(r.get("rerank_score") is None for r in result)
+    assert reranker.calls == 1  # it was attempted, then swallowed
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_raises_reranker_unavailable_when_flag_off():
+    from docforge.api import RerankerUnavailable
+
+    rows = _make_rows(6)
+    pool = CapturingFetchPool(rows)
+    settings = _rerank_settings(rerank_enabled=True, rerank_top_n=3)
+    settings.rerank_fail_open = False  # explicit: default fail-closed
+    reranker = _RaisingReranker(httpx.ConnectError("reranker down"))
+    req = SearchRequest(query="hello", team_name="ccl", limit=5)
+
+    with pytest.raises(RerankerUnavailable):
+        await perform_search(
+            req=req, settings=settings, pool=pool, embedder=FakeEmbedder(), reranker=reranker
+        )
+
+
+@pytest.mark.asyncio
+async def test_bad_permutation_fails_open_returns_rrf_when_flag_on():
+    rows = _make_rows(6)
+    pool = CapturingFetchPool(rows)
+    settings = _rerank_settings(rerank_enabled=True, rerank_top_n=3)
+    settings.rerank_fail_open = True
+    reranker = _BadPermutationReranker()
+    req = SearchRequest(query="hello", team_name="ccl", limit=5)
+
+    result = await perform_search(
+        req=req, settings=settings, pool=pool, embedder=FakeEmbedder(), reranker=reranker
+    )
+
+    # The permutation guard is the SECOND raise site; fail-open must cover it too.
+    titles = [r["source_title"] for r in result]
+    assert titles == ["Doc 0", "Doc 1", "Doc 2", "Doc 3", "Doc 4"]
+    assert all(r.get("rerank_score") is None for r in result)
+
+
+@pytest.mark.asyncio
+async def test_bad_permutation_raises_runtimeerror_when_flag_off():
+    rows = _make_rows(6)
+    pool = CapturingFetchPool(rows)
+    settings = _rerank_settings(rerank_enabled=True, rerank_top_n=3)
+    settings.rerank_fail_open = False
+    reranker = _BadPermutationReranker()
+    req = SearchRequest(query="hello", team_name="ccl", limit=5)
+
+    with pytest.raises(RuntimeError, match="invalid permutation"):
+        await perform_search(
+            req=req, settings=settings, pool=pool, embedder=FakeEmbedder(), reranker=reranker
+        )
+
+
+@pytest.mark.asyncio
+async def test_fail_open_logs_search_rerank_fallback_token(caplog):
+    import logging
+
+    rows = _make_rows(6)
+    pool = CapturingFetchPool(rows)
+    settings = _rerank_settings(rerank_enabled=True, rerank_top_n=3)
+    settings.rerank_fail_open = True
+    reranker = _RaisingReranker(httpx.ConnectError("reranker down"))
+    req = SearchRequest(query="hello", team_name="ccl", limit=5)
+
+    with caplog.at_level(logging.WARNING, logger="docforge.api"):
+        await perform_search(
+            req=req, settings=settings, pool=pool, embedder=FakeEmbedder(), reranker=reranker
+        )
+
+    # The Log Analytics alert keys off this exact token; it MUST appear in a
+    # WARNING-level record.
+    assert any(
+        rec.levelno == logging.WARNING and "search_rerank_fallback" in rec.getMessage()
+        for rec in caplog.records
+    )

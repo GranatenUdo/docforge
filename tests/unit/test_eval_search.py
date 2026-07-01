@@ -186,7 +186,7 @@ class TestDirectRequiresRemoteEmbedder:
             database_url="postgresql://fake",
             embedder_token=SimpleNamespace(get_secret_value=lambda: ""),
         )
-        monkeypatch.setattr("docforge.config.Settings", lambda: empty_url_settings)
+        monkeypatch.setattr("docforge.config.Settings", lambda **kwargs: empty_url_settings)
 
         with pytest.raises(SystemExit) as exc_info:
             await run_queries_direct(
@@ -274,7 +274,7 @@ class TestDirectVsHttpParity:
 
         # Settings/Pool/Embedder construction in run_queries_direct — patch the
         # source modules since run_queries_direct imports them lazily.
-        def patched_settings():
+        def patched_settings(**kwargs):
             s = fake_settings()
             s.embedder_url = "https://embedder.example.test"
             s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
@@ -361,7 +361,7 @@ class TestDirectForwardsReranker:
 
         monkeypatch.setattr("docforge.api.perform_search", capturing_perform_search)
 
-        def patched_settings():
+        def patched_settings(**kwargs):
             s = fake_settings()
             s.embedder_url = "https://embedder.example.test"
             s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
@@ -436,7 +436,7 @@ class TestDirectForwardsReranker:
 
         monkeypatch.setattr("docforge.api.perform_search", capturing_perform_search)
 
-        def patched_settings():
+        def patched_settings(**kwargs):
             s = fake_settings()  # reranker_url="" by default
             s.embedder_url = "https://embedder.example.test"
             s.embedder_token = SimpleNamespace(get_secret_value=lambda: "fake-token")
@@ -466,6 +466,54 @@ class TestDirectForwardsReranker:
         assert captured["reranker"] is None, (
             "--direct forwarded a non-None reranker even though reranker_url was empty"
         )
+
+
+@pytest.mark.asyncio
+async def test_direct_pins_rerank_fail_open_false(monkeypatch):
+    """--direct must fail LOUD on a reranker fault (so a degraded run can't
+    report inflated recall). It pins rerank_fail_open=False even when the
+    ambient env sets RERANK_FAIL_OPEN=true."""
+    import docforge.scripts.eval_search as ev
+
+    monkeypatch.setenv("RERANK_FAIL_OPEN", "true")  # ambient prod-style env
+    monkeypatch.setenv("EMBEDDER_URL", "https://embed.invalid")
+    monkeypatch.setenv("EMBEDDER_TOKEN", "tok")
+
+    captured = {}
+
+    # Capture the Settings perform_search is called with; short-circuit the
+    # rest of the pipeline so no DB / model is touched.
+    async def fake_perform_search(*, req, settings, pool, embedder, reranker):
+        captured["settings"] = settings
+        return []
+
+    class _FakePool:
+        async def close(self):
+            pass
+
+    async def fake_create_pool(*a, **k):
+        return _FakePool()
+
+    monkeypatch.setattr("asyncpg.create_pool", fake_create_pool)
+    # perform_search is imported INSIDE run_queries_direct; patch at source.
+    monkeypatch.setattr("docforge.api.perform_search", fake_perform_search)
+    monkeypatch.setattr(
+        "docforge.processors.embedder.Embedder.from_settings",
+        classmethod(lambda cls, settings: object()),
+    )
+    monkeypatch.setattr(
+        "docforge.processors.reranker.reranker_from_settings", lambda settings: None
+    )
+
+    await ev.run_queries_direct(
+        ground_truth=[{"q": "hi", "expected_title_contains": "x"}],
+        user_name="u",
+        team_name="t",
+        area_name=None,
+        k=5,
+    )
+
+    assert captured["settings"].rerank_fail_open is False
 
 
 class TestFormatReportDebug:

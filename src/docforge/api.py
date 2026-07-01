@@ -403,23 +403,47 @@ async def perform_search(
             for r in head
         ]
         _rr_start = time.perf_counter()
+        # Fail-open seam (covers BOTH reranker raise sites). When
+        # settings.rerank_fail_open is True, any reranker failure — transport/
+        # timeout/5xx/malformed (the arerank except below) OR an invalid
+        # permutation (the guard below) — is swallowed: log a WARNING carrying
+        # the `search_rerank_fallback` token (the Log Analytics alert signal)
+        # and fall back to the pre-rerank RRF/boosted-ordered pool (rows,
+        # untouched, no rerank_score). When False (engine default), the original
+        # fail-closed behavior is preserved: RerankerUnavailable -> 502 (/search)
+        # and the permutation RuntimeError -> 500. The eval --direct path keeps
+        # fail_open=False so it fails loud.
         try:
             ranked = await reranker.arerank(req.query, passages)
+            # Fail loud on a malformed permutation (survives `python -O`, unlike
+            # a bare assert): indices must be EXACTLY the set range(len(head)) —
+            # same length AND no dropped/duplicated index. Mirrors the embedder's
+            # dimension guard.
+            indices = [i for i, _ in ranked]
+            if len(indices) != len(head) or set(indices) != set(range(len(head))):
+                raise RuntimeError(
+                    f"reranker returned an invalid permutation: got {len(indices)} "
+                    f"indices {sorted(indices)}, expected a permutation of "
+                    f"range({len(head)})"
+                )
         except (httpx.HTTPError, RuntimeError) as e:
-            # The reranker sidecar is an upstream dependency, NOT the DB. Surface
-            # it as a distinct failure so /search maps it to 502, not 503.
-            raise RerankerUnavailable("reranker unavailable") from e
-        # Fail loud on a malformed permutation (survives `python -O`, unlike a
-        # bare assert): indices must be EXACTLY the set range(len(head)) — same
-        # length AND no dropped/duplicated index. Mirrors the embedder's
-        # dimension guard.
-        indices = [i for i, _ in ranked]
-        if len(indices) != len(head) or set(indices) != set(range(len(head))):
-            raise RuntimeError(
-                f"reranker returned an invalid permutation: got {len(indices)} "
-                f"indices {sorted(indices)}, expected a permutation of "
-                f"range({len(head)})"
-            )
+            if settings.rerank_fail_open:
+                # search_rerank_fallback: the monitoring token. The pre-rerank
+                # pool `rows` is already in boosted/RRF order, so returning it
+                # degrades gracefully to hybrid-only retrieval.
+                logger.warning(
+                    "search_rerank_fallback: reranker unavailable, returning "
+                    "RRF order without rerank: %s",
+                    e,
+                )
+                return rows[: req.limit]
+            # Fail-closed: re-raise as before. httpx.HTTPError and the
+            # permutation/contract RuntimeError both flow through here — the
+            # /search handler maps RerankerUnavailable -> 502 and a bare
+            # RuntimeError -> 500.
+            if isinstance(e, httpx.HTTPError):
+                raise RerankerUnavailable("reranker unavailable") from e
+            raise
         # Carry the cross-encoder score back onto each reranked row WITHOUT
         # touching `similarity`: similarity stays the RRF value (preserving its
         # scale and the debug.rrf_score readout), and the CE score lands under a

@@ -122,6 +122,10 @@ def fake_settings():
         rerank_enabled=False,
         rerank_top_n=50,
         reranker_url="",
+        # Fail-open default OFF — mirrors Settings.rerank_fail_open. Tests that
+        # exercise the fallback flip this to True on the returned namespace.
+        rerank_fail_open=False,
+        rerank_timeout_seconds=60.0,
     )
 
 
