@@ -966,7 +966,7 @@ resource rerankerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 // Fail-open monitoring: with RERANK_FAIL_OPEN=true a degraded/absent reranker
 // no longer 502s, so the signal is the search_rerank_fallback WARNING in the
 // search-api console logs. Alert when it fires >= 5 times in an hour.
-resource rerankFallbackAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15' = {
+resource rerankFallbackAlert 'Microsoft.Insights/scheduledQueryRules@2021-08-01' = {
   name: '${namePrefix}-rerank-fallback'
   location: location
   tags: tags
