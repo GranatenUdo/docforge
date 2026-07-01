@@ -505,9 +505,7 @@ async def test_ingest_uses_chunk_tokenizer_factory_not_embedder(
         sentinel_calls.append(text)
         return len(text.split())
 
-    monkeypatch.setattr(
-        ingest_mod, "get_chunk_tokenizer_fn", lambda settings: sentinel_tokenizer
-    )
+    monkeypatch.setattr(ingest_mod, "get_chunk_tokenizer_fn", lambda settings: sentinel_tokenizer)
 
     received = {}
     real_chunk_sections = ingest_mod.chunk_sections
@@ -587,7 +585,7 @@ async def test_decouple_crawls_on_disk_root_but_keeps_identifier(
     monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
     # Keep chunk sizing offline (Task 1.6 wired the factory in).
     monkeypatch.setattr(
-        ingest_mod, "get_chunk_tokenizer_fn", lambda settings: (lambda s: len(s.split()))
+        ingest_mod, "get_chunk_tokenizer_fn", lambda settings: lambda s: len(s.split())
     )
 
     from docforge.config import Settings
