@@ -533,3 +533,77 @@ async def test_ingest_uses_chunk_tokenizer_factory_not_embedder(
     # The factory's tokenizer reached the chunker — not the embedder's.
     assert received["tokenizer_fn"] is sentinel_tokenizer
     assert sentinel_calls  # it was actually used to size at least one chunk
+
+
+@pytest.mark.asyncio
+async def test_decouple_default_is_noop(tmp_path, monkeypatch, fake_embedder):
+    """With DOCFORGE_REPO_PATH_PREFIX == DOCFORGE_CACHE_ROOT (the maintainer
+    default), repo_path is used verbatim for both crawl and identity."""
+    monkeypatch.delenv("DOCFORGE_REPO_PATH_PREFIX", raising=False)
+    monkeypatch.delenv("DOCFORGE_CACHE_ROOT", raising=False)
+
+    from docforge.ingest import _on_disk_crawl_path
+
+    # No env set -> both default to E:/.docforge-cache -> no-op rewrite.
+    p = "E:/.docforge-cache/Proj/Repo"
+    assert _on_disk_crawl_path(p) == p
+    # A path outside the prefix is also returned unchanged.
+    assert _on_disk_crawl_path("E:/WorkingClone") == "E:/WorkingClone"
+
+
+@pytest.mark.asyncio
+async def test_decouple_crawls_on_disk_root_but_keeps_identifier(
+    tmp_path, monkeypatch, fake_embedder
+):
+    """With DOCFORGE_REPO_PATH_PREFIX=E:/.docforge-cache and
+    DOCFORGE_CACHE_ROOT=<tmp>, a source repo_path
+    'E:/.docforge-cache/Proj/Repo' crawls files under <tmp>/Proj/Repo, while
+    the persisted identifier stays git:E:/.docforge-cache/Proj/Repo:<file> and
+    the url stays file://E:/.docforge-cache/Proj/Repo/<file>."""
+    # Real on-disk files live under the tmp cache root.
+    cache_root = (tmp_path / "cache").as_posix()
+    on_disk = tmp_path / "cache" / "Proj" / "Repo"
+    on_disk.mkdir(parents=True)
+    (on_disk / "README.md").write_text("# Title\n\nContent one.")
+
+    monkeypatch.setenv("DOCFORGE_REPO_PATH_PREFIX", "E:/.docforge-cache")
+    monkeypatch.setenv("DOCFORGE_CACHE_ROOT", cache_root)
+
+    sources_file = tmp_path / "sources.yml"
+    # The STORED repo_path carries the canonical prod prefix (host-independent).
+    sources_file.write_text(
+        "sources:\n"
+        "  - type: git_repo\n"
+        '    repo_path: "E:/.docforge-cache/Proj/Repo"\n'
+        '    include_patterns: ["README.md"]\n'
+        '    title: "RepoX"\n'
+    )
+
+    conn = _Conn(existing_hash=None)
+
+    async def fake_get_pool(url, **kwargs):
+        return _FakePool(conn)
+
+    monkeypatch.setattr(ingest_mod, "get_pool", fake_get_pool)
+    # Keep chunk sizing offline (Task 1.6 wired the factory in).
+    monkeypatch.setattr(
+        ingest_mod, "get_chunk_tokenizer_fn", lambda settings: (lambda s: len(s.split()))
+    )
+
+    from docforge.config import Settings
+
+    settings = Settings(sources_file=str(sources_file))
+    await ingest_all(settings)
+
+    # A source row was inserted (proves the crawl found README.md under the
+    # on-disk root — if it had tried E:/.docforge-cache it would have raised
+    # FileNotFoundError and inserted nothing).
+    assert len(conn.inserted_sources) == 1
+    # The INSERT positional args for the git source are:
+    #   (type, url, title, source_identifier, last_crawled_at, content_hash, tags)
+    type_, url, title, identifier, *_rest = conn.inserted_sources[0]
+    # Identity keeps the canonical prefix (no host leak), NOT the tmp path.
+    assert identifier == "git:E:/.docforge-cache/Proj/Repo:README.md"
+    assert url == "file://E:/.docforge-cache/Proj/Repo/README.md"
+    assert cache_root not in identifier
+    assert cache_root not in url
