@@ -106,6 +106,12 @@ param authTenantId string = ''
 @description('Entra API audience, e.g. api://<app-id> (required when authMode=entra).')
 param authAudience string = ''
 
+@description('Whether to expose the FastAPI docs routes (/docs, /redoc, /openapi.json). Default "true" (exposed, for OSS/dev). Set "false" in prod so the API surface is not publicly advertised. Threaded to all three apps as the EXPOSE_DOCS env var.')
+param exposeDocs string = 'true'
+
+@description('When "true", the search API refuses to start unless a real auth scheme is active (auth.mode==entra) — a fail-closed guard against a dropped/mis-set AUTH__MODE. Default "false" (OSS unchanged). Threaded to the search-api as AUTH__REQUIRE.')
+param authRequire string = 'false'
+
 @description('Tags applied to every created resource. Useful for cost allocation or org policies that require specific tags.')
 param tags object = {}
 
@@ -522,6 +528,14 @@ var realContainerEnv = [
     value: authAudience
   }
   {
+    name: 'AUTH__REQUIRE'
+    value: authRequire
+  }
+  {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
+  }
+  {
     name: 'EMBEDDER_URL'
     value: 'https://${embedderApp.properties.configuration.ingress.fqdn}'
   }
@@ -697,6 +711,10 @@ var embedderRealEnv = [
     value: string(embedderEmbeddingBatchSize)
   }
   {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
+  }
+  {
     name: 'PYTORCH_CUDA_ALLOC_CONF'
     value: 'expandable_segments:True'
   }
@@ -831,6 +849,10 @@ var rerankerRealEnv = [
   {
     name: 'RERANK_MODEL'
     value: rerankModel
+  }
+  {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
   }
   {
     name: 'PYTORCH_CUDA_ALLOC_CONF'
