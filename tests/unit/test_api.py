@@ -730,6 +730,7 @@ def test_docs_routes_absent_when_expose_docs_false(monkeypatch):
     import importlib
 
     import docforge.api as api_mod
+
     importlib.reload(api_mod)
     try:
         assert api_mod.app.docs_url is None
@@ -746,6 +747,7 @@ def test_assert_auth_configured_raises_when_required_but_no_scheme():
 
     from docforge.api import _assert_auth_configured
     from docforge.config import Settings
+
     s = Settings()
     s.auth.require = True  # mode stays "none" -> scheme is None
     with pytest.raises(RuntimeError, match="auth.require"):
@@ -755,6 +757,7 @@ def test_assert_auth_configured_raises_when_required_but_no_scheme():
 def test_assert_auth_configured_ok_when_scheme_present_or_not_required():
     from docforge.api import _assert_auth_configured
     from docforge.config import Settings
+
     s = Settings()
     s.auth.require = True
     _assert_auth_configured(s, object())  # scheme present -> no raise

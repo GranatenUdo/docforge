@@ -57,7 +57,10 @@ def docs_kwargs() -> dict[str, str | None]:
     because the FastAPI() apps are constructed at import time, before Settings
     is loaded in each app's lifespan."""
     expose = os.getenv("EXPOSE_DOCS", "true").strip().lower() not in (
-        "false", "0", "no", "off",
+        "false",
+        "0",
+        "no",
+        "off",
     )
     return {} if expose else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 

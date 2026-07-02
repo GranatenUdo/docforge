@@ -5,6 +5,19 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.19
+
+- api: EXPOSE_DOCS env gate (default: expose) disables the FastAPI /docs,
+  /redoc and /openapi.json routes on all three apps (search-api, embedder,
+  reranker) when set false, so the API surface is not publicly advertised.
+- api/config: AUTH__REQUIRE (auth.require, default False) fail-closed startup
+  guard — the search API refuses to start when required but no auth scheme is
+  active (auth.mode != entra), so a dropped/mis-set AUTH__MODE fails loud
+  instead of silently serving /search + /sources unauthenticated.
+- bicep: rerankerIngressExternal param (default true) gates the reranker ingress
+  so dw can deploy it internal-only (off the public internet); embedderAllowedIps
+  param drives ipSecurityRestrictions on the embedder ingress (empty = unchanged).
+
 ## 0.7.18
 
 - api: reranker fail-open in perform_search (both raise sites) gated by
