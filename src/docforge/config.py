@@ -7,6 +7,7 @@ init-kwargs (highest priority after explicit kwargs).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -42,6 +43,18 @@ class AuthSettings(BaseModel):
                     "(via docforge.yml or AUTH__AUDIENCE env var)"
                 )
         return self
+
+
+def docs_kwargs() -> dict[str, str | None]:
+    """FastAPI docs-route kwargs, gated by the EXPOSE_DOCS env var (default
+    'true'). When false, /docs, /redoc and /openapi.json are disabled so the API
+    surface is not publicly advertised. Read from the environment (not Settings)
+    because the FastAPI() apps are constructed at import time, before Settings
+    is loaded in each app's lifespan."""
+    expose = os.getenv("EXPOSE_DOCS", "true").strip().lower() not in (
+        "false", "0", "no", "off",
+    )
+    return {} if expose else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 
 class Settings(BaseSettings):

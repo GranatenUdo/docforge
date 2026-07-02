@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
 from pydantic import BaseModel, Field
 
-from docforge.config import Settings
+from docforge.config import Settings, docs_kwargs
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder, EmbedderProtocol
 from docforge.processors.reranker import RerankerProtocol, reranker_from_settings
@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
         await pool.close()
 
 
-app = FastAPI(title="docforge", lifespan=lifespan)
+app = FastAPI(title="docforge", lifespan=lifespan, **docs_kwargs())
 
 
 def get_settings(request: Request) -> Settings:

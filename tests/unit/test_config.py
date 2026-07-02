@@ -494,3 +494,23 @@ class TestRerankFailOpenSettings:
         # Mirrors the prod bicepparam: RERANK_FAIL_OPEN='true', '12'.
         assert s.rerank_fail_open is True
         assert s.rerank_timeout_seconds == pytest.approx(12.0)
+
+
+class TestDocsKwargs:
+    def test_default_exposes_docs(self, monkeypatch):
+        monkeypatch.delenv("EXPOSE_DOCS", raising=False)
+        from docforge.config import docs_kwargs
+        assert docs_kwargs() == {}
+
+    def test_false_disables_docs(self, monkeypatch):
+        monkeypatch.setenv("EXPOSE_DOCS", "false")
+        from docforge.config import docs_kwargs
+        assert docs_kwargs() == {
+            "docs_url": None, "redoc_url": None, "openapi_url": None,
+        }
+
+    def test_truthy_variants_expose(self, monkeypatch):
+        from docforge.config import docs_kwargs
+        for v in ("true", "1", "TRUE", "yes"):
+            monkeypatch.setenv("EXPOSE_DOCS", v)
+            assert docs_kwargs() == {}
