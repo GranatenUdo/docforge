@@ -84,19 +84,6 @@ def _build_auth_scheme(settings: Settings):
     )
 
 
-def _assert_auth_configured(settings: Settings, azure_scheme) -> None:
-    """Fail-closed guard: if auth.require is set but no auth scheme is active
-    (auth.mode != 'entra'), refuse to serve rather than silently exposing
-    /search + /sources. Mirrors the sidecars' refuse-to-start-without-a-token."""
-    if settings.auth.require and azure_scheme is None:
-        raise RuntimeError(
-            "auth.require is set but no auth scheme is active (auth.mode != "
-            "'entra'). Refusing to start with an unauthenticated /search + "
-            "/sources surface. Set AUTH__MODE=entra (+ AUTH__TENANT_ID / "
-            "AUTH__AUDIENCE) or unset AUTH__REQUIRE."
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Build per-process resources at startup; tear them down on shutdown.
@@ -134,8 +121,10 @@ async def lifespan(app: FastAPI):
         embedder = await asyncio.to_thread(Embedder.from_settings, settings)
         logger.info("Model loaded: %s (%dd)", embedder.model_name, embedder.dimensions)
 
+        # Fail-closed auth-require enforcement happens at Settings() construction
+        # (AuthSettings._validate_entra_fields), so by the time we build the
+        # scheme here a require=True process is already guaranteed mode==entra.
         azure_scheme = _build_auth_scheme(settings)
-        _assert_auth_configured(settings, azure_scheme)
         if azure_scheme is not None:
             await azure_scheme.openid_config.load_config()
             logger.info(

@@ -731,8 +731,10 @@ def test_docs_routes_absent_when_expose_docs_false(monkeypatch):
 
     import docforge.api as api_mod
 
-    importlib.reload(api_mod)
+    # Reload inside the try so the finally always restores the default-docs app
+    # for later tests, even if this first reload raises.
     try:
+        importlib.reload(api_mod)
         assert api_mod.app.docs_url is None
         assert api_mod.app.openapi_url is None
         paths = {getattr(r, "path", None) for r in api_mod.app.routes}
@@ -742,23 +744,6 @@ def test_docs_routes_absent_when_expose_docs_false(monkeypatch):
         importlib.reload(api_mod)  # restore default (docs on) for other tests
 
 
-def test_assert_auth_configured_raises_when_required_but_no_scheme():
-    import pytest
-
-    from docforge.api import _assert_auth_configured
-    from docforge.config import Settings
-
-    s = Settings()
-    s.auth.require = True  # mode stays "none" -> scheme is None
-    with pytest.raises(RuntimeError, match="auth.require"):
-        _assert_auth_configured(s, None)
-
-
-def test_assert_auth_configured_ok_when_scheme_present_or_not_required():
-    from docforge.api import _assert_auth_configured
-    from docforge.config import Settings
-
-    s = Settings()
-    s.auth.require = True
-    _assert_auth_configured(s, object())  # scheme present -> no raise
-    _assert_auth_configured(Settings(), None)  # require False -> no raise
+# The fail-closed auth-require guard moved from api._assert_auth_configured onto
+# AuthSettings' validator (fires at Settings() construction). Its coverage now
+# lives in tests/unit/test_config.py::TestAuthRequire.

@@ -7,16 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.7.19
 
-- api: EXPOSE_DOCS env gate (default: expose) disables the FastAPI /docs,
-  /redoc and /openapi.json routes on all three apps (search-api, embedder,
-  reranker) when set false, so the API surface is not publicly advertised.
-- api/config: AUTH__REQUIRE (auth.require, default False) fail-closed startup
-  guard — the search API refuses to start when required but no auth scheme is
-  active (auth.mode != entra), so a dropped/mis-set AUTH__MODE fails loud
-  instead of silently serving /search + /sources unauthenticated.
+- config: EXPOSE_DOCS is now a first-class `expose_docs` bool setting (default
+  True). When False it disables the FastAPI /docs, /redoc and /openapi.json
+  routes on all three apps (search-api, embedder, reranker) so the API surface
+  is not publicly advertised. As a real setting it uses pydantic bool coercion
+  and docforge.yml/.env precedence like every other flag — a typo'd/blank value
+  fails loud instead of silently falling through to the insecure "expose"
+  default.
+- config: AUTH__REQUIRE (auth.require, default False) fail-closed guard is
+  enforced in AuthSettings' validator, so require=True with auth.mode != entra
+  fails at Settings() construction (before the API lifespan builds the pool and
+  loads the embedder model) instead of after a multi-minute cold start.
 - bicep: rerankerIngressExternal param (default true) gates the reranker ingress
   so dw can deploy it internal-only (off the public internet); embedderAllowedIps
-  param drives ipSecurityRestrictions on the embedder ingress (empty = unchanged).
+  (typed string[]) drives ipSecurityRestrictions on the embedder ingress
+  (empty = unchanged) and accepts bare IPv4s (→ /32) or CIDR ranges as-is.
+- bicep: RERANKER_URL is now auto-derived from the reranker app's live ingress
+  FQDN (same wiring as EMBEDDER_URL), gated on rerankEnabled. The static
+  `rerankerUrl` param is removed — deriving keeps the URL in lockstep with the
+  external/internal ingress flip automatically, so it can no longer drift stale
+  and silently degrade search to RRF via fail-open. `@allowed(['true','false'])`
+  added to exposeDocs/authRequire so a typo is caught at deploy validation.
 
 ## 0.7.18
 
