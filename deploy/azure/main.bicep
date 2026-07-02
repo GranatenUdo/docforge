@@ -67,6 +67,12 @@ param databaseName string = 'docforge'
 @description('List of IPv4 addresses allowed to connect to Postgres (in addition to Azure services). Useful for running docforge ingest from a local machine.')
 param postgresAdminIpAddresses array = []
 
+@description('Whether the reranker sidecar ingress is external (public). Default true = current behavior. dw-docforge sets false so the reranker is internal-only (reachable only by the search-api intra-environment) and off the public internet.')
+param rerankerIngressExternal bool = true
+
+@description('Source IPs allowed to reach the EMBEDDER ingress. Empty = no restriction (token-gated only, current behavior). Non-empty = allow-list; all other source IPs denied. Include the environment static IP for the intra-env search-api call, plus the ingest-pipeline agent + VPN egress IPs.')
+param embedderAllowedIps array = []
+
 @description('Log Analytics retention in days.')
 param logRetentionDays int = 30
 
@@ -642,6 +648,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 // ─── Embedder Container App ─────────────────────────────────────────────
 
+var embedderIpRules = [for (ip, i) in embedderAllowedIps: {
+  name: 'allow-${i}'
+  action: 'Allow'
+  ipAddressRange: '${ip}/32'
+  description: 'docforge embedder allow-list'
+}]
+
 var embedderAppName = '${namePrefix}-embedder${nameSuffix}'
 var hasRealEmbedderImage = !empty(embedderImage)
 var defaultEmbedderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -704,6 +717,7 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: hasRealEmbedderImage ? 8001 : 80
         allowInsecure: false
+        ipSecurityRestrictions: embedderIpRules
         transport: 'http'
       }
       registries: hasRealEmbedderImage ? [
@@ -836,7 +850,7 @@ resource rerankerApp 'Microsoft.App/containerApps@2024-03-01' = {
     workloadProfileName: enableWorkloadProfiles ? rerankerWorkloadProfileName : null
     configuration: {
       ingress: {
-        external: true
+        external: rerankerIngressExternal
         targetPort: hasRealRerankerImage ? 8002 : 80
         allowInsecure: false
         transport: 'http'
