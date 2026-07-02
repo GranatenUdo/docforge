@@ -739,3 +739,23 @@ def test_docs_routes_absent_when_expose_docs_false(monkeypatch):
     finally:
         monkeypatch.delenv("EXPOSE_DOCS", raising=False)
         importlib.reload(api_mod)  # restore default (docs on) for other tests
+
+
+def test_assert_auth_configured_raises_when_required_but_no_scheme():
+    import pytest
+
+    from docforge.api import _assert_auth_configured
+    from docforge.config import Settings
+    s = Settings()
+    s.auth.require = True  # mode stays "none" -> scheme is None
+    with pytest.raises(RuntimeError, match="auth.require"):
+        _assert_auth_configured(s, None)
+
+
+def test_assert_auth_configured_ok_when_scheme_present_or_not_required():
+    from docforge.api import _assert_auth_configured
+    from docforge.config import Settings
+    s = Settings()
+    s.auth.require = True
+    _assert_auth_configured(s, object())  # scheme present -> no raise
+    _assert_auth_configured(Settings(), None)  # require False -> no raise

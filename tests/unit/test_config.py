@@ -514,3 +514,14 @@ class TestDocsKwargs:
         for v in ("true", "1", "TRUE", "yes"):
             monkeypatch.setenv("EXPOSE_DOCS", v)
             assert docs_kwargs() == {}
+
+
+class TestAuthRequire:
+    def test_require_defaults_false(self):
+        from docforge.config import AuthSettings
+        assert AuthSettings().require is False
+
+    def test_require_with_entra_is_valid(self):
+        from docforge.config import AuthSettings
+        s = AuthSettings(mode="entra", tenant_id="t", audience="api://x", require=True)
+        assert s.require is True and s.mode == "entra"

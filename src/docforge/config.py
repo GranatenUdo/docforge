@@ -28,6 +28,11 @@ class AuthSettings(BaseModel):
     mode: Literal["none", "entra"] = "none"
     tenant_id: str = ""
     audience: str = ""
+    # When True, the search API refuses to start unless a real auth scheme is
+    # active (mode == "entra"). Fail-CLOSED guard so a dropped/mis-set AUTH__MODE
+    # cannot silently expose /search + /sources. Engine default False (OSS
+    # unchanged); dw-docforge sets AUTH__REQUIRE=true.
+    require: bool = False
 
     @model_validator(mode="after")
     def _validate_entra_fields(self):
