@@ -722,3 +722,28 @@ class TestSearchDebugMode:
         assert body["debug"]["weights"]["dense"] == fake_settings().dense_weight
         assert body["debug"]["weights"]["sparse"] == fake_settings().sparse_weight
         assert body["debug"]["k"] == 5
+
+
+def test_docs_routes_absent_when_expose_docs_false(monkeypatch):
+    """EXPOSE_DOCS=false must strip /docs + /openapi.json from the app."""
+    monkeypatch.setenv("EXPOSE_DOCS", "false")
+    import importlib
+
+    import docforge.api as api_mod
+
+    # Reload inside the try so the finally always restores the default-docs app
+    # for later tests, even if this first reload raises.
+    try:
+        importlib.reload(api_mod)
+        assert api_mod.app.docs_url is None
+        assert api_mod.app.openapi_url is None
+        paths = {getattr(r, "path", None) for r in api_mod.app.routes}
+        assert "/docs" not in paths and "/openapi.json" not in paths
+    finally:
+        monkeypatch.delenv("EXPOSE_DOCS", raising=False)
+        importlib.reload(api_mod)  # restore default (docs on) for other tests
+
+
+# The fail-closed auth-require guard moved from api._assert_auth_configured onto
+# AuthSettings' validator (fires at Settings() construction). Its coverage now
+# lives in tests/unit/test_config.py::TestAuthRequire.

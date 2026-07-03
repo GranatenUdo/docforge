@@ -494,3 +494,99 @@ class TestRerankFailOpenSettings:
         # Mirrors the prod bicepparam: RERANK_FAIL_OPEN='true', '12'.
         assert s.rerank_fail_open is True
         assert s.rerank_timeout_seconds == pytest.approx(12.0)
+
+
+class TestDocsKwargs:
+    def test_expose_docs_is_settings_field(self, monkeypatch):
+        """expose_docs is a real Settings field (so docforge.yml/.env can set it
+        without an extra_forbidden crash), defaulting True."""
+        monkeypatch.delenv("EXPOSE_DOCS", raising=False)
+        from docforge.config import Settings
+
+        assert Settings().expose_docs is True
+        assert Settings(expose_docs=False).expose_docs is False
+
+    def test_default_exposes_docs(self, monkeypatch):
+        monkeypatch.delenv("EXPOSE_DOCS", raising=False)
+        from docforge.config import docs_kwargs
+
+        assert docs_kwargs() == {}
+
+    def test_false_disables_docs(self, monkeypatch):
+        monkeypatch.setenv("EXPOSE_DOCS", "false")
+        from docforge.config import docs_kwargs
+
+        assert docs_kwargs() == {
+            "docs_url": None,
+            "redoc_url": None,
+            "openapi_url": None,
+        }
+
+    def test_truthy_variants_expose(self, monkeypatch):
+        from docforge.config import docs_kwargs
+
+        for v in ("true", "1", "TRUE", "yes"):
+            monkeypatch.setenv("EXPOSE_DOCS", v)
+            assert docs_kwargs() == {}
+
+    def test_falsy_variants_disable(self, monkeypatch):
+        """pydantic bool coercion also covers the short forms (f/n/off), which
+        the old hand-rolled deny-list ('false','0','no','off') missed."""
+        from docforge.config import docs_kwargs
+
+        for v in ("false", "0", "no", "off", "f", "n", "FALSE"):
+            monkeypatch.setenv("EXPOSE_DOCS", v)
+            assert docs_kwargs() == {
+                "docs_url": None,
+                "redoc_url": None,
+                "openapi_url": None,
+            }
+
+    def test_invalid_value_fails_loud(self, monkeypatch):
+        """A typo'd/garbage EXPOSE_DOCS must fail LOUD (pydantic ValidationError),
+        never silently fall through to the insecure 'expose' default the way the
+        old raw-os.getenv deny-list did."""
+        import pytest
+        from pydantic import ValidationError
+
+        from docforge.config import docs_kwargs
+
+        monkeypatch.setenv("EXPOSE_DOCS", "flase")
+        with pytest.raises(ValidationError):
+            docs_kwargs()
+
+
+class TestAuthRequire:
+    def test_require_defaults_false(self):
+        from docforge.config import AuthSettings
+
+        assert AuthSettings().require is False
+
+    def test_require_with_entra_is_valid(self):
+        from docforge.config import AuthSettings
+
+        s = AuthSettings(mode="entra", tenant_id="t", audience="api://x", require=True)
+        assert s.require is True and s.mode == "entra"
+
+    def test_require_without_entra_raises(self):
+        """Fail-closed: require=True with mode!=entra must raise at construction
+        (before the API lifespan builds the pool + loads the embedder model)."""
+        import pytest
+
+        from docforge.config import AuthSettings
+
+        with pytest.raises(ValueError, match="auth.require"):
+            AuthSettings(require=True)  # mode defaults to "none"
+
+    def test_require_via_settings_env_raises(self, monkeypatch):
+        """End-to-end via the real Settings() path: AUTH__REQUIRE=true with no
+        entra mode fails at construction, exercising what the API lifespan runs
+        rather than a hand-built AuthSettings in isolation."""
+        import pytest
+
+        monkeypatch.setenv("AUTH__REQUIRE", "true")
+        monkeypatch.delenv("AUTH__MODE", raising=False)
+        from docforge.config import Settings
+
+        with pytest.raises(ValueError, match="auth.require"):
+            Settings()

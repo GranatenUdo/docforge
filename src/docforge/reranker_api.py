@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from docforge.config import MAX_RERANK_BATCH, Settings
+from docforge.config import MAX_RERANK_BATCH, Settings, docs_kwargs
 from docforge.processors.reranker import Reranker
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     yield {"reranker": reranker, "settings": settings}
 
 
-app = FastAPI(title="docforge-reranker", lifespan=lifespan)
+app = FastAPI(title="docforge-reranker", lifespan=lifespan, **docs_kwargs())
 
 
 def get_reranker(request: Request) -> Reranker | None:

@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import SecurityScopes
 from pydantic import BaseModel, Field
 
-from docforge.config import Settings
+from docforge.config import Settings, docs_kwargs
 from docforge.db import _init_connection  # registers pgvector codec on each new pool conn
 from docforge.processors.embedder import Embedder, EmbedderProtocol
 from docforge.processors.reranker import RerankerProtocol, reranker_from_settings
@@ -121,6 +121,9 @@ async def lifespan(app: FastAPI):
         embedder = await asyncio.to_thread(Embedder.from_settings, settings)
         logger.info("Model loaded: %s (%dd)", embedder.model_name, embedder.dimensions)
 
+        # Fail-closed auth-require enforcement happens at Settings() construction
+        # (AuthSettings._validate_entra_fields), so by the time we build the
+        # scheme here a require=True process is already guaranteed mode==entra.
         azure_scheme = _build_auth_scheme(settings)
         if azure_scheme is not None:
             await azure_scheme.openid_config.load_config()
@@ -155,7 +158,7 @@ async def lifespan(app: FastAPI):
         await pool.close()
 
 
-app = FastAPI(title="docforge", lifespan=lifespan)
+app = FastAPI(title="docforge", lifespan=lifespan, **docs_kwargs())
 
 
 def get_settings(request: Request) -> Settings:

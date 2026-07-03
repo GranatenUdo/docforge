@@ -5,6 +5,30 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.19
+
+- config: EXPOSE_DOCS is now a first-class `expose_docs` bool setting (default
+  True). When False it disables the FastAPI /docs, /redoc and /openapi.json
+  routes on all three apps (search-api, embedder, reranker) so the API surface
+  is not publicly advertised. As a real setting it uses pydantic bool coercion
+  and docforge.yml/.env precedence like every other flag — a typo'd/blank value
+  fails loud instead of silently falling through to the insecure "expose"
+  default.
+- config: AUTH__REQUIRE (auth.require, default False) fail-closed guard is
+  enforced in AuthSettings' validator, so require=True with auth.mode != entra
+  fails at Settings() construction (before the API lifespan builds the pool and
+  loads the embedder model) instead of after a multi-minute cold start.
+- bicep: rerankerIngressExternal param (default true) gates the reranker ingress
+  so dw can deploy it internal-only (off the public internet); embedderAllowedIps
+  (typed string[]) drives ipSecurityRestrictions on the embedder ingress
+  (empty = unchanged) and accepts bare IPv4s (→ /32) or CIDR ranges as-is.
+- bicep: RERANKER_URL is now auto-derived from the reranker app's live ingress
+  FQDN (same wiring as EMBEDDER_URL), gated on rerankEnabled. The static
+  `rerankerUrl` param is removed — deriving keeps the URL in lockstep with the
+  external/internal ingress flip automatically, so it can no longer drift stale
+  and silently degrade search to RRF via fail-open. `@allowed(['true','false'])`
+  added to exposeDocs/authRequire so a typo is caught at deploy validation.
+
 ## 0.7.18
 
 - api: reranker fail-open in perform_search (both raise sites) gated by

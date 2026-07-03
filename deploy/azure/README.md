@@ -27,7 +27,7 @@ verify against Azure Cost Management).
 | Container Apps managed environment | Compute host for all container apps; optional `gpu-nc8as-t4` GPU profile for the sidecars (when `enableWorkloadProfiles=true` AND `enableGpuProfile=true`) | Consumption plan |
 | Container App: search-api | Runs `docforge serve --api`; `minReplicas=1` by default | 1 CPU, 2 GiB |
 | Container App: embedder | Runs the Qwen3-Embedding-4B sidecar; `embedderMinReplicas=0` by default (scale-to-zero) | Consumption (2 CPU, 4 GiB) by default; set `gpu-nc8as-t4` (1 T4) for production — Qwen3-4B is impractically slow on CPU |
-| Container App: reranker | Runs the BAAI/bge-reranker-v2-m3 cross-encoder sidecar; **off by default** (`rerankEnabled='false'`, `rerankerUrl` unset), `minReplicas=0` | Consumption by default; for production set `gpu-nc8as-t4` (1 T4) + `minReplicas=1` and turn reranking on with BOTH `rerankEnabled='true'` and `rerankerUrl` |
+| Container App: reranker | Runs the BAAI/bge-reranker-v2-m3 cross-encoder sidecar; **off by default** (`rerankEnabled='false'`), `minReplicas=0` | Consumption by default; for production set `gpu-nc8as-t4` (1 T4) + `minReplicas=1` and turn reranking on with `rerankEnabled='true'` (RERANKER_URL is auto-derived from the app FQDN) |
 
 The split into separate Container Apps is the v0.3 Phase 4b architecture: the
 embedder service hosts the model and exposes a `POST /embed` endpoint; the
@@ -45,13 +45,13 @@ Since engine 0.7.16 a third Container App, the **reranker**, can complete the
 retrieval pipeline. The hybrid pool (dense pgvector + sparse lexical (ts_rank_cd) + RRF + tag
 boost) produces candidates, then the reranker cross-encoder re-scores the top
 `rerank_top_n` (default 50) of them. The template ships it **off** (reranking
-turns on only when BOTH `rerankEnabled='true'` and `rerankerUrl` are set; the
-template defaults `rerankEnabled='false'` and `rerankerUrl=''`) and scaled to
-zero on the Consumption profile; production runs it as its own GPU sidecar (built
-from `Dockerfile.reranker`) on the `gpu-nc8as-t4` Tesla-T4 profile, kept warm at
-`minReplicas=1`, with both `rerankEnabled='true'` and `rerankerUrl` set to turn
-reranking on. See the
-Reranker service section below.
+turns on when `rerankEnabled='true'`; the template defaults `rerankEnabled='false'`)
+and scaled to zero on the Consumption profile; production runs it as its own GPU
+sidecar (built from `Dockerfile.reranker`) on the `gpu-nc8as-t4` Tesla-T4 profile,
+kept warm at `minReplicas=1`, with `rerankEnabled='true'` to turn reranking on.
+`RERANKER_URL` is auto-derived by the template from the reranker app's live
+ingress FQDN, so it always tracks the app (including an internal-only ingress
+flip) with nothing to set by hand. See the Reranker service section below.
 
 Both Container Apps use a system-assigned managed identity with:
 - **Key Vault Secrets User** on the Key Vault — reads secrets at runtime via identity, no connection strings stored in env vars.
@@ -142,12 +142,13 @@ boost) produces candidates, the search API sends the top `rerank_top_n`
 one operator's 60-query ground-truth set, this lifted recall@1 from 43% to 65%,
 recall@20 from 87% to 92%, and MRR from 0.564 to 0.735 (track this in your own eval baseline).
 
-Reranking is **off until wired up**, and turning it on takes BOTH settings:
-`RERANK_ENABLED=true` (the master switch; bicep `rerankEnabled`) AND `RERANKER_URL`
-set to the reranker app's FQDN (bicep `rerankerUrl`). With `RERANK_ENABLED` at its
-`false` default the search API returns the hybrid ordering unchanged even when
-`RERANKER_URL` is set; conversely `RERANK_ENABLED=true` with an empty `RERANKER_URL`
-is rejected at startup. (`RERANKER_TOKEN` is also required whenever `RERANKER_URL`
+Reranking is **off until turned on** by the master switch `RERANK_ENABLED=true`
+(bicep `rerankEnabled`). The template auto-derives `RERANKER_URL` from the
+reranker app's live FQDN whenever `rerankEnabled='true'`, so there is no URL to
+set by hand. With `RERANK_ENABLED` at its `false` default the search API returns
+the hybrid ordering unchanged; and at the engine level, `RERANK_ENABLED=true`
+with an empty `RERANKER_URL` is still rejected at startup (a guard for direct
+engine use — the template can't produce that state). (`RERANKER_TOKEN` is also required whenever `RERANKER_URL`
 is set.)
 
 **Image build.** A separate `Dockerfile.reranker` at the repo root builds the
@@ -336,10 +337,13 @@ Deployments that don't need auth can leave these at their defaults (`authMode='n
 | `embedderToken` | *(required)* | Shared-secret bearer for embedder auth. Generate via `openssl rand -hex 32` (Linux/macOS), `python -c "import secrets; print(secrets.token_hex(32))"` (cross-platform), or `[Convert]::ToHexString((1..32 \| %{[byte](Get-Random -Max 256)}))` (PowerShell). |
 | `embedderMinReplicas` / `embedderMaxReplicas` | 0 / 5 | Embedder app scaling. Default `0` is scale-to-zero (cheapest; cold-start with the baked model on the first request after idle — a GPU cold-start on the production `gpu-nc8as-t4` profile). Set `embedderMinReplicas=1` for production to keep the embedder warm. |
 | `rerankerImage` | `''` | Reranker image reference. Leave empty first time; set after pushing. |
-| `rerankEnabled` | `'false'` | Master switch for the reranking stage on the search API (sets `RERANK_ENABLED`). Reranking is on only when this is `'true'` AND `rerankerUrl` is set. |
+| `rerankEnabled` | `'false'` | Master switch for the reranking stage on the search API (sets `RERANK_ENABLED`). Reranking is on when this is `'true'`; `RERANKER_URL` is auto-derived from the reranker app FQDN (plus `RERANKER_TOKEN`, wired from the shared `embedder-token` secret). |
 | `rerankModel` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model (sets `RERANK_MODEL`). The default is **baked into the reranker image**; overriding to a non-baked model triggers a multi-GB runtime download, so rebuild `Dockerfile.reranker` with the new model rather than only overriding it. |
 | `rerankTopN` | `'50'` | How many top hybrid candidates the reranker re-scores per query (sets `RERANK_TOP_N`). |
-| `rerankerUrl` | `''` | Reranker app FQDN (sets `RERANKER_URL`). Required to rerank but not sufficient alone — reranking is on only when `rerankEnabled='true'` AND this is set (plus `rerankerToken`/`RERANKER_TOKEN`). |
+| `rerankerIngressExternal` | `true` | Whether the reranker sidecar ingress is public (external). Default `true` = current behavior. Set `false` for internal-only (reachable only by the search-api intra-environment, off the public internet); `RERANKER_URL` auto-derives the resulting `.internal.` FQDN, so no other change is needed. |
+| `embedderAllowedIps` | `[]` (`string[]`) | Source IPs/CIDRs allowed to reach the **embedder** ingress (sets `ipSecurityRestrictions`). Empty = no restriction (token-gated only, current behavior). Each entry is a bare IPv4 (gets `/32`) or a CIDR range (used as-is). |
+| `exposeDocs` | `'true'` | Whether to expose the FastAPI docs routes (`/docs`, `/redoc`, `/openapi.json`) on all three apps (sets `EXPOSE_DOCS`). Set `'false'` in prod so the API surface is not publicly advertised. `@allowed(['true','false'])`. |
+| `authRequire` | `'false'` | When `'true'`, the search API refuses to start unless a real auth scheme is active (`authMode='entra'`) — a fail-closed guard against a dropped/mis-set `authMode` (sets `AUTH__REQUIRE`). `@allowed(['true','false'])`. |
 | `acrSku` | `Standard` | ACR pricing tier. **Must be `Standard` or `Premium`** — embedder image exceeds Basic's 10 GB quota. |
 
 The reranker reuses the embedder's bearer token: `RERANKER_TOKEN` is wired from
@@ -382,8 +386,8 @@ image). Leaving the reranker scaled to zero (its template default
 entirely. For development and low-volume deployments, scale-to-zero embedder with
 reranking off is a reasonable default; for production traffic, set
 `embedderMinReplicas=1`, run the reranker warm (`rerankerMinReplicas=1`), and
-enable reranking (`rerankEnabled='true'` + `rerankerUrl`) to keep both GPU
-sidecars warm and avoid the cold-start hop on every idle period.
+enable reranking (`rerankEnabled='true'`) to keep both GPU sidecars warm and
+avoid the cold-start hop on every idle period.
 
 ## Architecture notes
 

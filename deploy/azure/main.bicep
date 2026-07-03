@@ -67,6 +67,12 @@ param databaseName string = 'docforge'
 @description('List of IPv4 addresses allowed to connect to Postgres (in addition to Azure services). Useful for running docforge ingest from a local machine.')
 param postgresAdminIpAddresses array = []
 
+@description('Whether the reranker sidecar ingress is external (public). Default true = current behavior. dw-docforge sets false so the reranker is internal-only (reachable only by the search-api intra-environment) and off the public internet.')
+param rerankerIngressExternal bool = true
+
+@description('Source IPs/CIDRs allowed to reach the EMBEDDER ingress. Empty = no restriction (token-gated only, current behavior). Non-empty = allow-list; all other source IPs denied. Each entry is a bare IPv4 (gets /32) or a CIDR range (used as-is). Include the environment static IP for the intra-env search-api call, plus the ingest-pipeline agent + VPN egress IPs.')
+param embedderAllowedIps string[] = []
+
 @description('Log Analytics retention in days.')
 param logRetentionDays int = 30
 
@@ -99,6 +105,20 @@ param authTenantId string = ''
 
 @description('Entra API audience, e.g. api://<app-id> (required when authMode=entra).')
 param authAudience string = ''
+
+@description('Whether to expose the FastAPI docs routes (/docs, /redoc, /openapi.json). Default "true" (exposed, for OSS/dev). Set "false" in prod so the API surface is not publicly advertised. Threaded to all three apps as the EXPOSE_DOCS env var.')
+@allowed([
+  'true'
+  'false'
+])
+param exposeDocs string = 'true'
+
+@description('When "true", the search API refuses to start unless a real auth scheme is active (auth.mode==entra) — a fail-closed guard against a dropped/mis-set AUTH__MODE. Default "false" (OSS unchanged). Threaded to the search-api as AUTH__REQUIRE.')
+@allowed([
+  'true'
+  'false'
+])
+param authRequire string = 'false'
 
 @description('Tags applied to every created resource. Useful for cost allocation or org policies that require specific tags.')
 param tags object = {}
@@ -167,9 +187,6 @@ param rerankModel string = 'BAAI/bge-reranker-v2-m3'
 
 @description('Number of top hybrid candidates the search API re-scores via the reranker sidecar (RERANK_TOP_N). Must not exceed HYBRID_POOL_SIZE. Container Apps env values are strings; pydantic-settings parses to int at runtime.')
 param rerankTopN string = '50'
-
-@description('URL of the reranker sidecar the search API delegates to (RERANKER_URL). Empty string = reranking disabled, regardless of rerankEnabled. Wire to the reranker app FQDN when flipping reranking on.')
-param rerankerUrl string = ''
 
 @description('Full image reference for the reranker Container App. Empty string defers to "hello-world" placeholder, update post-deploy.')
 param rerankerImage string = ''
@@ -516,6 +533,14 @@ var realContainerEnv = [
     value: authAudience
   }
   {
+    name: 'AUTH__REQUIRE'
+    value: authRequire
+  }
+  {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
+  }
+  {
     name: 'EMBEDDER_URL'
     value: 'https://${embedderApp.properties.configuration.ingress.fqdn}'
   }
@@ -548,12 +573,17 @@ var realContainerEnv = [
     value: rerankTopN
   }
   {
-    // Default-OFF: rerankerUrl defaults to '' so the search API leaves
-    // reranking disabled until the flip. When enabling, set rerankerUrl to
-    // 'https://${rerankerApp.properties.configuration.ingress.fqdn}' — the
-    // same FQDN-output wiring EMBEDDER_URL uses for the embedder app.
+    // Auto-derived from the reranker app's LIVE ingress FQDN — the same wiring
+    // EMBEDDER_URL uses (above). This keeps RERANKER_URL in lockstep with the
+    // ingress external/internal setting automatically: flipping
+    // rerankerIngressExternal to false inserts a `.internal.` segment into the
+    // FQDN, and deriving here picks that up with no hand-maintained string to
+    // drift. (A stale hand-typed URL would silently degrade every search to
+    // RRF via rerank fail-open — a green surface hiding a recall drop.) Gated
+    // on rerankEnabled so the engine's default-OFF contract holds: '' => the
+    // search API leaves reranking disabled regardless of the deployed app.
     name: 'RERANKER_URL'
-    value: rerankerUrl
+    value: toLower(rerankEnabled) == 'true' ? 'https://${rerankerApp.properties.configuration.ingress.fqdn}' : ''
   }
   {
     // Reuses the embedder-token secret — the search API authenticates to both
@@ -642,6 +672,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 // ─── Embedder Container App ─────────────────────────────────────────────
 
+// Accept either a bare IPv4 (gets a /32 host route) or an already-suffixed CIDR
+// range (used as-is). The param invites "VPN egress IPs", which are commonly
+// ranges — blindly appending /32 to a CIDR would produce an invalid
+// '10.0.0.0/24/32' and fail the ARM deploy.
+var embedderIpRules = [for (ip, i) in embedderAllowedIps: {
+  name: 'allow-${i}'
+  action: 'Allow'
+  ipAddressRange: contains(ip, '/') ? ip : '${ip}/32'
+  description: 'docforge embedder allow-list'
+}]
+
 var embedderAppName = '${namePrefix}-embedder${nameSuffix}'
 var hasRealEmbedderImage = !empty(embedderImage)
 var defaultEmbedderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -684,6 +725,10 @@ var embedderRealEnv = [
     value: string(embedderEmbeddingBatchSize)
   }
   {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
+  }
+  {
     name: 'PYTORCH_CUDA_ALLOC_CONF'
     value: 'expandable_segments:True'
   }
@@ -704,6 +749,7 @@ resource embedderApp 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: hasRealEmbedderImage ? 8001 : 80
         allowInsecure: false
+        ipSecurityRestrictions: embedderIpRules
         transport: 'http'
       }
       registries: hasRealEmbedderImage ? [
@@ -819,6 +865,10 @@ var rerankerRealEnv = [
     value: rerankModel
   }
   {
+    name: 'EXPOSE_DOCS'
+    value: exposeDocs
+  }
+  {
     name: 'PYTORCH_CUDA_ALLOC_CONF'
     value: 'expandable_segments:True'
   }
@@ -836,7 +886,7 @@ resource rerankerApp 'Microsoft.App/containerApps@2024-03-01' = {
     workloadProfileName: enableWorkloadProfiles ? rerankerWorkloadProfileName : null
     configuration: {
       ingress: {
-        external: true
+        external: rerankerIngressExternal
         targetPort: hasRealRerankerImage ? 8002 : 80
         allowInsecure: false
         transport: 'http'

@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from docforge.config import Settings
+from docforge.config import Settings, docs_kwargs
 from docforge.processors.embedder import MAX_BATCH_SIZE, Embedder, EmbedderProtocol
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     yield {"embedder": embedder, "settings": settings}
 
 
-app = FastAPI(title="docforge-embedder", lifespan=lifespan)
+app = FastAPI(title="docforge-embedder", lifespan=lifespan, **docs_kwargs())
 
 
 def get_embedder(request: Request) -> EmbedderProtocol | None:

@@ -27,6 +27,11 @@ class AuthSettings(BaseModel):
     mode: Literal["none", "entra"] = "none"
     tenant_id: str = ""
     audience: str = ""
+    # When True, the search API refuses to start unless a real auth scheme is
+    # active (mode == "entra"). Fail-CLOSED guard so a dropped/mis-set AUTH__MODE
+    # cannot silently expose /search + /sources. Engine default False (OSS
+    # unchanged); dw-docforge sets AUTH__REQUIRE=true.
+    require: bool = False
 
     @model_validator(mode="after")
     def _validate_entra_fields(self):
@@ -41,7 +46,35 @@ class AuthSettings(BaseModel):
                     "auth.mode=entra requires auth.audience to be set "
                     "(via docforge.yml or AUTH__AUDIENCE env var)"
                 )
+        # Fail-CLOSED guard: require=True demands an active auth scheme, which
+        # exists only under mode==entra. Enforced here at construction so a
+        # dropped/mis-set AUTH__MODE fails fast — before the DB pool and the
+        # ~5-min embedder model load in the API lifespan — with a clear message
+        # instead of silently exposing /search + /sources.
+        if self.require and self.mode != "entra":
+            raise ValueError(
+                "auth.require is set but auth.mode != 'entra'. Refusing to start "
+                "with an unauthenticated /search + /sources surface. Set "
+                "AUTH__MODE=entra (+ AUTH__TENANT_ID / AUTH__AUDIENCE) or unset "
+                "AUTH__REQUIRE."
+            )
         return self
+
+
+def docs_kwargs() -> dict[str, str | None]:
+    """FastAPI docs-route kwargs, gated by the `expose_docs` setting (default
+    True). When False, /docs, /redoc and /openapi.json are disabled so the API
+    surface is not publicly advertised.
+
+    Reads a full `Settings` instance rather than raw `os.getenv` so EXPOSE_DOCS
+    gets the same pydantic bool coercion and docforge.yml/.env precedence as
+    every other flag: a typo'd or blank value fails LOUD (ValidationError) or
+    parses correctly, never silently falling through to the insecure "expose"
+    default. The FastAPI() apps are built at import time, so this constructs
+    Settings once here — cheap (yml/.env read only, no model load or DB)."""
+    if Settings().expose_docs:
+        return {}
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 
 class Settings(BaseSettings):
@@ -159,6 +192,14 @@ class Settings(BaseSettings):
 
     # Auth (opt-in Entra ID for /search + /sources)
     auth: AuthSettings = AuthSettings()
+
+    # When False, /docs, /redoc and /openapi.json are disabled on all three
+    # FastAPI apps (search-api + both sidecars) so the API surface is not
+    # publicly advertised. Engine default True (OSS/dev unchanged); dw-docforge
+    # sets EXPOSE_DOCS=false. Consumed by docs_kwargs() at app construction —
+    # a bool field so a typo'd/blank EXPOSE_DOCS fails loud instead of silently
+    # exposing the docs (the fail-open the raw-env version had).
+    expose_docs: bool = True
 
     # query_log retention — app-level cleanup loop deletes rows older than this
     query_log_retention_days: int = 180
