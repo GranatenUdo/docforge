@@ -44,7 +44,9 @@ async def test_init_db_creates_schema_and_pgvector(pg_url):
             "SELECT embedding FROM chunks WHERE source_id = $1", source_id
         )
         assert returned is not None
-        assert len(returned) == 1024
+        # pgvector >=0.4 decodes to Vector (no __len__); older versions to list/ndarray
+        values = returned.to_list() if hasattr(returned, "to_list") else list(returned)
+        assert len(values) == 1024
     finally:
         await conn.close()
 

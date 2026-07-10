@@ -251,3 +251,29 @@ async def test_log_search_logs_query_even_when_results_fail():
     # query_log was written (id returned) despite the query_result failure being swallowed
     assert qid == "00000000-0000-0000-0000-000000000001"
     assert any("INSERT INTO query_log" in q for q, _ in conn.executed)
+
+
+@pytest.mark.asyncio
+async def test_log_search_accepts_null_team_name():
+    # The MCP thin client omits team_name when the user has no team configured;
+    # since migration 011 the column is nullable and the insert must succeed.
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    qid = await log_search(
+        pool=pool, user_name="u", team_name=None, area_name=None, query="q", result_count=0
+    )
+    assert qid == "00000000-0000-0000-0000-000000000001"
+    _, args = conn.executed[0]
+    assert args[1] is None  # team_name positional
+
+
+@pytest.mark.asyncio
+async def test_log_query_accepts_null_team_name():
+    conn = _ConnCapture()
+    pool = _FakePool(conn)
+    qid = await log_query(
+        pool=pool, user_name="u", team_name=None, area_name=None, query="q", result_count=0
+    )
+    assert qid == "00000000-0000-0000-0000-000000000001"
+    _, args = conn.executed[0]
+    assert args[1] is None

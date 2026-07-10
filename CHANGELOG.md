@@ -5,6 +5,19 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.20
+
+- db: migration 011 drops the NOT NULL constraint on `query_log.team_name`.
+  The remote-api MCP client omits `team_name` when the user has no team
+  configured, and `/search` accepts that — but the insert then violated
+  NOT NULL and `log_search` swallowed the failure by design: searches
+  succeeded, telemetry rows silently vanished (observed in prod: 92 dropped
+  rows over 12 days). team_name is an optional routing hint (identity comes
+  from the JWT), so NULL is the honest value. `log_query`/`log_search` type
+  hints updated to `str | None`. No runtime behavior change — the fix is the
+  migration; apply it to existing DBs by hand (single-file psql, never
+  init-db against prod).
+
 ## 0.7.19
 
 - config: EXPOSE_DOCS is now a first-class `expose_docs` bool setting (default

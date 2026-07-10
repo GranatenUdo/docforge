@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def log_query(
     pool: asyncpg.Pool,
     user_name: str,
-    team_name: str,
+    team_name: str | None,
     area_name: str | None,
     query: str,
     result_count: int,
@@ -50,7 +50,7 @@ async def log_query(
 async def log_search(
     pool: asyncpg.Pool,
     user_name: str,
-    team_name: str,
+    team_name: str | None,
     area_name: str | None,
     query: str,
     result_count: int,
@@ -59,7 +59,8 @@ async def log_search(
     user_oid: str | None = None,
     request_ms: int | None = None,
 ) -> str | None:
-    """Record a search request in query_log and, when `results` is given,
+    """Record a search request in query_log (team_name/area_name may be None —
+    optional client routing hints; migration 011) and, when `results` is given,
     snapshot each result in query_result best-effort — the query is always
     logged even if result capture fails. Returns the query_log id (str) or
     None on failure. Never raises. Each result dict needs: rank, score,
