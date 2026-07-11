@@ -5,6 +5,29 @@ All notable changes to docforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0
+
+- remote MCP (`serve --remote-api`): new `set_team` tool + ask-at-first-query
+  team capture. When no team is configured, the first successful search in a
+  session appends a one-time note asking the assistant to (after answering)
+  ask the user for their team id and persist the answer via `set_team`. The
+  nudge is opt-in per deployment: it only appears when the new
+  `DOCFORGE_TEAM_IDS` env var (comma-separated team vocabulary) is set, so
+  generic deployments are unaffected — and removing the var is a fleet-wide
+  kill switch. Declines persist ("never ask again"), an explicit team wins
+  over a simultaneous decline, and there is a lifetime cap of 3 nudges.
+- new module `user_prefs`: per-user prefs file
+  (`%LOCALAPPDATA%\docforge\prefs.json` on Windows,
+  `$XDG_CONFIG_HOME|~/.config/docforge/prefs.json` on POSIX), atomic writes,
+  load-never-raises. Team resolution precedence: `DOCFORGE_TEAM` env >
+  prefs file > session memory (a `set_team` whose disk write failed still
+  applies for the rest of the session). Prefs are re-read per search, so a
+  `set_team` from a parallel session is picked up without a restart.
+- remote MCP: identity env vars containing `${` are ignored (guards against
+  unsubstituted client config templates like a literal `${user_config.team}`).
+- Search behavior is unchanged whenever a team is already configured, and
+  identity/prefs failures never break a search (same philosophy as query_log).
+
 ## 0.7.20
 
 - db: migration 011 drops the NOT NULL constraint on `query_log.team_name`.

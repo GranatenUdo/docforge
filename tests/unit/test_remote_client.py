@@ -10,6 +10,20 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolated_prefs(monkeypatch, tmp_path):
+    """Redirect the user-prefs store to tmp_path and clear DOCFORGE_TEAM_IDS.
+
+    Without this, a developer machine's real prefs.json (or a configured
+    DOCFORGE_TEAM_IDS) would leak a team_name into request bodies and flip
+    nudge behavior, breaking the byte-exact body assertions below.
+    """
+    import docforge.user_prefs as up
+
+    monkeypatch.setattr(up, "prefs_path", lambda: tmp_path / "prefs.json")
+    monkeypatch.delenv("DOCFORGE_TEAM_IDS", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_backoff_sleep(monkeypatch):
     """Replace asyncio.sleep with a no-op for every test in this file.
 
@@ -286,6 +300,322 @@ async def test_remote_backend_list_sources_happy_path(monkeypatch):
     assert captured["body"] == b""
 
 
+# --- team fallback, first-query nudge, set_team ------------------------------
+
+
+def _search_transport(captured: dict | None = None, results: list | None = None):
+    """MockTransport returning a canned 200 /search response."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if captured is not None:
+            captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "results": results
+                if results is not None
+                else [
+                    {
+                        "text": "Hello world",
+                        "section_title": "Intro",
+                        "source_title": "Test Page",
+                        "source_url": "https://example.com/page",
+                        "source_tags": ["org"],
+                        "similarity": 0.85,
+                    }
+                ],
+                "query": "q",
+                "count": 1,
+            },
+        )
+
+    return httpx.MockTransport(handler)
+
+
+def _backend(transport):
+    from docforge.remote_client import NoneAuth, RemoteBackend
+
+    return RemoteBackend(url="https://api.example.com", auth=NoneAuth(), transport=transport)
+
+
+@pytest.fixture()
+def _no_env_identity(monkeypatch):
+    for var in ("DOCFORGE_USER", "DOCFORGE_TEAM", "DOCFORGE_AREA"):
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_nudge_appended_after_results_when_team_unresolved(monkeypatch, _no_env_identity):
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    backend = _backend(_search_transport())
+
+    out = await backend.search(query="q", limit=5)
+    assert "note to the assistant" in out
+    assert "Valid team ids: ccl, cis" in out
+    # results come first, nudge strictly after
+    assert out.index("Test Page") < out.index("note to the assistant")
+
+
+@pytest.mark.asyncio
+async def test_nudge_emitted_once_per_process(monkeypatch, _no_env_identity):
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    backend = _backend(_search_transport())
+
+    first = await backend.search(query="q", limit=5)
+    second = await backend.search(query="q", limit=5)
+    assert "note to the assistant" in first
+    assert "note to the assistant" not in second
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_when_env_team_set(monkeypatch, _no_env_identity):
+    monkeypatch.setenv("DOCFORGE_TEAM", "ccl")
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    backend = _backend(_search_transport())
+
+    assert "note to the assistant" not in await backend.search(query="q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_when_team_ids_unset(monkeypatch, _no_env_identity):
+    """Org-generic deployments (no DOCFORGE_TEAM_IDS) never see the nudge."""
+    backend = _backend(_search_transport())
+
+    assert "note to the assistant" not in await backend.search(query="q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_when_prefs_team_set_and_team_sent(monkeypatch, tmp_path, _no_env_identity):
+    from docforge.user_prefs import UserPrefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    save_prefs(UserPrefs(team="cis"), tmp_path / "prefs.json")
+
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+    out = await backend.search(query="q", limit=5)
+
+    assert "note to the assistant" not in out
+    assert captured["body"]["team_name"] == "cis"
+
+
+@pytest.mark.asyncio
+async def test_env_team_beats_prefs_team(monkeypatch, tmp_path, _no_env_identity):
+    from docforge.user_prefs import UserPrefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM", "ccl")
+    save_prefs(UserPrefs(team="cis"), tmp_path / "prefs.json")
+
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+    await backend.search(query="q", limit=5)
+    assert captured["body"]["team_name"] == "ccl"
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_after_decline(monkeypatch, tmp_path, _no_env_identity):
+    from docforge.user_prefs import UserPrefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    save_prefs(UserPrefs(declined=True), tmp_path / "prefs.json")
+
+    backend = _backend(_search_transport())
+    assert "note to the assistant" not in await backend.search(query="q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_after_lifetime_cap(monkeypatch, tmp_path, _no_env_identity):
+    from docforge.user_prefs import UserPrefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    save_prefs(UserPrefs(nudge_count=3), tmp_path / "prefs.json")
+
+    backend = _backend(_search_transport())
+    assert "note to the assistant" not in await backend.search(query="q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_nudge_increments_persisted_count(monkeypatch, tmp_path, _no_env_identity):
+    from docforge.user_prefs import load_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    backend = _backend(_search_transport())
+    await backend.search(query="q", limit=5)
+
+    assert load_prefs(tmp_path / "prefs.json").nudge_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_on_error_results(monkeypatch, _no_env_identity):
+    """Error strings (401 here) must never carry the nudge."""
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    transport = httpx.MockTransport(lambda req: httpx.Response(401, json={"detail": "no"}))
+    backend = _backend(transport)
+
+    out = await backend.search(query="q", limit=5)
+    assert "Auth failed" in out
+    assert "note to the assistant" not in out
+
+
+@pytest.mark.asyncio
+async def test_unsubstituted_placeholder_env_values_ignored(monkeypatch, _no_env_identity):
+    """A literal ${user_config.team} (unsubstituted plugin template) must not
+    be sent as a team_name."""
+    monkeypatch.setenv("DOCFORGE_TEAM", "${user_config.team}")
+
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+    await backend.search(query="q", limit=5)
+    assert "team_name" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_search_survives_prefs_load_crash(monkeypatch, _no_env_identity):
+    """C2: identity/prefs failures must never break a search."""
+    import docforge.user_prefs as up
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+
+    def boom():
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(up, "prefs_path", boom)
+    backend = _backend(_search_transport())
+
+    out = await backend.search(query="q", limit=5)
+    assert "Test Page" in out
+
+
+# --- apply_set_team ----------------------------------------------------------
+
+
+def test_apply_set_team_valid_id_persists(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import load_prefs
+
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend, team=" CCL ")
+    assert "Team set to 'ccl'" in msg
+    assert load_prefs(tmp_path / "prefs.json").team == "ccl"
+
+
+def test_apply_set_team_unknown_id_rejected_file_untouched(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import UserPrefs, load_prefs
+
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend, team="bogus")
+    assert "not a recognized team id" in msg
+    assert "ccl, cis" in msg
+    assert load_prefs(tmp_path / "prefs.json") == UserPrefs()
+
+
+def test_apply_set_team_freeform_when_no_ids(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCFORGE_TEAM_IDS", raising=False)
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import load_prefs
+
+    backend = _backend(_search_transport())
+    assert "Team set to 'platform-docs'" in apply_set_team(backend, team="platform-docs")
+    assert load_prefs(tmp_path / "prefs.json").team == "platform-docs"
+    assert "not a valid team id" in apply_set_team(backend, team="bad id with spaces")
+
+
+def test_apply_set_team_empty_call_is_noop(monkeypatch, tmp_path):
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import UserPrefs, load_prefs
+
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend)
+    assert "Nothing to do" in msg
+    assert load_prefs(tmp_path / "prefs.json") == UserPrefs()
+
+
+def test_apply_set_team_decline_persists(monkeypatch, tmp_path):
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import load_prefs
+
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend, never_ask_again=True)
+    assert "will not be raised again" in msg
+    assert load_prefs(tmp_path / "prefs.json").declined is True
+
+
+def test_apply_set_team_explicit_team_beats_decline(monkeypatch, tmp_path):
+    """LLMs sometimes set both ('I'm on ccl, stop asking'): the stated team wins
+    and clears any previous decline."""
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+    from docforge.remote_client import apply_set_team
+    from docforge.user_prefs import UserPrefs, load_prefs, save_prefs
+
+    save_prefs(UserPrefs(declined=True), tmp_path / "prefs.json")
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend, team="ccl", never_ask_again=True)
+    assert "Team set to 'ccl'" in msg
+    prefs = load_prefs(tmp_path / "prefs.json")
+    assert prefs.team == "ccl"
+    assert prefs.declined is False
+
+
+def test_apply_set_team_notes_env_precedence(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.setenv("DOCFORGE_TEAM", "cis")
+    from docforge.remote_client import apply_set_team
+
+    backend = _backend(_search_transport())
+    msg = apply_set_team(backend, team="ccl")
+    assert "takes precedence" in msg
+    assert "'cis'" in msg
+
+
+@pytest.mark.asyncio
+async def test_apply_set_team_save_failure_falls_back_to_session(
+    monkeypatch, tmp_path, _no_env_identity
+):
+    """Disk-write failure keeps the answer for this session: the message says
+    session-only and subsequent searches still carry the team."""
+    import docforge.user_prefs as up
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.setattr(up, "save_prefs", lambda prefs, path=None: False)
+    from docforge.remote_client import apply_set_team
+
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+    msg = apply_set_team(backend, team="ccl")
+    assert "this session only" in msg
+
+    await backend.search(query="q", limit=5)
+    assert captured["body"]["team_name"] == "ccl"
+
+
+@pytest.mark.asyncio
+async def test_set_team_tool_registered_and_writes_file(monkeypatch, tmp_path):
+    from fastmcp.client import Client
+
+    from docforge.remote_client import SET_TEAM_DESCRIPTION, AuthName, build_remote_mcp
+    from docforge.user_prefs import load_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.delenv("DOCFORGE_TEAM", raising=False)
+
+    mcp = build_remote_mcp(url="https://example", auth_name=AuthName.none)
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        st = next(t for t in tools if t.name == "set_team")
+        assert st.description == SET_TEAM_DESCRIPTION
+
+        result = await client.call_tool("set_team", {"team": "ccl"})
+        assert "Team set to 'ccl'" in result.content[0].text
+
+    assert load_prefs(tmp_path / "prefs.json").team == "ccl"
+
+
 def test_run_remote_mcp_constructs_components(monkeypatch):
     """run_remote_mcp wires AuthProvider, RemoteBackend, FastMCP without crashing."""
     monkeypatch.delenv("DOCFORGE_API_TOKEN", raising=False)
@@ -314,8 +644,7 @@ def test_run_remote_mcp_constructs_components(monkeypatch):
     run_remote_mcp(url="https://api.example.com", auth_name="none")
 
     assert constructed["name"] == "docforge"
-    assert "search_documentation" in constructed["tools"]
-    assert "list_sources" in constructed["tools"]
+    assert constructed["tools"] == ["search_documentation", "list_sources", "set_team"]
     assert constructed["ran"] is True
 
 
