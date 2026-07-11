@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -18,6 +19,7 @@ from typing import Protocol
 import httpx
 from fastmcp import FastMCP
 
+from docforge import user_prefs
 from docforge.formatters import format_search_results_markdown
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,10 @@ class RemoteBackend:
         self._auth = auth
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        # Team resolved via set_team when the prefs file could not be written —
+        # keeps the user's answer effective for the rest of this session.
+        self.session_team: str = ""
+        self._nudged = False  # ask-for-team nudge emitted in this process
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -188,9 +194,57 @@ class RemoteBackend:
             ("DOCFORGE_AREA", "area_name"),
         ):
             val = os.environ.get(env_var, "").strip()
-            if val:
+            # "${" guards against unsubstituted client templates (e.g. a
+            # literal "${user_config.team}" leaking through the plugin env).
+            if val and "${" not in val:
                 out[body_key] = val
+        if "team_name" not in out:
+            # env > persisted prefs > session memory (set_team with failed save).
+            # Read fresh per search so a set_team from a parallel session is
+            # picked up without a restart. Never let prefs I/O break a search.
+            try:
+                team = user_prefs.load_prefs().team.strip()
+            except Exception:  # noqa: BLE001 — C2: identity must never break search
+                team = ""
+            if team and ("${" in team or not _TEAM_ID_RE.match(team)):
+                # Hand-edited/corrupt prefs bypass set_team's write-side
+                # validation; fail safe to "no team" rather than send junk.
+                team = ""
+            team = team or self.session_team
+            if team:
+                out["team_name"] = team
         return out
+
+    def _maybe_team_nudge(self) -> str:
+        """One-time "ask the user for their team" note, appended after
+        successful search results. Gated on the deployment opting in via
+        DOCFORGE_TEAM_IDS — generic deployments never see it. Never raises.
+        Does blocking prefs I/O: callers must run it via asyncio.to_thread."""
+        try:
+            if self._nudged:
+                return ""
+            ids = user_prefs.valid_team_ids()
+            if not ids:
+                return ""
+            prefs = user_prefs.load_prefs()
+            if prefs.team.strip() or self.session_team:
+                # A team got resolved after the identity snapshot (parallel
+                # session or tool call, or a transient prefs-read failure in
+                # _identity_body) — never ask for what is already answered.
+                return ""
+            if prefs.declined or prefs.nudge_count >= _NUDGE_LIFETIME_CAP:
+                self._nudged = True  # nothing can un-gate this process; stop re-reading
+                return ""
+            self._nudged = True
+            prefs.nudge_count += 1
+            # Whole-file last-writer-wins: the team=="" check above narrows the
+            # window in which this save could clobber a concurrent set_team to
+            # the few ms between load and replace.
+            user_prefs.save_prefs(prefs)  # best-effort; cap degrades to per-session
+            return TEAM_NUDGE_TEMPLATE.format(ids=", ".join(ids), first_two_ids=", ".join(ids[:2]))
+        except Exception as e:  # noqa: BLE001 — C2: nudge must never break search
+            logger.warning("team nudge skipped: %s", e)
+            return ""
 
     async def _request(
         self,
@@ -285,7 +339,12 @@ class RemoteBackend:
     async def search(self, *, query: str, limit: int = 10) -> str:
         """Search the remote API and return Markdown-formatted results."""
         body: dict[str, object] = {"query": query, "limit": limit}
-        body.update(self._identity_body())
+        # to_thread: prefs-file reads can stall on network home dirs; blocking
+        # the loop thread would also defeat the 60s safety-net timeout (its
+        # cancellation is a loop callback and can't fire while the loop is
+        # stuck in a syscall).
+        identity = await asyncio.to_thread(self._identity_body)
+        body.update(identity)
         logger.info("search: about to call _request")
         result = await self._request("POST", "/search", json=body)
         logger.info("search: _request returned (type=%s)", type(result).__name__)
@@ -296,6 +355,10 @@ class RemoteBackend:
         results = data.get("results", [])
         logger.info("search: JSON parsed (%d results), formatting", len(results))
         out = format_search_results_markdown(results)
+        if "team_name" not in identity:
+            nudge = await asyncio.to_thread(self._maybe_team_nudge)
+            if nudge:
+                out = f"{out}\n\n{nudge}"
         logger.info("search: formatted markdown (%d chars), returning", len(out))
         return out
 
@@ -325,6 +388,107 @@ INSTRUCTIONS = (
 DEFAULT_TOOL_DESCRIPTION = (
     "Search across indexed documentation from Confluence pages and git repos."
 )
+
+# Lifetime cap on ask-for-team nudges. After this many emissions without an
+# answer, repeated silence is treated as an answer and the user is left alone
+# (set_team and the plugin Configure screen remain available).
+_NUDGE_LIFETIME_CAP = 3
+
+TEAM_NUDGE_TEMPLATE = """---
+
+[docforge — one-time note to the assistant; not part of the search results]
+The user's documentation searches are not yet tagged with a team. The tag is \
+optional: it slightly boosts ranking of their own team's docs and helps the \
+docs maintainers see adoption. Search works fully without it.
+After you have finished answering the user's current question, ask once, \
+briefly, whether they want to set a team for documentation search. Suggested \
+phrasing: "One-time setup question: want me to tag your documentation \
+searches with your team? It slightly boosts your team's docs in results — \
+say a team id (e.g. {first_two_ids}), say 'no' to never be asked again, or \
+just ignore this."
+Valid team ids: {ids}
+- If the user names a team: call the set_team tool with that id.
+- If the user explicitly declines (e.g. "no", "don't ask again"): call \
+set_team with never_ask_again=true so they are never asked again.
+- If the user ignores the question, is unsure, or wants to decide later: do \
+nothing — they may be asked again in a later session (3 times at most, ever).
+Never guess or infer the team yourself. Do not raise this again in this \
+conversation, and never delay or withhold an answer because of it."""
+
+SET_TEAM_DESCRIPTION = (
+    "Save the user's team id for documentation search on this machine (persists "
+    "across sessions). Only call this when the user has explicitly stated their "
+    "team in this conversation, or with never_ask_again=true when the user has "
+    "declined to set one — never guess or infer the team. Passing a valid team "
+    "id replaces any previous value and clears a previous decline. Not needed "
+    "if a team is already configured in the plugin settings."
+)
+
+# Free-form team ids (deployments without DOCFORGE_TEAM_IDS): conservative slug.
+_TEAM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def apply_set_team(backend: RemoteBackend, team: str = "", never_ask_again: bool = False) -> str:
+    """Validate + persist a set_team call. Pure-ish core of the MCP tool
+    (module-level for direct unit testing). Returns a user-facing string;
+    never raises. An explicit team wins over a simultaneous decline."""
+    team = (team or "").strip().lower()
+    ids = user_prefs.valid_team_ids()
+
+    if not team and not never_ask_again:
+        return "Nothing to do: pass team, or never_ask_again=true to stop the team question."
+
+    if team:
+        if ids and team not in ids:
+            return (
+                f"'{team}' is not a recognized team id. Valid ids: {', '.join(ids)}. "
+                "Ask the user to pick one, or call set_team with never_ask_again=true "
+                "if they would rather not set one."
+            )
+        if not ids and not _TEAM_ID_RE.match(team):
+            return (
+                f"'{team}' is not a valid team id (lowercase letters, digits, "
+                "'.', '_', '-'; max 64 chars)."
+            )
+        backend.session_team = team
+        backend._nudged = True  # the question is answered; suppress any in-flight nudge
+        prefs = user_prefs.load_prefs()
+        prefs.team = team
+        prefs.declined = False
+        if user_prefs.save_prefs(prefs):
+            msg = (
+                f"Team set to '{team}' (saved to {user_prefs.prefs_path()}). Future "
+                "documentation searches from this machine will carry this team tag."
+            )
+        else:
+            msg = (
+                f"Could not save the team preference to disk; using '{team}' for "
+                "this session only. To set it permanently, configure the team in "
+                "the plugin's settings."
+            )
+        env_team = os.environ.get("DOCFORGE_TEAM", "").strip()
+        if env_team and "${" not in env_team:
+            msg += (
+                f" Note: the plugin config currently sets team '{env_team}', which "
+                "takes precedence over this saved value; update the plugin's team "
+                "setting to change it."
+            )
+        return msg
+
+    backend._nudged = True  # honor the decline for this session even if the save fails
+    prefs = user_prefs.load_prefs()
+    prefs.declined = True
+    if user_prefs.save_prefs(prefs):
+        return (
+            "Understood — the team question will not be raised again on this "
+            "machine. Searches are unaffected. If the user changes their mind "
+            "later, call set_team with their team id."
+        )
+    return (
+        "Understood — the team question will not be raised again in this session "
+        "(the preference could not be saved to disk, so it may come up again in "
+        "a future session). Searches are unaffected."
+    )
 
 
 # Hard outer bound on a single MCP tool call, in seconds. Sized to comfortably
@@ -407,6 +571,15 @@ def build_remote_mcp(
         return await _run_tool_with_timeout(
             "list_sources",
             lambda: backend.list_sources(),
+        )
+
+    @mcp.tool(description=SET_TEAM_DESCRIPTION)
+    async def set_team(team: str = "", never_ask_again: bool = False) -> str:
+        # to_thread: prefs I/O can stall on network home dirs; keep the loop
+        # free and let the safety-net timeout return a diagnostic.
+        return await _run_tool_with_timeout(
+            "set_team",
+            lambda: asyncio.to_thread(apply_set_team, backend, team, never_ask_again),
         )
 
     return mcp
