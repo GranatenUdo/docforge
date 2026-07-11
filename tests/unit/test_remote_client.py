@@ -10,20 +10,6 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolated_prefs(monkeypatch, tmp_path):
-    """Redirect the user-prefs store to tmp_path and clear DOCFORGE_TEAM_IDS.
-
-    Without this, a developer machine's real prefs.json (or a configured
-    DOCFORGE_TEAM_IDS) would leak a team_name into request bodies and flip
-    nudge behavior, breaking the byte-exact body assertions below.
-    """
-    import docforge.user_prefs as up
-
-    monkeypatch.setattr(up, "prefs_path", lambda: tmp_path / "prefs.json")
-    monkeypatch.delenv("DOCFORGE_TEAM_IDS", raising=False)
-
-
-@pytest.fixture(autouse=True)
 def _no_backoff_sleep(monkeypatch):
     """Replace asyncio.sleep with a no-op for every test in this file.
 
@@ -484,6 +470,95 @@ async def test_search_survives_prefs_load_crash(monkeypatch, _no_env_identity):
 
     out = await backend.search(query="q", limit=5)
     assert "Test Page" in out
+
+
+@pytest.mark.asyncio
+async def test_nudge_on_zero_hit_search(monkeypatch, _no_env_identity):
+    """A zero-result 200 is still a successful search — the nudge appears."""
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    backend = _backend(_search_transport(results=[]))
+
+    out = await backend.search(query="q", limit=5)
+    assert "No documentation found" in out
+    assert "note to the assistant" in out
+
+
+@pytest.mark.asyncio
+async def test_parallel_session_set_team_picked_up_mid_session(
+    monkeypatch, tmp_path, _no_env_identity
+):
+    """A set_team from another session (prefs file write) must be reflected in
+    the request body of the NEXT search in this session, without a restart."""
+    from docforge.user_prefs import UserPrefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+
+    await backend.search(query="q", limit=5)
+    assert "team_name" not in captured["body"]
+
+    save_prefs(UserPrefs(team="cis"), tmp_path / "prefs.json")  # "other session"
+    await backend.search(query="q", limit=5)
+    assert captured["body"]["team_name"] == "cis"
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_when_team_set_during_inflight_request(
+    monkeypatch, tmp_path, _no_env_identity
+):
+    """If a team lands in prefs between the identity snapshot and the response
+    (parallel session/tool call), the nudge must NOT ask an answered question."""
+    from docforge.user_prefs import UserPrefs, load_prefs, save_prefs
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Simulates another session's set_team completing while this request
+        # is in flight.
+        save_prefs(UserPrefs(team="ccl"), tmp_path / "prefs.json")
+        return httpx.Response(200, json={"results": [], "query": "q", "count": 0})
+
+    backend = _backend(httpx.MockTransport(handler))
+    out = await backend.search(query="q", limit=5)
+
+    assert "note to the assistant" not in out
+    assert load_prefs(tmp_path / "prefs.json").team == "ccl"  # not clobbered
+
+
+@pytest.mark.asyncio
+async def test_no_nudge_after_set_team_even_when_save_failed(
+    monkeypatch, tmp_path, _no_env_identity
+):
+    """set_team answers the question for this session even if the disk write
+    failed — no later search in this process may nudge."""
+    import docforge.user_prefs as up
+
+    monkeypatch.setenv("DOCFORGE_TEAM_IDS", "ccl,cis")
+    monkeypatch.setattr(up, "save_prefs", lambda prefs, path=None: False)
+    from docforge.remote_client import apply_set_team
+
+    backend = _backend(_search_transport())
+    apply_set_team(backend, team="ccl")
+
+    out = await backend.search(query="q", limit=5)
+    assert "note to the assistant" not in out
+
+
+@pytest.mark.asyncio
+async def test_invalid_file_team_not_sent(monkeypatch, tmp_path, _no_env_identity):
+    """A hand-edited prefs file bypasses set_team validation — the read path
+    must not ship junk to /search."""
+    import json as _json
+
+    (tmp_path / "prefs.json").write_text(
+        _json.dumps({"version": 1, "team": "bad team\nwith junk", "declined": False}),
+        encoding="utf-8",
+    )
+    captured: dict = {}
+    backend = _backend(_search_transport(captured))
+    await backend.search(query="q", limit=5)
+    assert "team_name" not in captured["body"]
 
 
 # --- apply_set_team ----------------------------------------------------------

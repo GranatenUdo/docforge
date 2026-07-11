@@ -4,6 +4,12 @@ Used by `serve --remote-api` to remember the team id a user gave via the
 set_team MCP tool (and whether they asked never to be asked again). All I/O
 is best-effort: loading never raises and saving returns False on failure —
 identity handling must never break a search (same philosophy as query_log).
+
+Scope: the file is per OS user and machine-global — NOT per remote deployment.
+A machine talking to several docforge deployments shares one team preference;
+acceptable for the single-deployment norm, revisit if that changes. Writes are
+atomic (torn files impossible) but whole-file last-writer-wins: concurrent
+sessions can overwrite each other's fields in a millisecond window.
 """
 
 from __future__ import annotations
@@ -59,22 +65,25 @@ def prefs_path() -> Path:
 
 
 def load_prefs(path: Path | None = None) -> UserPrefs:
-    """Read prefs; on ANY failure (missing, corrupt, wrong types) return defaults."""
+    """Read prefs; on ANY failure (missing, corrupt, wrong types, unresolvable
+    home directory) return defaults. RuntimeError is what Path.home() raises
+    when no home can be determined — the never-raises contract must cover it."""
     try:
         p = path or prefs_path()
         data = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return UserPrefs()
         return UserPrefs.model_validate(data)
-    except (OSError, ValueError, ValidationError):
+    except (OSError, ValueError, ValidationError, RuntimeError):
         return UserPrefs()
 
 
 def save_prefs(prefs: UserPrefs, path: Path | None = None) -> bool:
     """Atomically write prefs (tmp file + os.replace). Returns False and logs
     on failure; never raises. Concurrent writers are last-writer-wins."""
-    p = path or prefs_path()
+    p: Path | None = None
     try:
+        p = path or prefs_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         prefs.updated_at = datetime.now(UTC).isoformat(timespec="seconds")
         fd, tmp_name = tempfile.mkstemp(dir=p.parent, prefix=".prefs-", suffix=".tmp")
@@ -89,8 +98,8 @@ def save_prefs(prefs: UserPrefs, path: Path | None = None) -> bool:
                 pass
             raise
         return True
-    except OSError as e:
-        logger.warning("could not save user prefs to %s: %s", p, e)
+    except (OSError, RuntimeError, ValueError) as e:
+        logger.warning("could not save user prefs to %s: %s", p or "<unresolved path>", e)
         return False
 
 

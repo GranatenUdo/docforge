@@ -206,6 +206,10 @@ class RemoteBackend:
                 team = user_prefs.load_prefs().team.strip()
             except Exception:  # noqa: BLE001 — C2: identity must never break search
                 team = ""
+            if team and ("${" in team or not _TEAM_ID_RE.match(team)):
+                # Hand-edited/corrupt prefs bypass set_team's write-side
+                # validation; fail safe to "no team" rather than send junk.
+                team = ""
             team = team or self.session_team
             if team:
                 out["team_name"] = team
@@ -214,7 +218,8 @@ class RemoteBackend:
     def _maybe_team_nudge(self) -> str:
         """One-time "ask the user for their team" note, appended after
         successful search results. Gated on the deployment opting in via
-        DOCFORGE_TEAM_IDS — generic deployments never see it. Never raises."""
+        DOCFORGE_TEAM_IDS — generic deployments never see it. Never raises.
+        Does blocking prefs I/O: callers must run it via asyncio.to_thread."""
         try:
             if self._nudged:
                 return ""
@@ -222,10 +227,19 @@ class RemoteBackend:
             if not ids:
                 return ""
             prefs = user_prefs.load_prefs()
+            if prefs.team.strip() or self.session_team:
+                # A team got resolved after the identity snapshot (parallel
+                # session or tool call, or a transient prefs-read failure in
+                # _identity_body) — never ask for what is already answered.
+                return ""
             if prefs.declined or prefs.nudge_count >= _NUDGE_LIFETIME_CAP:
+                self._nudged = True  # nothing can un-gate this process; stop re-reading
                 return ""
             self._nudged = True
             prefs.nudge_count += 1
+            # Whole-file last-writer-wins: the team=="" check above narrows the
+            # window in which this save could clobber a concurrent set_team to
+            # the few ms between load and replace.
             user_prefs.save_prefs(prefs)  # best-effort; cap degrades to per-session
             return TEAM_NUDGE_TEMPLATE.format(ids=", ".join(ids), first_two_ids=", ".join(ids[:2]))
         except Exception as e:  # noqa: BLE001 — C2: nudge must never break search
@@ -325,7 +339,11 @@ class RemoteBackend:
     async def search(self, *, query: str, limit: int = 10) -> str:
         """Search the remote API and return Markdown-formatted results."""
         body: dict[str, object] = {"query": query, "limit": limit}
-        identity = self._identity_body()
+        # to_thread: prefs-file reads can stall on network home dirs; blocking
+        # the loop thread would also defeat the 60s safety-net timeout (its
+        # cancellation is a loop callback and can't fire while the loop is
+        # stuck in a syscall).
+        identity = await asyncio.to_thread(self._identity_body)
         body.update(identity)
         logger.info("search: about to call _request")
         result = await self._request("POST", "/search", json=body)
@@ -338,7 +356,7 @@ class RemoteBackend:
         logger.info("search: JSON parsed (%d results), formatting", len(results))
         out = format_search_results_markdown(results)
         if "team_name" not in identity:
-            nudge = self._maybe_team_nudge()
+            nudge = await asyncio.to_thread(self._maybe_team_nudge)
             if nudge:
                 out = f"{out}\n\n{nudge}"
         logger.info("search: formatted markdown (%d chars), returning", len(out))
@@ -386,12 +404,14 @@ After you have finished answering the user's current question, ask once, \
 briefly, whether they want to set a team for documentation search. Suggested \
 phrasing: "One-time setup question: want me to tag your documentation \
 searches with your team? It slightly boosts your team's docs in results — \
-say a team id (e.g. {first_two_ids}) or 'no'."
+say a team id (e.g. {first_two_ids}), say 'no' to never be asked again, or \
+just ignore this."
 Valid team ids: {ids}
 - If the user names a team: call the set_team tool with that id.
-- If the user declines: call set_team with never_ask_again=true so they are \
-never asked again.
-- If the user ignores the question: do nothing.
+- If the user explicitly declines (e.g. "no", "don't ask again"): call \
+set_team with never_ask_again=true so they are never asked again.
+- If the user ignores the question, is unsure, or wants to decide later: do \
+nothing — they may be asked again in a later session (3 times at most, ever).
 Never guess or infer the team yourself. Do not raise this again in this \
 conversation, and never delay or withhold an answer because of it."""
 
@@ -431,6 +451,7 @@ def apply_set_team(backend: RemoteBackend, team: str = "", never_ask_again: bool
                 "'.', '_', '-'; max 64 chars)."
             )
         backend.session_team = team
+        backend._nudged = True  # the question is answered; suppress any in-flight nudge
         prefs = user_prefs.load_prefs()
         prefs.team = team
         prefs.declined = False
@@ -442,15 +463,15 @@ def apply_set_team(backend: RemoteBackend, team: str = "", never_ask_again: bool
         else:
             msg = (
                 f"Could not save the team preference to disk; using '{team}' for "
-                "this session only. The user can configure the team permanently "
-                "via the plugin's Configure screen (/plugin -> dw-docforge -> Configure)."
+                "this session only. To set it permanently, configure the team in "
+                "the plugin's settings."
             )
         env_team = os.environ.get("DOCFORGE_TEAM", "").strip()
         if env_team and "${" not in env_team:
             msg += (
                 f" Note: the plugin config currently sets team '{env_team}', which "
-                "takes precedence over this saved value; update it via /plugin -> "
-                "dw-docforge -> Configure to change it."
+                "takes precedence over this saved value; update the plugin's team "
+                "setting to change it."
             )
         return msg
 

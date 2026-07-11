@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import json
 
+# Bind the REAL function at import time: the autouse _isolated_prefs fixture
+# (tests/unit/conftest.py) monkeypatches user_prefs.prefs_path for every test,
+# so the path tests below must call the unpatched original.
+from docforge.user_prefs import prefs_path as real_prefs_path
+
 # --- prefs_path -------------------------------------------------------------
 
 
@@ -11,9 +16,7 @@ def test_prefs_path_windows_prefers_localappdata(monkeypatch, tmp_path):
     monkeypatch.setattr("docforge.user_prefs._os_name", lambda: "nt")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
-    from docforge.user_prefs import prefs_path
-
-    p = prefs_path()
+    p = real_prefs_path()
     assert str(tmp_path / "local") in str(p)
     assert p.name == "prefs.json"
     assert p.parent.name == "docforge"
@@ -23,18 +26,14 @@ def test_prefs_path_windows_falls_back_to_appdata(monkeypatch, tmp_path):
     monkeypatch.setattr("docforge.user_prefs._os_name", lambda: "nt")
     monkeypatch.setenv("LOCALAPPDATA", "")
     monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
-    from docforge.user_prefs import prefs_path
-
-    assert str(tmp_path / "roaming") in str(prefs_path())
+    assert str(tmp_path / "roaming") in str(real_prefs_path())
 
 
 def test_prefs_path_windows_falls_back_to_home(monkeypatch):
     monkeypatch.setattr("docforge.user_prefs._os_name", lambda: "nt")
     monkeypatch.setenv("LOCALAPPDATA", "")
     monkeypatch.setenv("APPDATA", "")
-    from docforge.user_prefs import prefs_path
-
-    p = prefs_path()
+    p = real_prefs_path()
     assert ".docforge" in str(p)
     assert p.name == "prefs.json"
 
@@ -42,9 +41,7 @@ def test_prefs_path_windows_falls_back_to_home(monkeypatch):
 def test_prefs_path_posix_uses_xdg_config_home(monkeypatch, tmp_path):
     monkeypatch.setattr("docforge.user_prefs._os_name", lambda: "posix")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    from docforge.user_prefs import prefs_path
-
-    p = prefs_path()
+    p = real_prefs_path()
     assert str(tmp_path / "xdg") in str(p)
     assert p.parent.name == "docforge"
 
@@ -52,9 +49,7 @@ def test_prefs_path_posix_uses_xdg_config_home(monkeypatch, tmp_path):
 def test_prefs_path_posix_defaults_to_dot_config(monkeypatch):
     monkeypatch.setattr("docforge.user_prefs._os_name", lambda: "posix")
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    from docforge.user_prefs import prefs_path
-
-    assert ".config" in str(prefs_path())
+    assert ".config" in str(real_prefs_path())
 
 
 # --- load_prefs -------------------------------------------------------------
